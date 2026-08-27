@@ -97,9 +97,21 @@ deployed, or frozen; freeze only a reviewed SHA after permanent staging passes.
 - Corrected the protected permanent-staging scale attestation to the documented
   Railway application port 8080 and added a fail-closed regression rejecting
   stale port 3000 evidence.
-- Corrected the staging runbook order: candidate-bound provider values must be
-  written with deploys skipped while the legacy app is healthy at one replica,
-  before prepare/quiesce. The provider executor cannot run at fenced zero.
+- Corrected the staging runbook order: the four create-only provider values must
+  be written with deploys skipped while the legacy app is healthy at one replica
+  and before worker preparation. The separate Supabase replacement should also
+  run before prepare, but remains safely eligible on the same healthy legacy
+  generation after prepare because row metadata cannot prove key replacement;
+  it must finish before quiesce or candidate upload. The provider executor
+  cannot run at fenced zero.
+- Enforced the observable part of that order in the protected executors:
+  provider writes and worker preparation now require the exact healthy
+  one-replica legacy generation, sole staging service domain on port 8080,
+  stable deployment/snapshot identity, an empty patch, and a source SHA
+  different from the candidate. Provider writes recheck the complete observable
+  snapshot immediately before mutation; worker preparation additionally
+  requires all four create-only provider rows and fails closed before durable
+  intent if the staging baseline is incomplete.
 - Added a no-schema Saved Updates treatment for the 20 most recent saved venues
   and beers. It shows only two claims that existing authority timestamps can
   prove: a trusted price was explicitly verified after the save, or current

@@ -22,6 +22,8 @@ const PRODUCTION_ENVIRONMENT_ID = "13dab015-df74-45c6-b26f-69323daea99a";
 const STAGING_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const APPLICATION_SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const CANARY_SERVICE_ID = "34a312cd-0920-4a7e-90db-8561c1e0746b";
+const STAGING_DOMAIN = "beer-staging.up.railway.app";
+const APPLICATION_TARGET_PORT = 8080;
 const POLICY_PATH = "ops/railway/permanent-staging-variable-mutation-policy.json";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
@@ -53,6 +55,7 @@ export const PROTECTED_STAGING_VARIABLE_MUTATION_QUERY = `mutation PintPathProte
 export const PROTECTED_STAGING_VARIABLE_METADATA_QUERY = `query PintPathProtectedVariableMetadata(
   $projectId: String!
   $environmentId: String!
+  $serviceId: String!
 ) {
   environment(id: $environmentId, projectId: $projectId) {
     id
@@ -72,6 +75,22 @@ export const PROTECTED_STAGING_VARIABLE_METADATA_QUERY = `query PintPathProtecte
     numReplicas
     latestDeployment { id status deploymentStopped snapshotId }
     activeDeployments { id status deploymentStopped }
+    domains {
+      serviceDomains { id domain targetPort }
+      customDomains { id domain targetPort }
+    }
+  }
+}`;
+
+export const PROTECTED_STAGING_VARIABLE_DEPLOYMENT_QUERY =
+  `query PintPathProtectedVariableDeployment($deploymentId: String!) {
+  deployment(id: $deploymentId) {
+    id
+    projectId
+    environmentId
+    serviceId
+    snapshotId
+    meta
   }
 }`;
 
@@ -84,6 +103,10 @@ const PROVIDER_OPERATIONS = Object.freeze({
   "provider-google-places-api-key": "GOOGLE_PLACES_API_KEY",
   "provider-openai-api-key": "OPENAI_API_KEY",
 } as const);
+const AUTOMATIC_MAINTENANCE_VARIABLE_NAMES = Object.freeze([
+  "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED",
+  "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+] as const);
 
 type ProviderOperation = keyof typeof PROVIDER_OPERATIONS;
 export type ProtectedStagingVariableOperation =
@@ -97,6 +120,24 @@ interface VariableRow {
   readonly serviceId: string | null;
   readonly isSealed: boolean;
   readonly references: readonly string[];
+}
+
+interface ProviderDomain {
+  readonly kind: "service" | "custom";
+  readonly id: string;
+  readonly domain: string;
+  readonly targetPort: number | null;
+}
+
+interface ProviderDeployment {
+  readonly id: string;
+  readonly projectId: string;
+  readonly environmentId: string;
+  readonly serviceId: string;
+  readonly snapshotId: string;
+  readonly commitHash: string;
+  readonly imageDigest: string;
+  readonly patchId: string | null;
 }
 
 interface MetadataSnapshot {
@@ -119,7 +160,12 @@ interface MetadataSnapshot {
       readonly status: string;
       readonly deploymentStopped: boolean;
     }[];
+    readonly domains: readonly ProviderDomain[];
   };
+}
+
+interface ProviderSnapshot extends MetadataSnapshot {
+  readonly deployment: ProviderDeployment;
 }
 
 interface MutationReceipt {
@@ -328,6 +374,20 @@ function validDeployment(value: unknown, detailed: boolean): boolean {
     && (!detailed || typeof value.snapshotId === "string" && UUID_PATTERN.test(value.snapshotId));
 }
 
+function parseDomain(value: unknown, kind: ProviderDomain["kind"]): ProviderDomain | null {
+  if (!exactKeys(value, ["id", "domain", "targetPort"])
+    || typeof value.id !== "string" || !UUID_PATTERN.test(value.id)
+    || typeof value.domain !== "string" || !/^[a-z0-9.-]{1,253}$/.test(value.domain)
+    || !(value.targetPort === null || Number.isSafeInteger(value.targetPort)
+      && Number(value.targetPort) >= 1 && Number(value.targetPort) <= 65_535)) return null;
+  return {
+    kind,
+    id: value.id,
+    domain: value.domain,
+    targetPort: value.targetPort as number | null,
+  };
+}
+
 function parseMetadata(value: unknown): MetadataSnapshot | null {
   if (!exactKeys(value, ["data"])
     || !exactKeys(value.data, ["environment", "staged", "serviceInstance"])) return null;
@@ -346,6 +406,7 @@ function parseMetadata(value: unknown): MetadataSnapshot | null {
     || !plainRecord(staged.patch) || Object.keys(staged.patch).length !== 0
     || !exactKeys(serviceInstance, [
       "id", "serviceId", "environmentId", "numReplicas", "latestDeployment", "activeDeployments",
+      "domains",
     ])
     || typeof serviceInstance.id !== "string" || !UUID_PATTERN.test(serviceInstance.id)
     || serviceInstance.serviceId !== APPLICATION_SERVICE_ID
@@ -357,9 +418,30 @@ function parseMetadata(value: unknown): MetadataSnapshot | null {
     || !Array.isArray(serviceInstance.activeDeployments)
     || serviceInstance.activeDeployments.length < 1
     || serviceInstance.activeDeployments.length > 100
-    || !serviceInstance.activeDeployments.every((row: unknown) => validDeployment(row, false))) {
+    || !serviceInstance.activeDeployments.every((row: unknown) => validDeployment(row, false))
+    || !exactKeys(serviceInstance.domains, ["serviceDomains", "customDomains"])
+    || !Array.isArray(serviceInstance.domains.serviceDomains)
+    || !Array.isArray(serviceInstance.domains.customDomains)
+    || serviceInstance.domains.serviceDomains.length > 100
+    || serviceInstance.domains.customDomains.length > 100) {
     return null;
   }
+  const domains: ProviderDomain[] = [];
+  for (const candidate of serviceInstance.domains.serviceDomains) {
+    const domain = parseDomain(candidate, "service");
+    if (!domain) return null;
+    domains.push(domain);
+  }
+  for (const candidate of serviceInstance.domains.customDomains) {
+    const domain = parseDomain(candidate, "custom");
+    if (!domain) return null;
+    domains.push(domain);
+  }
+  domains.sort((left, right) => `${left.kind}:${left.domain}:${left.id}`.localeCompare(
+    `${right.kind}:${right.domain}:${right.id}`,
+  ));
+  if (new Set(domains.map((domain) => domain.id)).size !== domains.length
+    || new Set(domains.map((domain) => domain.domain)).size !== domains.length) return null;
   const variables: VariableRow[] = [];
   for (const edge of environment.variables.edges) {
     if (!exactKeys(edge, ["node"])) return null;
@@ -376,8 +458,100 @@ function parseMetadata(value: unknown): MetadataSnapshot | null {
     environmentId: STAGING_ENVIRONMENT_ID,
     variables,
     stagedPatchEmpty: true,
-    serviceInstance: structuredClone(serviceInstance) as MetadataSnapshot["serviceInstance"],
+    serviceInstance: {
+      id: serviceInstance.id,
+      serviceId: serviceInstance.serviceId,
+      environmentId: serviceInstance.environmentId,
+      numReplicas: serviceInstance.numReplicas,
+      latestDeployment: structuredClone(serviceInstance.latestDeployment),
+      activeDeployments: structuredClone(serviceInstance.activeDeployments),
+      domains,
+    } as MetadataSnapshot["serviceInstance"],
   };
+}
+
+function parseDeployment(value: unknown, expectedId: string): ProviderDeployment | null {
+  if (!exactKeys(value, ["data"])
+    || !exactKeys(value.data, ["deployment"])
+    || !exactKeys(value.data.deployment, [
+      "id", "projectId", "environmentId", "serviceId", "snapshotId", "meta",
+    ])) return null;
+  const deployment = value.data.deployment;
+  if (deployment.id !== expectedId
+    || deployment.projectId !== PROJECT_ID
+    || deployment.environmentId !== STAGING_ENVIRONMENT_ID
+    || deployment.serviceId !== APPLICATION_SERVICE_ID
+    || typeof deployment.snapshotId !== "string" || !UUID_PATTERN.test(deployment.snapshotId)
+    || !plainRecord(deployment.meta)) return null;
+  const { commitHash, imageDigest, patchId } = deployment.meta;
+  if (typeof commitHash !== "string" || !SHA_PATTERN.test(commitHash)
+    || typeof imageDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(imageDigest)
+    || !(patchId === null || typeof patchId === "string" && UUID_PATTERN.test(patchId))) return null;
+  return {
+    id: deployment.id,
+    projectId: deployment.projectId,
+    environmentId: deployment.environmentId,
+    serviceId: deployment.serviceId,
+    snapshotId: deployment.snapshotId,
+    commitHash,
+    imageDigest,
+    patchId: patchId as string | null,
+  };
+}
+
+async function readProviderSnapshot(
+  fetchImpl: typeof fetch,
+  metadataToken: string,
+): Promise<ProviderSnapshot | null> {
+  const metadata = parseMetadata(await graphql(
+    fetchImpl,
+    metadataToken,
+    PROTECTED_STAGING_VARIABLE_METADATA_QUERY,
+    {
+      projectId: PROJECT_ID,
+      environmentId: STAGING_ENVIRONMENT_ID,
+      serviceId: APPLICATION_SERVICE_ID,
+    },
+  ));
+  if (!metadata) return null;
+  const deployment = parseDeployment(await graphql(
+    fetchImpl,
+    metadataToken,
+    PROTECTED_STAGING_VARIABLE_DEPLOYMENT_QUERY,
+    { deploymentId: metadata.serviceInstance.latestDeployment.id },
+  ), metadata.serviceInstance.latestDeployment.id);
+  if (!deployment
+    || deployment.snapshotId !== metadata.serviceInstance.latestDeployment.snapshotId) return null;
+  return { ...metadata, deployment };
+}
+
+function exactHealthyLegacyBaseline(
+  snapshot: ProviderSnapshot,
+  candidateSha: string | null,
+): boolean {
+  const service = snapshot.serviceInstance;
+  const active = service.activeDeployments[0];
+  const pinnedDomain = service.domains[0];
+  return snapshot.stagedPatchEmpty
+    && service.numReplicas === 1
+    && service.latestDeployment.status === "SUCCESS"
+    && service.latestDeployment.deploymentStopped === false
+    && service.activeDeployments.length === 1
+    && active?.id === service.latestDeployment.id
+    && active.status === "SUCCESS"
+    && active.deploymentStopped === false
+    && snapshot.deployment.id === service.latestDeployment.id
+    && snapshot.deployment.projectId === PROJECT_ID
+    && snapshot.deployment.environmentId === STAGING_ENVIRONMENT_ID
+    && snapshot.deployment.serviceId === APPLICATION_SERVICE_ID
+    && snapshot.deployment.snapshotId === service.latestDeployment.snapshotId
+    && candidateSha !== null
+    && snapshot.deployment.commitHash !== candidateSha
+    && snapshot.deployment.patchId === null
+    && service.domains.length === 1
+    && pinnedDomain?.kind === "service"
+    && pinnedDomain.domain === STAGING_DOMAIN
+    && pinnedDomain.targetPort === APPLICATION_TARGET_PORT;
 }
 
 function relevantRows(snapshot: MetadataSnapshot, names: readonly string[]): VariableRow[] {
@@ -385,7 +559,8 @@ function relevantRows(snapshot: MetadataSnapshot, names: readonly string[]): Var
 }
 
 function providerPreflightExact(snapshot: MetadataSnapshot, variableName: string): boolean {
-  return relevantRows(snapshot, [variableName]).length === 0;
+  return relevantRows(snapshot, [variableName]).length === 0
+    && relevantRows(snapshot, AUTOMATIC_MAINTENANCE_VARIABLE_NAMES).length === 0;
 }
 
 function providerPostflightExact(
@@ -537,7 +712,7 @@ export async function runProtectedPermanentStagingVariableMutation(
   let terminalSha: string | null = null;
   let outcome: MutationReceipt["outcome"] = "blocked";
   let buffers: Buffer[] = [];
-  let before: MetadataSnapshot | null = null;
+  let before: ProviderSnapshot | null = null;
   let variables: Record<string, string> | null = null;
   let metadataToken = "";
   try {
@@ -568,20 +743,12 @@ export async function runProtectedPermanentStagingVariableMutation(
     if (!checks.tokenScopesExact) throw new Error("token_scope_invalid");
     checks.boundaryPreflightExact = await dependencies.boundaryCheck() === 0;
     if (!checks.boundaryPreflightExact) throw new Error("boundary_invalid");
-    before = parseMetadata(await graphql(
-      dependencies.fetchImpl,
-      metadataToken,
-      PROTECTED_STAGING_VARIABLE_METADATA_QUERY,
-      {
-        projectId: PROJECT_ID,
-        environmentId: STAGING_ENVIRONMENT_ID,
-        serviceId: APPLICATION_SERVICE_ID,
-      },
-    ));
+    before = await readProviderSnapshot(dependencies.fetchImpl, metadataToken);
     const variableName = activeOperation === "supabase-key-replacement"
       ? null
       : PROVIDER_OPERATIONS[activeOperation as ProviderOperation];
-    checks.targetPreflightExact = before !== null && before.stagedPatchEmpty
+    checks.targetPreflightExact = before !== null
+      && exactHealthyLegacyBaseline(before, candidateSha)
       && (activeOperation === "supabase-key-replacement"
         ? supabaseMetadataExact(before)
         : providerPreflightExact(before, variableName!));
@@ -608,6 +775,14 @@ export async function runProtectedPermanentStagingVariableMutation(
     intentSha = dependencies.writeDurable(args.evidenceDirectory, "intent.json", intent);
     checks.durableIntentExact = intentSha === sha256(intent);
     if (!checks.durableIntentExact) throw new Error("intent_invalid");
+    const prewrite = await readProviderSnapshot(dependencies.fetchImpl, metadataToken);
+    checks.targetPreflightExact = prewrite !== null
+      && canonical(prewrite) === canonical(before)
+      && exactHealthyLegacyBaseline(prewrite, candidateSha)
+      && (activeOperation === "supabase-key-replacement"
+        ? supabaseMetadataExact(prewrite)
+        : providerPreflightExact(prewrite, variableName!));
+    if (!checks.targetPreflightExact) throw new Error("prewrite_target_invalid");
     attempts = 1;
     let acknowledgement: unknown = null;
     try {
@@ -631,24 +806,22 @@ export async function runProtectedPermanentStagingVariableMutation(
     for (const buffer of buffers) buffer.fill(0);
     checks.inputZeroized = buffers.every((buffer) => buffer.every((byte) => byte === 0));
     checks.postflightAttempted = true;
-    let after: MetadataSnapshot | null = null;
+    let after: ProviderSnapshot | null = null;
     try {
-      after = parseMetadata(await graphql(
-        dependencies.fetchImpl,
-        metadataToken,
-        PROTECTED_STAGING_VARIABLE_METADATA_QUERY,
-        {
-          projectId: PROJECT_ID,
-          environmentId: STAGING_ENVIRONMENT_ID,
-          serviceId: APPLICATION_SERVICE_ID,
-        },
-      ));
+      after = await readProviderSnapshot(dependencies.fetchImpl, metadataToken);
     } catch {
       after = null;
     }
     checks.deploymentUnchanged = after !== null
-      && JSON.stringify(before.serviceInstance) === JSON.stringify(after.serviceInstance);
-    checks.targetPostflightExact = after !== null && after.stagedPatchEmpty
+      && JSON.stringify({
+        serviceInstance: before.serviceInstance,
+        deployment: before.deployment,
+      }) === JSON.stringify({
+        serviceInstance: after.serviceInstance,
+        deployment: after.deployment,
+      });
+    checks.targetPostflightExact = after !== null
+      && exactHealthyLegacyBaseline(after, candidateSha)
       && (activeOperation === "supabase-key-replacement"
         ? supabaseMetadataExact(after)
           && JSON.stringify(before.variables) === JSON.stringify(after.variables)
@@ -673,30 +846,28 @@ export async function runProtectedPermanentStagingVariableMutation(
     }
     if (attempts === 1 && !checks.postflightAttempted) {
       checks.postflightAttempted = true;
-      let after: MetadataSnapshot | null = null;
+      let after: ProviderSnapshot | null = null;
       try {
-        after = parseMetadata(await graphql(
-          dependencies.fetchImpl,
-          metadataToken,
-          PROTECTED_STAGING_VARIABLE_METADATA_QUERY,
-          {
-            projectId: PROJECT_ID,
-            environmentId: STAGING_ENVIRONMENT_ID,
-            serviceId: APPLICATION_SERVICE_ID,
-          },
-        ));
+        after = await readProviderSnapshot(dependencies.fetchImpl, metadataToken);
       } catch { after = null; }
       if (before && operation) {
         const variableName = operation === "supabase-key-replacement"
           ? null
           : PROVIDER_OPERATIONS[operation as ProviderOperation];
-        checks.targetPostflightExact = after !== null && after.stagedPatchEmpty
+        checks.targetPostflightExact = after !== null
+          && exactHealthyLegacyBaseline(after, candidateSha)
           && (operation === "supabase-key-replacement"
             ? supabaseMetadataExact(after)
               && JSON.stringify(before.variables) === JSON.stringify(after.variables)
             : providerPostflightExact(before, after, variableName!));
         checks.deploymentUnchanged = after !== null
-          && JSON.stringify(before.serviceInstance) === JSON.stringify(after.serviceInstance);
+          && JSON.stringify({
+            serviceInstance: before.serviceInstance,
+            deployment: before.deployment,
+          }) === JSON.stringify({
+            serviceInstance: after.serviceInstance,
+            deployment: after.deployment,
+          });
       }
     }
     if (checks.boundaryPreflightExact && !checks.boundaryPostflightExact) {
@@ -750,8 +921,10 @@ export async function runProtectedPermanentStagingVariableMutation(
 }
 
 export const protectedPermanentStagingVariableMutationInternals = {
+  exactHealthyLegacyBaseline,
   parseAcknowledgement,
   parseArguments,
+  parseDeployment,
   parseMetadata,
   parseScope,
   providerPostflightExact,

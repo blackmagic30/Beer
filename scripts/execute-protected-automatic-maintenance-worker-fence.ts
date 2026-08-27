@@ -51,6 +51,7 @@ const MAX_GITHUB_BYTES = 1_024 * 1_024;
 const MAX_RUNTIME_BYTES = 1_024 * 1_024;
 const MAX_EVIDENCE_BYTES = 64 * 1_024;
 const MAX_HISTORY_PAGES = 10;
+const PERMANENT_STAGING_TARGET_PORT = 8_080;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN =
@@ -60,6 +61,12 @@ const RUN_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
 const VARIABLE_NAMES = Object.freeze([
   "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED",
   "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+] as const);
+const STAGING_PROVIDER_VARIABLE_NAMES = Object.freeze([
+  "GOOGLE_MAPS_API_KEY",
+  "GOOGLE_MAPS_MAP_ID",
+  "GOOGLE_PLACES_API_KEY",
+  "OPENAI_API_KEY",
 ] as const);
 const RUNTIME_ROUTES = Object.freeze([
   "/health",
@@ -85,7 +92,7 @@ const OPERATIONS = Object.freeze({
     allowedTargets: Object.freeze(["permanent-staging"] as const),
     enabledValue: "false" as const,
     skipDeploys: true as const,
-    preflightMode: "none" as const,
+    preflightMode: "healthy-legacy" as const,
     postflightMode: "unchanged" as const,
     runtimeEnabled: false as const,
     runtimeCandidateBound: false as const,
@@ -1250,6 +1257,51 @@ function soleHealthyCandidate(snapshot: ProviderSnapshot, candidateSha: string):
     snapshot.deployment.patchId === null;
 }
 
+function stagingProviderRowsExact(snapshot: ProviderSnapshot): boolean {
+  const providerRows = snapshot.rows.filter((row) =>
+    STAGING_PROVIDER_VARIABLE_NAMES.includes(
+      row.name as (typeof STAGING_PROVIDER_VARIABLE_NAMES)[number],
+    ));
+  return providerRows.length === STAGING_PROVIDER_VARIABLE_NAMES.length &&
+    STAGING_PROVIDER_VARIABLE_NAMES.every((name) => {
+      const matches = providerRows.filter((row) => row.name === name);
+      return matches.length === 1 &&
+        matches[0]?.serviceId === SERVICE_ID &&
+        matches[0].isSealed === false &&
+        matches[0].references.length === 0;
+    });
+}
+
+function soleHealthyLegacyBaseline(
+  snapshot: ProviderSnapshot,
+  target: TargetName,
+  candidateSha: string,
+): boolean {
+  const active = snapshot.activeDeployments[0];
+  const pinnedDomain = snapshot.domains[0];
+  const stagingHost = new URL(TARGETS["permanent-staging"].publicOrigin).hostname;
+  return target === "permanent-staging" &&
+    snapshot.numReplicas === 1 &&
+    snapshot.latestDeployment.status === "SUCCESS" &&
+    snapshot.latestDeployment.deploymentStopped === false &&
+    snapshot.activeDeployments.length === 1 &&
+    active?.id === snapshot.latestDeployment.id &&
+    active.status === "SUCCESS" &&
+    active.deploymentStopped === false &&
+    snapshot.deployment.id === snapshot.latestDeployment.id &&
+    snapshot.deployment.projectId === PROJECT_ID &&
+    snapshot.deployment.environmentId === snapshot.environmentId &&
+    snapshot.deployment.serviceId === SERVICE_ID &&
+    snapshot.deployment.snapshotId === snapshot.latestDeployment.snapshotId &&
+    snapshot.deployment.commitHash !== candidateSha &&
+    snapshot.deployment.patchId === null &&
+    snapshot.domains.length === 1 &&
+    pinnedDomain?.kind === "service" &&
+    pinnedDomain.domain === stagingHost &&
+    pinnedDomain.targetPort === PERMANENT_STAGING_TARGET_PORT &&
+    stagingProviderRowsExact(snapshot);
+}
+
 async function runtimeResponse(
   dependencies: Dependencies,
   origin: string,
@@ -1670,6 +1722,8 @@ async function runMutationMode(
     }
     checks.operationPreflightExact = before !== null && (
       operation.preflightMode === "none" ||
+      (operation.preflightMode === "healthy-legacy" &&
+        soleHealthyLegacyBaseline(before, args.target, args.candidateSha)) ||
       (operation.preflightMode === "healthy-candidate" &&
         soleHealthyCandidate(before, args.candidateSha))
     );
@@ -2047,6 +2101,7 @@ export const automaticMaintenanceWorkerFenceInternals = {
   parseArguments,
   policyExact,
   soleHealthyCandidate,
+  soleHealthyLegacyBaseline,
   targetRowsAfterExact,
   targetRowsBeforeExact,
   tokenScopeExact,

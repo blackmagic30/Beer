@@ -32,7 +32,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "a7fb80f1425ca6851176089e0df0ae562ce57090d24383ddbb8955565672ecf7" as const;
+  "5060f451ec73c6978a1514531d1d7b33eeb591b2169812fbddcf898e69db7e4e" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -62,7 +62,7 @@ const FENCE_POLICY_SHA256 =
 const FENCE_PRODUCER_PATH =
   "scripts/execute-protected-automatic-maintenance-worker-fence.ts" as const;
 const FENCE_PRODUCER_SHA256 =
-  "3b23428aa9dc6c6d7a466b46f826ffa262d51b49e5b99a410e8e78d82dd79553" as const;
+  "50a1e90da8f5d814c34d184f12c754d89d247ab2a19cd20ee87fe2119feb3693" as const;
 const FENCE_TERMINAL_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-terminal/v1" as const;
 const DEPLOYMENT_WORKFLOW = ".github/workflows/deploy-production.yml" as const;

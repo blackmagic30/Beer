@@ -83,7 +83,7 @@
       "policyPath": "ops/railway/protected-automatic-maintenance-worker-fence-policy.json",
       "policySha256": "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb",
       "producerPath": "scripts/execute-protected-automatic-maintenance-worker-fence.ts",
-      "producerSha256": "3b23428aa9dc6c6d7a466b46f826ffa262d51b49e5b99a410e8e78d82dd79553",
+      "producerSha256": "50a1e90da8f5d814c34d184f12c754d89d247ab2a19cd20ee87fe2119feb3693",
       "requiredTarget": "production",
       "requiredOperation": "fence",
       "requiredOutcome": "fenced",

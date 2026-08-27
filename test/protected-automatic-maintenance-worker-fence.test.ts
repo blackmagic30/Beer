@@ -26,6 +26,7 @@ const IDS = Object.freeze({
   nextSnapshot: "55555555-5555-4555-8555-555555555555",
 } as const);
 const CANDIDATE = "a".repeat(40);
+const LEGACY_SHA = "9".repeat(40);
 const REVIEWED_HEAD = "b".repeat(40);
 const TREE = "c".repeat(40);
 const IMAGE_DIGEST = `sha256:${"d".repeat(64)}`;
@@ -170,10 +171,15 @@ function row(name: string, id: string) {
 }
 
 function metadataSource(input: {
+  readonly activeDeployments?: readonly Record<string, unknown>[];
+  readonly deploymentStopped?: boolean;
   readonly deploymentId?: string;
+  readonly domain?: string;
+  readonly numReplicas?: number;
   readonly snapshotId?: string;
   readonly rows?: readonly ReturnType<typeof row>[];
   readonly status?: string;
+  readonly targetPort?: number | null;
 }) {
   const deploymentId = input.deploymentId ?? IDS.deployment;
   const snapshotId = input.snapshotId ?? IDS.snapshot;
@@ -192,23 +198,23 @@ function metadataSource(input: {
         id: IDS.instance,
         serviceId: IDS.service,
         environmentId: IDS.production,
-        numReplicas: 1,
+        numReplicas: input.numReplicas ?? 1,
         latestDeployment: {
           id: deploymentId,
           status,
-          deploymentStopped: false,
+          deploymentStopped: input.deploymentStopped ?? false,
           snapshotId,
         },
-        activeDeployments: [{
+        activeDeployments: input.activeDeployments ?? [{
           id: deploymentId,
           status,
-          deploymentStopped: false,
+          deploymentStopped: input.deploymentStopped ?? false,
         }],
         domains: {
           serviceDomains: [{
             id: "66666666-6666-4666-8666-666666666666",
-            domain: "pintpath.au",
-            targetPort: 3_000,
+            domain: input.domain ?? "pintpath.au",
+            targetPort: input.targetPort === undefined ? 3_000 : input.targetPort,
           }],
           customDomains: [],
         },
@@ -220,6 +226,7 @@ function metadataSource(input: {
 function deploymentSource(input: {
   readonly candidateSha?: string;
   readonly deploymentId?: string;
+  readonly patchId?: string | null;
   readonly snapshotId?: string;
 }) {
   return {
@@ -233,16 +240,37 @@ function deploymentSource(input: {
         meta: {
           commitHash: input.candidateSha ?? CANDIDATE,
           imageDigest: IMAGE_DIGEST,
-          patchId: null,
+          patchId: input.patchId ?? null,
         },
       },
     },
   };
 }
 
+function providerRows() {
+  return [
+    row("UNRELATED_FIXTURE", "variable-unrelated"),
+    row("GOOGLE_MAPS_API_KEY", "variable-google-maps-api-key"),
+    row("GOOGLE_MAPS_MAP_ID", "variable-google-maps-map-id"),
+    row("GOOGLE_PLACES_API_KEY", "variable-google-places-api-key"),
+    row("OPENAI_API_KEY", "variable-openai-api-key"),
+  ];
+}
+
 function targetRows() {
   return [
     row("UNRELATED_FIXTURE", "variable-unrelated"),
+    row("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", "variable-enabled"),
+    row(
+      "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+      "variable-candidate",
+    ),
+  ];
+}
+
+function stagingTargetRows() {
+  return [
+    ...providerRows(),
     row("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", "variable-enabled"),
     row(
       "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
@@ -580,11 +608,11 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         ...mutationArguments("fence").slice(4),
       ]),
     ).toBeNull();
-    const existingSourceSha = "9".repeat(40);
+    const existingSourceSha = LEGACY_SHA;
     const metadata = [
-      forStaging(metadataSource({})),
-      forStaging(metadataSource({})),
-      forStaging(metadataSource({ rows: targetRows() })),
+      forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
+      forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
+      forStaging(metadataSource({ rows: stagingTargetRows(), targetPort: 8_080 })),
     ];
     const deployments = [
       forStaging(deploymentSource({ candidateSha: existingSourceSha })),
@@ -714,6 +742,295 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(
       prepareTerminal.providerEvidence.collateralVariablesBeforeSha256,
     ).toBe(prepareTerminal.providerEvidence.collateralVariablesAfterSha256);
+  });
+
+  it("requires an exact healthy one-replica legacy baseline before staging prepare", () => {
+    const metadata = automaticMaintenanceWorkerFenceInternals.metadataPart(
+      forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
+      IDS.staging,
+    );
+    expect(metadata).not.toBeNull();
+    const deployment = automaticMaintenanceWorkerFenceInternals.deploymentPart(
+      forStaging(deploymentSource({ candidateSha: LEGACY_SHA })),
+      IDS.deployment,
+    );
+    expect(deployment).not.toBeNull();
+    const healthy = { ...metadata!, deployment: deployment! };
+    expect(automaticMaintenanceWorkerFenceInternals.soleHealthyLegacyBaseline(
+      healthy,
+      "permanent-staging",
+      CANDIDATE,
+    )).toBe(true);
+
+    const scenarios = [
+      {
+        label: "failed latest deployment",
+        snapshot: {
+          ...healthy,
+          latestDeployment: { ...healthy.latestDeployment, status: "FAILED" },
+        },
+      },
+      {
+        label: "stopped latest deployment",
+        snapshot: {
+          ...healthy,
+          latestDeployment: { ...healthy.latestDeployment, deploymentStopped: true },
+        },
+      },
+      { label: "multiple replicas", snapshot: { ...healthy, numReplicas: 2 } },
+      {
+        label: "multiple active deployments",
+        snapshot: {
+          ...healthy,
+          activeDeployments: [
+            ...healthy.activeDeployments,
+            {
+              id: IDS.nextDeployment,
+              status: "SUCCESS",
+              deploymentStopped: false,
+            },
+          ],
+        },
+      },
+      {
+        label: "latest and active identity mismatch",
+        snapshot: {
+          ...healthy,
+          activeDeployments: [{
+            id: IDS.nextDeployment,
+            status: "SUCCESS",
+            deploymentStopped: false,
+          }],
+        },
+      },
+      {
+        label: "snapshot identity mismatch",
+        snapshot: {
+          ...healthy,
+          deployment: { ...healthy.deployment, snapshotId: IDS.nextSnapshot },
+        },
+      },
+      {
+        label: "deployment patch present",
+        snapshot: {
+          ...healthy,
+          deployment: { ...healthy.deployment, patchId: IDS.nextDeployment },
+        },
+      },
+      {
+        label: "unpinned domain",
+        snapshot: {
+          ...healthy,
+          domains: healthy.domains.map((domain) => ({
+            ...domain,
+            domain: "wrong-staging.up.railway.app",
+          })),
+        },
+      },
+      {
+        label: "stale staging port",
+        snapshot: {
+          ...healthy,
+          domains: healthy.domains.map((domain) => ({ ...domain, targetPort: 3_000 })),
+        },
+      },
+      {
+        label: "missing staging target port",
+        snapshot: {
+          ...healthy,
+          domains: healthy.domains.map((domain) => ({ ...domain, targetPort: null })),
+        },
+      },
+      {
+        label: "extra domain",
+        snapshot: {
+          ...healthy,
+          domains: [
+            ...healthy.domains,
+            {
+              kind: "service" as const,
+              id: IDS.nextDeployment,
+              domain: "extra-staging.up.railway.app",
+              targetPort: 8_080,
+            },
+          ],
+        },
+      },
+      {
+        label: "custom-domain kind",
+        snapshot: {
+          ...healthy,
+          domains: healthy.domains.map((domain) => ({
+            ...domain,
+            kind: "custom" as const,
+          })),
+        },
+      },
+      {
+        label: "candidate already deployed as legacy",
+        snapshot: {
+          ...healthy,
+          deployment: { ...healthy.deployment, commitHash: CANDIDATE },
+        },
+      },
+      {
+        label: "missing required provider row",
+        snapshot: {
+          ...healthy,
+          rows: healthy.rows.filter((row) => row.name !== "OPENAI_API_KEY"),
+        },
+      },
+      {
+        label: "duplicate provider row",
+        snapshot: {
+          ...healthy,
+          rows: [
+            ...healthy.rows,
+            {
+              id: "variable-google-maps-api-key-duplicate",
+              name: "GOOGLE_MAPS_API_KEY",
+              environmentId: IDS.staging,
+              serviceId: IDS.project,
+              isSealed: false,
+              references: [],
+            },
+          ],
+        },
+      },
+      {
+        label: "sealed provider row",
+        snapshot: {
+          ...healthy,
+          rows: healthy.rows.map((row) => row.name === "GOOGLE_MAPS_MAP_ID"
+            ? { ...row, isSealed: true }
+            : row),
+        },
+      },
+      {
+        label: "foreign-service provider row",
+        snapshot: {
+          ...healthy,
+          rows: healthy.rows.map((row) => row.name === "OPENAI_API_KEY"
+            ? { ...row, serviceId: IDS.project }
+            : row),
+        },
+      },
+      {
+        label: "referenced provider row",
+        snapshot: {
+          ...healthy,
+          rows: healthy.rows.map((row) => row.name === "GOOGLE_PLACES_API_KEY"
+            ? { ...row, references: ["OTHER_REFERENCE"] }
+            : row),
+        },
+      },
+    ];
+    for (const scenario of scenarios) {
+      expect(automaticMaintenanceWorkerFenceInternals.soleHealthyLegacyBaseline(
+        scenario.snapshot,
+        "permanent-staging",
+        CANDIDATE,
+      ), scenario.label).toBe(false);
+    }
+  });
+
+  it("fails closed before staging prepare writes when the legacy baseline is unsafe", async () => {
+    const scenarios: readonly {
+      label: string;
+      source: unknown;
+      deploymentSha?: string;
+    }[] = [
+      {
+        label: "failed latest deployment",
+        source: forStaging(metadataSource({
+          rows: providerRows(),
+          status: "FAILED",
+          targetPort: 8_080,
+        })),
+      },
+      {
+        label: "candidate already deployed as legacy",
+        source: forStaging(metadataSource({
+          rows: providerRows(),
+          targetPort: 8_080,
+        })),
+        deploymentSha: CANDIDATE,
+      },
+      {
+        label: "multiple replicas",
+        source: forStaging(metadataSource({
+          numReplicas: 2,
+          rows: providerRows(),
+          targetPort: 8_080,
+        })),
+      },
+      {
+        label: "latest and active identity mismatch",
+        source: forStaging(metadataSource({
+          activeDeployments: [{
+            id: IDS.nextDeployment,
+            status: "SUCCESS",
+            deploymentStopped: false,
+          }],
+          rows: providerRows(),
+          targetPort: 8_080,
+        })),
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      let mutationCalls = 0;
+      let durableWrites = 0;
+      let output = "";
+      const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { query: string };
+        if (body.query.includes("WorkerFenceScope")) {
+          return jsonResponse(forStaging(scopeSource()));
+        }
+        if (body.query.includes("WorkerFenceMetadata")) {
+          return jsonResponse(scenario.source);
+        }
+        if (body.query.includes("WorkerFenceDeployment")) {
+          return jsonResponse(forStaging(deploymentSource({
+            candidateSha: scenario.deploymentSha ?? LEGACY_SHA,
+          })));
+        }
+        if (body.query === AUTOMATIC_MAINTENANCE_WORKER_FENCE_MUTATION) {
+          mutationCalls += 1;
+          return jsonResponse({ data: { variableCollectionUpsert: true } });
+        }
+        throw new Error("unexpected request");
+      }) as typeof fetch;
+
+      const code = await runProtectedAutomaticMaintenanceWorkerFence({
+        argv: prepareArguments(),
+        env: stagingPrepareEnvironment(),
+        cwd: process.cwd(),
+        fetchImpl,
+        boundaryCheck: async () => ({
+          passed: true,
+          receiptSha256: "6".repeat(64),
+        }),
+        readAuthority: stagingPrepareAuthority,
+        writeDurable: (_directory, _leaf, source) => {
+          durableWrites += 1;
+          return sha256(source);
+        },
+        writeOutput: (source) => {
+          output += source;
+        },
+      });
+
+      expect(code, scenario.label).toBe(1);
+      expect(mutationCalls, scenario.label).toBe(0);
+      expect(durableWrites, scenario.label).toBe(0);
+      expect(JSON.parse(output), scenario.label).toMatchObject({
+        outcome: "failed_before_attempt",
+        attempts: 0,
+        failureCode: "OPERATION_PREFLIGHT_FAILED",
+        checks: { operationPreflightExact: false },
+      });
+    }
   });
 
   it("fences once without a deploy and emits a production-consumable receipt", async () => {
