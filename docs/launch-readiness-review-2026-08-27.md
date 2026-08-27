@@ -321,14 +321,18 @@ experiment produces a trustworthy mature D7 result.
   passed.
 - Rendered artifact smoke passed six desktop routes and two mobile routes with
   no provider calls.
-- The complete pinned-Node-22 `npm run check` passed: 233 test files and 4,265
+- The complete pinned-Node-22 `npm run check` passed: 233 test files and 4,269
   tests passed; 47 files and 126 tests were skipped by their configured
-  environment gates. The security scan covered the full tracked/untracked
-  candidate tree, and the dependency audit reported zero vulnerabilities.
+  environment gates. The security scan checked all 917 tracked/untracked files
+  in the isolated candidate, and the dependency audit reported zero
+  vulnerabilities.
 - A disposable PostgreSQL 17.10 run passed eight native integration tests across
   the Saved Updates authority query and admin analytics, including alias/current
   authority supersession, bounded failure, JSONB assignment metadata, UTC D7
   maturity, opt-in filtering, and neutral return semantics.
+- A separate disposable PostgreSQL 17 regression proved exact-ID combined
+  manager/community confirmation authority, including alias and quarantined
+  ingestion handling.
 - Swift parse, API fixture decoding, both privacy/property-list checks, and an
   unsigned generic iOS Simulator Swift 6 build passed under Xcode 26.5. The
   focused iOS retention/launch suites passed 60/60. No physical-device Dynamic
