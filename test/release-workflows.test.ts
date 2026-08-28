@@ -1092,6 +1092,10 @@ describe("release workflow contracts", () => {
   it("keeps CodeQL focused on production and operational sources", () => {
     const codeqlWorkflow = workflow("codeql.yml");
     const codeqlConfig = repositoryFile(".github/codeql/codeql-config.yml");
+    const swiftJob = codeqlWorkflow.slice(
+      codeqlWorkflow.indexOf("  swift:"),
+      codeqlWorkflow.indexOf("  java-kotlin:"),
+    );
 
     expect(codeqlWorkflow).toContain("queries: security-extended");
     expect(codeqlWorkflow).toContain(
@@ -1102,6 +1106,7 @@ describe("release workflow contracts", () => {
     expect(codeqlWorkflow).toContain("languages: swift");
     expect(codeqlWorkflow).toContain("build-mode: manual");
     expect(codeqlWorkflow).toContain("xcodebuild clean build");
+    expect(swiftJob).toContain("timeout-minutes: 45");
     expect(codeqlWorkflow).toContain("name: CodeQL Java and Kotlin");
     expect(codeqlWorkflow).toContain("languages: java-kotlin");
     expect(codeqlWorkflow).toContain(
