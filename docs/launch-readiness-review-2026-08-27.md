@@ -217,9 +217,15 @@ before a production cutover:
   The disposable PostgreSQL source-proof service had also left one unattached
   empty volume; that exact volume is now marked deleted/pending provider
   cleanup. No application or database volume was removed;
-- the Beer `SUPABASE_SERVICE_ROLE_KEY` row is currently unsealed. The protected
-  atomic replacement correctly fails closed until the separately controlled
-  Railway owner action seals that existing row without changing its value;
+- the separately controlled Railway owner seal is complete for the existing
+  Beer `SUPABASE_SERVICE_ROLE_KEY` row. Owner confirmation was obtained before
+  the irreversible action. Railway patch
+  `fe5b65d2-24d4-4e7c-8672-944bd5df2418` committed the single reviewed,
+  redacted variable path with deploys suppressed. Postflight proved the same
+  row ID, name, environment, service and references with `isSealed:true`, all
+  other 98 variable metadata rows unchanged, an empty staged patch, and no
+  change to staging or production deployment identities. The value was neither
+  displayed nor replaced;
 - staging PostgreSQL's source now uses the digest already running in Singapore.
   Railway applied the source-only `serviceInstanceUpdate` directly rather than
   creating the expected staged patch, so no commit or retry was attempted. An
@@ -530,9 +536,11 @@ blockers.
   unresolved.
 - A fresh complete staging inventory has not proved prohibited production
   operational-copy variables absent.
-- The staging Beer service-role variable is not sealed, so the protected atomic
-  Supabase replacement is intentionally blocked pending the separate owner
-  action.
+- The staging Beer service-role variable is now sealed under committed Railway
+  patch `fe5b65d2-24d4-4e7c-8672-944bd5df2418`; this specific prerequisite no
+  longer blocks the protected atomic Supabase replacement. The replacement
+  workflow itself remains unexecuted and must still prove its same-custody
+  canary and exact post-write metadata.
 - Staging PostgreSQL source drift is closed at the exact already-running digest.
   The provider applied the source-only update directly with no deployment; do
   not assume that API stages a patch for any future source operation.
