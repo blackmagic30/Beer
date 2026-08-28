@@ -2883,7 +2883,7 @@ describe("release workflow contracts", () => {
     expect(transportValidator).toContain("assertSupabaseServerApiKey(");
     expect(source).toContain("id: directory_schema");
     expect(source).toContain(
-      "20260728120312_venue_directory_operational_status",
+      "20260828010000_bootstrap_external_venue_directory",
     );
     expect(
       source.match(/if: steps\.directory_schema\.outputs\.ready == 'true'/g),

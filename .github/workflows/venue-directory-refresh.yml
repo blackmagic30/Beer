@@ -93,7 +93,7 @@ jobs:
               appendFileSync(process.env.GITHUB_OUTPUT, "ready=false\n");
               console.warn(
                 "::warning::Venue directory refresh is deferred until migration " +
-                "20260728120312_venue_directory_operational_status is released.",
+                "20260828010000_bootstrap_external_venue_directory is released.",
               );
             } else {
               throw new Error(`Directory schema probe failed with HTTP ${response.status}.`);

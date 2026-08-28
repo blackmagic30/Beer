@@ -366,6 +366,9 @@ jobs:
       - name: Rebuild database from migrations
         run: supabase db reset --local
 
+      - name: Rehearse the production venue-directory schema repair twice
+        run: psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file scripts/ci/supabase-venue-directory-drift.sql
+
       - name: Seed adversarial direct Storage policy drift
         run: psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file scripts/ci/supabase-storage-policy-drift.sql
 

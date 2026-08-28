@@ -6,10 +6,12 @@ private helper functions, dormant defense-in-depth RLS policies, final Data API
 grant revocation, and the private
 `beermap-source-evidence` bucket created by `supabase/migrations`.
 
-The production `public.venues` relation and conditional legacy relations are
-not created by this migration chain. Do not add guessed versions of those
-objects to make a local test pass. Reconcile them from a reviewed production
-schema-only dump and the external venue pipeline's canonical schema.
+The production-compatible `public.venues` relation is bootstrapped by
+`20260828010000_bootstrap_external_venue_directory.sql`. CI transactionally
+removes its three status-aware columns, reapplies that migration twice, and
+proves the exact column, constraint, index, RLS, grant, and legacy-row
+preservation contract. Other conditional legacy relations remain external and
+must not be guessed into existence to make a local test pass.
 
 ## Prerequisites
 
@@ -27,6 +29,8 @@ From the repository root:
 ```sh
 supabase db start
 supabase db reset --local
+supabase db query --local \
+  --file scripts/ci/supabase-venue-directory-schema-verify.sql
 supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 supabase db advisors --local --type security --level warn --fail-on warn
 supabase db advisors --local --type performance --level warn --fail-on error

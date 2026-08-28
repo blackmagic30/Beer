@@ -742,6 +742,8 @@ supabase migration list --linked
 supabase db push --linked --dry-run
 supabase db push --linked
 supabase migration list --linked
+supabase db query --linked \
+  --file scripts/ci/supabase-venue-directory-schema-verify.sql
 supabase test db --linked supabase/tests
 ```
 
@@ -1859,6 +1861,8 @@ supabase migration list --linked
 supabase db push --linked --dry-run
 supabase db push --linked
 supabase migration list --linked
+supabase db query --linked \
+  --file scripts/ci/supabase-venue-directory-schema-verify.sql
 supabase test db --linked supabase/tests
 ```
 

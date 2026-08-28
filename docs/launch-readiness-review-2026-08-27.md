@@ -17,11 +17,11 @@ private evidence, and unhashed resource authorities remain outside Git.
 | --- | --- |
 | Production | `95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`; exactly 26 commits behind current `main`, still serving the legacy SQLite authority. The live `/health` response reconfirmed that exact SHA on 28 August 2026. Railway currently shows the Beer service attached to its `/app/data` volume while the separate PostgreSQL service is merely online. |
 | Repository at post-merge reassessment | Local and remote `main` were exact at `31b6355acffeaccb0c517bcb231fd6d5b5eb0803`. PR #57 merged the reviewed Free-launch and retention tree; PR #59 then merged the reviewed external venue-directory bootstrap on 28 August 2026. All PR #59 repository, native, Supabase, PostgreSQL, CodeQL, build, and release-readiness checks completed successfully. |
-| Candidate status | Current `main` is suitable as the code basis for permanent-staging proof, but it is not deployed or frozen as a release candidate. A staging-only recovery change is locally complete on `codex/launch-p0-p1-recovery`: the final Node 22.23.2 gate passed 237 test files / 4,357 tests, with 47 files / 126 tests intentionally skipped by their existing gates, and the recovery audit closes the identified repository evidence/retry dead ends. It does not become release authority unless it is independently reviewed, merged, and proved live. The broader iOS visual redesign remains preserved separately at `codex/ios-redesign-retention-wip` commit `1723572` and is not part of the launch implementation. |
+| Candidate status | Current `main` is suitable as the code basis for permanent-staging proof, but it is not deployed or frozen as a release candidate. A staging-only recovery and production-schema drift-proof change is locally complete on `codex/launch-p0-p1-recovery`: the final Node 22.23.2 gate passed 237 test files / 4,358 tests, with 47 files / 126 tests intentionally skipped by their existing gates, and the recovery audit closes the identified repository evidence/retry dead ends. It does not become release authority unless it is independently reviewed, merged, and proved live. The broader iOS visual redesign remains preserved separately at `codex/ios-redesign-retention-wip` commit `1723572` and is not part of the launch implementation. |
 | Release register | `release.id`, `reviewedPrHeadSha`, and `candidateSha` are null. All 13 required items are pending: 0/13 complete. |
 | Permanent staging application | The public Railway route currently returns `Application not found` for `/health`, `/startup`, and `/ready`. The Beer service has `numReplicas:null`, zero active deployments, and a failed/stopped latest deployment from source `12c0d24…`; its domain correctly targets the documented application port 8080. PostgreSQL, Redis, and Supabase are online, but no current candidate application is serving or proved there. |
 | Permanent staging data services | The reviewed `20260828010000_bootstrap_external_venue_directory.sql` migration is now applied to the exact staging Supabase project. `public.venues` exists, service-role REST access returns 200 with an empty array, and anonymous access fails closed with 401. Railway PostgreSQL reports schema v1/import ready, 56 authoritative application tables, exact runtime/maintenance roles and memberships, SCRAM credentials, and no unsafe runtime role settings after the final legacy `search_path` override was transactionally removed. The Beer service remains stopped and has not authenticated with those credentials. |
-| Production PostgreSQL | Provisioned and online, but empty, detached from the production Beer service, not imported, and serving no live traffic. |
+| Production PostgreSQL | Provisioned and online, but empty, detached from the production Beer service, not imported, and serving no live traffic. On 28 August its mutable `:17` source was safely changed to the policy-approved digest-only reference under a provider-write freeze. Railway patch `30db986b-4df9-4847-bce0-4cd1c3a3adc7` committed with deploys skipped; the deployment, instance, snapshot, and volume identities remained unchanged. |
 | Production Supabase venue directory | The production project is behind the candidate's required directory migration: a read-only candidate query fails with PostgreSQL `42703` because `public.venues.business_status` is absent. The migration is applied and REST-proved on permanent staging, but status refresh, constraint validation, and candidate map-query proof must pass there before it is considered for production. |
 
 The live `/ready` payload exposes SQLite-specific foreign-key checking and the
@@ -192,14 +192,13 @@ before a production cutover:
   provides bounded stranded-patch recovery for only the three forbidden
   staging `OFFSITE_BACKUP_*` rows, and cannot impersonate normal `1 -> 0`
   evidence. It remains unmerged and unexecuted;
-- every protected Railway mutation remains fail-closed because production
-  Postgres currently advertises the mutable service source `:17` while the
-  approved running deployment resolved to the expected digest. The checked-in
-  boundary correctly requires the immutable digest source. Do not weaken it or
-  repair production through a staging-scoped workflow; the source change must
-  be separately reviewed and committed without a redeploy, or performed in an
-  explicit maintenance/recovery window if Railway cannot preserve it without
-  restarting the database;
+- the former mutable production PostgreSQL source blocker is closed. A running
+  disposable PostgreSQL service proved stage/cancel/retry and deploy-suppressed
+  commit for the exact digest source without changing its deployment, instance,
+  or volume. After independent review, production patch
+  `30db986b-4df9-4847-bce0-4cd1c3a3adc7` applied the same source-only repair
+  with deploys skipped and all protected identities unchanged. See
+  `docs/railway-postgres-source-reference-proof-2026-08-28.md`;
 - the staging Beer service still has the legacy runtime URL query
   `uselibpqcompat=true&sslmode=require` and is missing the maintenance URL,
   root-CA PEM, root-CA DER pin, and automatic-maintenance candidate SHA. Four
@@ -256,12 +255,14 @@ set an enable variable merely to make the workflow appear operational.
 
 ## Production data-quality baseline
 
-The Free-scope public, read-only production audit was rerun from the merged
-implementation at `2026-08-28T01:47:55.350Z` and reconfirmed:
+The Free-scope public, read-only production audit was rerun again from the
+candidate implementation at `2026-08-28T05:02:36.739Z` and reconfirmed:
 
 - 612 venues;
 - 288 price rows;
-- 62 trusted price rows, all stale under the current freshness policy;
+- 62 trusted price rows, all stale under the current freshness policy; the
+  oldest trusted verification is now 53.9 days old and no qualifying core row
+  has a current verification timestamp;
 - 239 rows whose exact price is redacted from the Free public API and 49 rows
   with a public numeric price; the audit therefore labels its actionability
   result as Free-public evidence rather than a complete private-data census;
@@ -479,11 +480,10 @@ blockers.
 
 ### P1 — urgent pre-launch risks
 
-- Production Postgres advertises a mutable `:17` service source even though its
-  current deployment resolved to the policy-approved digest. Every staging
-  mutation correctly fails closed on that mismatch. Do not weaken the boundary;
-  prove tag-at-digest compatibility on a disposable no-data service before any
-  separately reviewed production source-reference change.
+- Production Postgres now advertises the exact policy-approved digest source.
+  Railway still offers no patch-ID/ETag/CAS argument on the deploy-suppressed
+  staged-commit operation, so every provider-writing ceremony must retain the
+  operational writer freeze and exact before/after patch reconciliation.
 - Production health, venue refresh, and PostgreSQL backup/restore schedules are
   non-operational and cannot currently deliver their alerts.
 - Current-price coverage is effectively zero under the launch trust/freshness
@@ -554,12 +554,13 @@ the selected original ambiguous run's completion.
 The Free-scope and retention implementation is reviewed and merged, but the
 permanent-staging application is failed/stopped. Continue only in this order:
 
-1. On a disposable no-data Railway Postgres service, prove that the exact
-   `tag@sha256` source reference can be staged and committed with deploys
-   skipped, survives cancellation/retry boundaries, and does not restart or
-   replace a volume. Use that evidence to review a separate production source
-   reference repair. Do not dispatch any staging mutation while the production
-   boundary still fails.
+1. **Completed 28 August:** a disposable running PostgreSQL service proved the
+   exact immutable source can be staged, cancelled, retried, and committed with
+   deploys skipped without changing its deployment, instance, or volume. After
+   independent review, production patch
+   `30db986b-4df9-4847-bce0-4cd1c3a3adc7` applied the exact digest-only source
+   with the production deployment, instance, snapshot, and volume unchanged.
+   Both disposable services and their staging-only volume were then deleted.
 2. Independently review and merge `codex/launch-p0-p1-recovery`, then re-export
    the exact Beer staging topology, variable metadata without values, staged
    patch, Git-autodeploy state, and failed deployment identity. Verify the new
