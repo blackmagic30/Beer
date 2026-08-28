@@ -1131,7 +1131,13 @@ function parseDeployment(value: unknown, expectedId: string): ProviderDeployment
     || deployment.serviceId !== APPLICATION_SERVICE_ID
     || typeof deployment.snapshotId !== "string" || !UUID_PATTERN.test(deployment.snapshotId)
     || !plainRecord(deployment.meta)) return null;
-  const { commitHash, imageDigest, patchId } = deployment.meta;
+  const { commitHash } = deployment.meta;
+  const imageDigest = Object.hasOwn(deployment.meta, "imageDigest")
+    ? deployment.meta.imageDigest
+    : null;
+  const patchId = Object.hasOwn(deployment.meta, "patchId")
+    ? deployment.meta.patchId
+    : null;
   if (typeof commitHash !== "string" || !SHA_PATTERN.test(commitHash)
     || !(imageDigest === null || typeof imageDigest === "string"
       && /^sha256:[a-f0-9]{64}$/.test(imageDigest))
