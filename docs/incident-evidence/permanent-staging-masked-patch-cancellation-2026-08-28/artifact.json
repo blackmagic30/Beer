@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "pintpath-github-artifact-pin/v1",
+  "runId": "33173709464",
+  "runAttempt": 1,
+  "artifactId": "9686786783",
+  "name": "pintpath-permanent-staging-provider-mutation-cancel-masked-forbidden-offsite-backup-deletion-patch-daecb51aeff56aeabd1948e4ce082912c395278c",
+  "digest": "sha256:91d679bd9be6fb62167092679aeb91847bd3d4184bae914c4fc966ced70dacd6",
+  "createdAt": "2026-08-28T13:07:55Z",
+  "expiresAt": "2026-09-27T13:07:54Z",
+  "expiredAtCapture": false,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

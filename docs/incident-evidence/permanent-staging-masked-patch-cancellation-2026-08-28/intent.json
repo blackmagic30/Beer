@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-intent/v4",
+  "operation": "cancel-masked-forbidden-offsite-backup-deletion-patch",
+  "candidateSha": "daecb51aeff56aeabd1948e4ce082912c395278c",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "externalMutationFreeze": {
+    "attestation": "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    "enforcement": "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+    "providerCasOrLockVerified": false
+  },
+  "authorizedBaseline": "cold-dead-null",
+  "variableNames": [
+    "OFFSITE_BACKUP_BUCKET",
+    "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    "OFFSITE_BACKUP_SUPABASE_URL"
+  ],
+  "mutationPlan": {
+    "incidentCancellation": {
+      "action": "cancel-exact-masked-provider-patch",
+      "mutation": "environmentStageChanges",
+      "replacementPatch": {},
+      "merge": false,
+      "maximumAttempts": 1,
+      "commitAllowed": false,
+      "resumeAllowed": false,
+      "providerCasOrLockVerified": false,
+      "residualRisk": "OUT_OF_BAND_STAGED_PATCH_REPLACEMENT_CAN_BE_DISCARDED_BETWEEN_FINAL_READ_AND_CANCEL"
+    },
+    "originalCandidateSha": "ac7130e0306802825922d21a4c61135b84edd43b",
+    "priorCleanupRunId": "33164687424",
+    "priorCleanupArtifact": {
+      "id": "9683176636",
+      "digest": "sha256:0df300c84d53ece3fca5f7c72007bf5dd4a8ba9d1ea989e5d74bc80904aed98e",
+      "exact": true
+    },
+    "stagedPatch": {
+      "id": "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae",
+      "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "status": "STAGED",
+      "message": null,
+      "createdAt": "2026-08-28T10:51:38.861Z",
+      "updatedAt": "2026-08-28T10:51:38.861Z",
+      "appliedAt": null,
+      "observedShape": "exact-three-offsite-variable-wrappers-with-five-asterisk-values",
+      "deletionSemanticsProven": false
+    },
+    "originalBaselineMetadataSha256": "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd",
+    "recoveryDeadline": "2026-08-29T10:51:43.000Z"
+  },
+  "retryAllowed": false,
+  "privateInputCount": 0,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false,
+  "preflightMetadataSha256": "cbd73905aae6f63b8692eb0e1a3200960c8f799da73cb7b365e16685247a9d68"
+}
