@@ -220,11 +220,12 @@ before a production cutover:
 - the Beer `SUPABASE_SERVICE_ROLE_KEY` row is currently unsealed. The protected
   atomic replacement correctly fails closed until the separately controlled
   Railway owner action seals that existing row without changing its value;
-- staging PostgreSQL's running deployment remains on the original proved
-  `17.10` digest, but its service source still advertises mutable `:17`. Pin the
-  source to that exact running digest with deploys skipped and unchanged
-  deployment, instance, snapshot, volume, region, backup schedule, and replica
-  count before staging closeout;
+- staging PostgreSQL's source now uses the digest already running in Singapore.
+  Railway applied the source-only `serviceInstanceUpdate` directly rather than
+  creating the expected staged patch, so no commit or retry was attempted. An
+  independent postflight proved the deployment, running instance, snapshot,
+  volume, region, backup schedule, and replica count unchanged. This closes the
+  mutable-source drift but is not runtime, PITR, migration, or recovery evidence;
 - no current Auth, contributor, venue-Free manager, admin, private Storage, and
   Free-only core-journey evidence;
 - the staging Supabase venue-directory migration and REST authorization are
@@ -532,10 +533,9 @@ blockers.
 - The staging Beer service-role variable is not sealed, so the protected atomic
   Supabase replacement is intentionally blocked pending the separate owner
   action.
-- The staging PostgreSQL deployment is digest-bound, but its configured service
-  source is still the mutable `:17` label. Reconcile that source-only metadata
-  with deploys skipped before staging closeout; do not repeat the unsafe image
-  label or placement experiment.
+- Staging PostgreSQL source drift is closed at the exact already-running digest.
+  The provider applied the source-only update directly with no deployment; do
+  not assume that API stages a patch for any future source operation.
 - Any retained disposable restore environment and its current cost must be
   re-inventoried before staging closeout; the repository review did not treat a
   historical provider-cost estimate as current evidence.

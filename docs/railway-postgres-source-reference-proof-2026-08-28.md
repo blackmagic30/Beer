@@ -102,6 +102,49 @@ production repair:
 - `c39fe48f-fdf9-4473-b4fe-3737eacccc8e`
 - `107676a4-fe3f-4461-b85d-0bd6583fec00`
 
-A fresh provider inventory returned no matching project services, environment
-service instances, or volumes. These disposable resources are not recoverable
-and held no application data.
+A later complete inventory found that service deletion had left the exact empty
+50 GB disposable volume `808d863f-a03a-4118-be37-a50ea0872026` unattached. It
+was deleted explicitly and is now marked deleted/pending provider cleanup. The
+two source-proof services and their service instances are absent. Three older
+staging-only auth-probe/backup-canary services were also removed after their 29
+variable rows made the complete staging inventory exceed the protected
+100-row bound. These resources are not recoverable and held no application
+data.
+
+## Permanent-staging source reconciliation
+
+The permanent `Postgres-Staging` service still advertised mutable source
+`ghcr.io/railwayapp-templates/postgres-ssl:17`, although its sole running
+deployment was already the original Singapore `17.10` image at digest
+`sha256:786bb8fbbb78ba8d7f8cbef17eb1a2f15d39f118b17017bb12837345c4b16786`.
+An independent read-only review gave a conditional GO to reconcile only the
+source reference to that same digest.
+
+Under a fresh external-writer freeze, one `serviceInstanceUpdate` call supplied
+only the staging environment ID, staging PostgreSQL service ID, and this exact
+digest-only source:
+
+`ghcr.io/railwayapp-templates/postgres-ssl@sha256:786bb8fbbb78ba8d7f8cbef17eb1a2f15d39f118b17017bb12837345c4b16786`
+
+Railway returned `true` and applied the source metadata directly rather than
+creating the expected staged environment patch. The staged patch remained the
+canonical empty sentinel `{id:"<empty>",status:"STAGED",patch:{}}`. No commit
+or retry was attempted. A rollback would have added another unproved write and
+restored the mutable source, so the exact converged state was retained.
+
+Independent postflight proved all protected runtime identities unchanged:
+
+- service instance `8afc7886-6c13-4ec8-a048-c0c47ed6623d`
+- deployment `dcee88c4-df5c-46f8-82a0-b787312015bc`
+- running instance `d7ea9f50-8052-4d6f-a56b-cdaa81c9b224`
+- snapshot `1472beb8-c930-49ff-b856-647fcf8c25f5`
+- volume instance `8af0b1c5-642b-4255-a109-e20984e739ea`
+- volume `cf75fb86-7df5-4b8c-8d86-dc5462076cdc`, still `READY` in
+  `asia-southeast1-eqsg3a`
+- daily backup schedule `b936b373-45a6-4b12-ab38-6ccddaf71495`
+
+The complete deployment page still contained only the 9 August deployment and
+no restart or new deployment. This closes the mutable staging source drift as
+an operational state; it is not PostgreSQL startup, PITR, migration, or recovery
+evidence. Future source changes must not assume `serviceInstanceUpdate` stages a
+patch and should use a separately proved provider path.
