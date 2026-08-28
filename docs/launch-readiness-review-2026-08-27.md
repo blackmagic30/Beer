@@ -16,7 +16,7 @@ private evidence, and unhashed resource authorities remain outside Git.
 | Item | Verified state |
 | --- | --- |
 | Production | `95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`; 24 commits behind the Free-launch implementation merge; still serving the legacy SQLite authority. The live `/health` and `/ready` responses reconfirmed that exact SHA on 28 August 2026. Railway currently shows the Beer service attached to its `/app/data` volume while the separate PostgreSQL service is merely online. |
-| Repository at post-merge reassessment | Local and remote `main` were exact at `01fc932981aa191c5ab799d969cf018580c68984` before this status-only follow-up. PR #57 merged the reviewed Free-launch and retention tree on 28 August 2026; reviewed head `01116d749778ea35abec0bc596685845e58a1811` and merge commit `01fc932…` have the identical Git tree `e821aa8534e1ecabcd54743e1aca940e6aaf8827`. |
+| Repository at post-merge reassessment | Local and remote `main` were exact at `01fc932981aa191c5ab799d969cf018580c68984` before this post-merge follow-up. PR #57 merged the reviewed Free-launch and retention tree on 28 August 2026; reviewed head `01116d749778ea35abec0bc596685845e58a1811` and merge commit `01fc932…` have the identical Git tree `e821aa8534e1ecabcd54743e1aca940e6aaf8827`. |
 | Candidate status | The implementation is merged and suitable as the code basis for permanent-staging proof, but it is not deployed or frozen as a release candidate. The broader iOS visual redesign remains preserved separately at `codex/ios-redesign-retention-wip` commit `1723572` and is not part of the launch implementation. |
 | Release register | `release.id`, `reviewedPrHeadSha`, and `candidateSha` are null. All 13 required items are pending: 0/13 complete. |
 | Permanent staging application | The public Railway route currently returns `Application not found` for `/health`, `/startup`, and `/ready`. The Beer service has `numReplicas:null`, zero active deployments, and a failed/stopped latest deployment from source `12c0d24…`; its domain correctly targets the documented application port 8080. PostgreSQL, Redis, and Supabase are online, but no current candidate application is serving or proved there. |
@@ -454,7 +454,7 @@ within 168 hours of the associated PR merge. PR #57 merged at
 That time bound is not release evidence or permission to bypass the failed
 staging baseline. Do not compress staging, provider, recovery, or review work to
 use the window. No candidate is frozen, and current staging has not been
-deployed. If this status-only follow-up or any later merge makes `01fc932…` no
+deployed. If this follow-up or any later merge makes `01fc932…` no
 longer the current protected-main head, that SHA is ineligible for protected
 candidate operations; use the new reviewed protected-main merge and its own
 authority window.

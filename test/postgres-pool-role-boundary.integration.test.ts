@@ -28,6 +28,8 @@ const ADMIN_URL_ENV = "PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL";
 const REQUIRED_ENV = "PINTPATH_POSTGRES_POOL_ROLE_BOUNDARY_TEST_REQUIRED";
 const configuredAdminUrl = process.env[ADMIN_URL_ENV]?.trim() ?? "";
 const configuredRequired = process.env[REQUIRED_ENV]?.trim() ?? "";
+const SESSION_DRAIN_TIMEOUT_MS = 5_000;
+const SESSION_DRAIN_POLL_MS = 20;
 const suffix = `${process.pid}_${crypto.randomBytes(5).toString("hex")}`;
 const databaseName = `pintpath_pool_role_${suffix}`;
 const runtimeLogin = `pintpath_runtime_login_${suffix}`;
@@ -83,6 +85,27 @@ function validateAdminUrl(value: string): URL {
 function quoteIdentifier(value: string): string {
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(value)) throw new Error("unsafe_test_identifier");
   return `"${value}"`;
+}
+
+async function waitForDatabaseSessionsToDrain(
+  clusterAdmin: Client,
+  targetDatabase: string,
+): Promise<void> {
+  const deadline = Date.now() + SESSION_DRAIN_TIMEOUT_MS;
+  while (true) {
+    const result = await clusterAdmin.query<{ sessionCount: number }>(`SELECT
+      pg_catalog.count(*)::integer AS "sessionCount"
+      FROM pg_catalog.pg_stat_activity
+      WHERE datname = $1`, [targetDatabase]);
+    const sessionCount = result.rows[0]?.sessionCount;
+    if (sessionCount === 0) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`pool_role_boundary_sessions_did_not_drain:${sessionCount ?? "unknown"}`);
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, SESSION_DRAIN_POLL_MS);
+    });
+  }
 }
 
 function withDatabase(
@@ -311,8 +334,9 @@ describe.skipIf(!configuredAdminUrl)(
       await databaseAdmin?.end().catch((error) => failures.push(error));
       if (clusterAdmin) {
         try {
+          await waitForDatabaseSessionsToDrain(clusterAdmin, databaseName);
           await clusterAdmin.query(
-            `DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`,
+            `DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)}`,
           );
           for (const login of [runtimeLogin, maintenanceLogin]) {
             await clusterAdmin.query(`DROP ROLE IF EXISTS ${quoteIdentifier(login)}`);
