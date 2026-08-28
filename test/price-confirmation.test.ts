@@ -6,7 +6,7 @@ import path from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CURRENT_LEGAL_POLICY_VERSION } from "../src/config/legal.js";
 import { AccountDeletionQueueRepository } from "../src/db/account-deletion-queue.repository.js";
@@ -69,7 +69,13 @@ type Harness = {
 
 const harnesses: Harness[] = [];
 
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(LATER));
+});
+
 afterEach(async () => {
+  vi.useRealTimers();
   for (const harness of harnesses.splice(0)) {
     harness.database.close();
     fs.rmSync(harness.evidenceStorageDir, { recursive: true, force: true });

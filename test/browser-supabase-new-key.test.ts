@@ -173,6 +173,7 @@ function requestHeaders(input: URL | RequestInfo, init?: RequestInit): Headers {
 function loadBrowserSupabase(key: unknown, options: {
   enableBroadcastChannel?: boolean;
   enableDocument?: boolean;
+  nowMs?: number;
   initialLocalStorage?: Record<string, string>;
   initialSessionStorage?: Record<string, string>;
   responseForRequest?: (
@@ -303,6 +304,13 @@ function loadBrowserSupabase(key: unknown, options: {
     browserGlobals.BroadcastChannel = CapturingBroadcastChannel;
   }
   const context = vm.createContext(browserGlobals);
+  if (options.nowMs !== undefined) {
+    const setBrowserNow = vm.runInContext(
+      "(value) => { Date.now = () => value; }",
+      context,
+    ) as (value: number) => void;
+    setBrowserNow(options.nowMs);
+  }
   vm.runInContext(supabaseBrowserBundleSource(), context, {
     filename: "node_modules/@supabase/supabase-js/dist/umd/supabase.js",
   });
@@ -452,7 +460,8 @@ describe("browser Supabase publishable-key compatibility", () => {
   });
 
   it("requires an exact one-time tab-bound launch record before a popup callback can start OAuth", () => {
-    const harness = loadBrowserSupabase(PUBLISHABLE_KEY);
+    const nowMs = Date.parse("2026-08-27T08:10:00.000Z");
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, { nowMs });
     const launch = {
       channelId: "launch_channel_1234567890",
       provider: "google",
@@ -477,17 +486,17 @@ describe("browser Supabase publishable-key compatibility", () => {
 
     harness.sessionStorage.setItem(
       launchKey,
-      JSON.stringify({ ...launch, createdAt: Date.now() - 60_001 }),
+      JSON.stringify({ ...launch, createdAt: nowMs - 60_001 }),
     );
     expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
     harness.sessionStorage.setItem(
       launchKey,
-      JSON.stringify({ ...launch, createdAt: Date.now() + 5_001 }),
+      JSON.stringify({ ...launch, createdAt: nowMs + 5_001 }),
     );
     expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
     harness.sessionStorage.setItem(
       launchKey,
-      JSON.stringify({ ...launch, createdAt: Date.now(), bearer: "not-allowed" }),
+      JSON.stringify({ ...launch, createdAt: nowMs, bearer: "not-allowed" }),
     );
     expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
     harness.sessionStorage.setItem(launchKey, "{malformed");
