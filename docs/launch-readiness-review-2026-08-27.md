@@ -9,7 +9,43 @@ staging evidence, operational jobs, data quality, and all 13 external release
 gates do not yet support a safe launch.
 
 This is a secret-free status record. Provider credentials, connection strings,
-private evidence, and unhashed resource authorities remain outside Git.
+private evidence, and unpublished resource authorities remain outside Git.
+
+## Post-review incident seal — 28 August 2026
+
+PR [#66](https://github.com/blackmagic30/Beer/pull/66) merged the reviewed,
+incident-only Railway cancellation implementation as
+`daecb51aeff56aeabd1948e4ce082912c395278c`. GitHub Actions run
+[`33173709464`](https://github.com/blackmagic30/Beer/actions/runs/33173709464)
+then made exactly one acknowledged cancellation attempt. Independent live
+reconciliation proved the selected patch body is now exactly `{}`, unapplied,
+and noncommitted, with the 99-row staging baseline, cold/dead staging
+application, and production deployments unchanged. The stranded destructive
+patch P1 is closed and must not be retried or resumed. The secret-free durable
+receipt is recorded in
+[`docs/incident-evidence/permanent-staging-masked-patch-cancellation-2026-08-28/`](incident-evidence/permanent-staging-masked-patch-cancellation-2026-08-28/README.md).
+
+The three prohibited permanent-staging offsite-backup variable rows still
+exist, including the service-role credential. Treat that credential as live
+until its owner proves invalidation or rotation, then remove the rows only
+through a newly reviewed provider-verifiable operation. Railway still exposes
+no patch ETag/CAS/lock, so future provider writes retain the external writer-
+freeze and exact reconciliation requirement.
+
+The rescue SHA is intentionally ineligible for normal staging provider writes.
+Use only a later reviewed protected-`main` successor as the fresh SHA-scoped
+staging evidence basis; its provider writes still require the external writer
+freeze and exact reconciliation. Do not populate the release identity:
+permanent staging remains cold/dead, production still serves
+`95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`, PostgreSQL migration and recovery
+remain unproved, and the release register remains 0/13.
+
+A fresh public read-only audit at `2026-08-28T13:14:43.159Z` still found 612
+venues, 288 price rows, 62 trusted rows that were all stale, zero qualifying
+current trusted rows, zero covered venues, and 0 of 112 canonical suburb
+searches returning at least three useful options. The scoped Brighton rerun at
+`2026-08-28T13:15:01.880Z` remained 0 of 1. No launch-area coverage improvement
+has yet occurred.
 
 ## Current version and runtime state
 
