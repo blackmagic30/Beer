@@ -933,7 +933,7 @@ async function graphql(
   const response = await fetchImpl(GRAPHQL_ENDPOINT, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${token}`,
+      "Project-Access-Token": token,
       "content-type": "application/json",
     },
     body: JSON.stringify({ query, variables }),

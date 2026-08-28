@@ -1001,7 +1001,7 @@ async function call(
     method: "POST",
     headers: {
       Accept: "application/json",
-      Authorization: `Bearer ${token}`,
+      "Project-Access-Token": token,
       "Content-Type": "application/json",
       "User-Agent": "pintpath-protected-production-route/1",
     },

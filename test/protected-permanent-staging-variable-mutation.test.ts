@@ -391,6 +391,22 @@ describe("protected permanent-staging variable mutation", () => {
     expect(result).toBe(0);
     expect(boundaryCheck).toHaveBeenCalledTimes(2);
     expect(fetchImpl).toHaveBeenCalledTimes(9);
+    const expectedTokens = [
+      "mutation-token-that-is-long-enough",
+      "metadata-token-that-is-long-enough",
+      "metadata-token-that-is-long-enough",
+      "metadata-token-that-is-long-enough",
+      "metadata-token-that-is-long-enough",
+      "metadata-token-that-is-long-enough",
+      "mutation-token-that-is-long-enough",
+      "metadata-token-that-is-long-enough",
+      "metadata-token-that-is-long-enough",
+    ];
+    for (const [index, call] of fetchImpl.mock.calls.entries()) {
+      const headers = new Headers((call[1] as RequestInit).headers);
+      expect(headers.get("Project-Access-Token")).toBe(expectedTokens[index]);
+      expect(headers.has("Authorization")).toBe(false);
+    }
     const mutation = JSON.parse(
       String((fetchImpl.mock.calls[6]![1] as RequestInit).body),
     ) as { variables: Record<string, unknown> };

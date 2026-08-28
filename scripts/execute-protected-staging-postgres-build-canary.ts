@@ -380,7 +380,7 @@ async function query(
   const response = await fetchImpl(GRAPHQL, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${token}`,
+      "Project-Access-Token": token,
       "content-type": "application/json",
     },
     body: JSON.stringify({ operationName, query: querySource, variables }),

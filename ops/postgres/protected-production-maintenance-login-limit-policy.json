@@ -184,7 +184,7 @@
         "policyPath": "ops/railway/permanent-staging-scale-evidence-policy.json",
         "policySha256": "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608",
         "producerPath": "scripts/execute-protected-permanent-staging-scale.ts",
-        "producerSha256": "dc888847dd7cbeedbfc051c2069c17a456217f5834bea1761789216038366aac",
+        "producerSha256": "352697d0868bf5c9859a5d817b30034f01e49595b1eb6ba3de7861a637b4a33d",
         "githubEnvironment": "production-topology-configuration",
         "confirmation": "CONVERGE_PRODUCTION_TO_TWO_REPLICAS",
         "activationArtifactNameTemplate": "pintpath-automatic-maintenance-worker-fence-production-activate-<candidate-sha>",
