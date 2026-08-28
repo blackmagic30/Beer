@@ -8,9 +8,15 @@ import {
   STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
   stagingWorkerBootstrapPrerequisiteInternals,
 } from "../scripts/verify-permanent-staging-worker-bootstrap-prerequisites.js";
+import {
+  runPermanentStagingActivationReconciliationProbe,
+} from "../scripts/probe-permanent-staging-automatic-maintenance-activation-reconciliation.js";
+import { railwayDeploymentIdentityIdSha256 } from
+  "../src/lib/railway-deployment-identity.js";
 
 const CANDIDATE = "a".repeat(40);
 const OLD_SOURCE = "b".repeat(40);
+const COLD_SOURCE = "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba";
 const REVIEWED_HEAD = "c".repeat(40);
 const TREE = "d".repeat(40);
 const CURRENT_RUN = "9000";
@@ -18,7 +24,7 @@ const PREPARE_RUN = "1000";
 const QUIESCE_RUN = "2000";
 const FENCED_DEPLOYMENT_RUN = "3000";
 const POLICY_SHA =
-  "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb";
+  "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
@@ -33,6 +39,14 @@ const ACTIVATE_FILE =
   "/private/activate/automatic-maintenance-worker-fence-terminal.json";
 const ACTIVATE_VERIFICATION_FILE =
   "/private/activate/prerequisites-verification.json";
+const COLD_PREPARE_FILE = "/private/cold/cold-prepare-terminal.json";
+const COLD_QUIESCE_FILE = "/private/cold/cold-quiesce-receipt.json";
+const COLD_QUIESCE_VERIFICATION_FILE =
+  "/private/cold/prerequisites-verification.json";
+const RESTORE_FILE = "/private/restore/bootstrap-staging-one-receipt.json";
+const RESTORE_VERIFICATION_FILE =
+  "/private/restore/prerequisites-verification.json";
+const ACTIVE_DEPLOYMENT_FILE = "/private/active/deployment-receipt.json";
 const OUTPUT_FILE = "/private/output/prerequisites-verification.json";
 
 const WORKER_CHECKS = {
@@ -424,9 +438,10 @@ function prerequisiteEvidenceFixture(input: {
 
 function priorQuiesceVerification(): string {
   return canonical({
-    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v1",
+    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2",
     policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
     operation: "quiesce",
+    bootstrapPath: "healthy-legacy",
     candidateSha: CANDIDATE,
     expectedDeploymentSha: OLD_SOURCE,
     repository: "blackmagic30/Beer",
@@ -466,7 +481,10 @@ function priorQuiesceVerification(): string {
   });
 }
 
-function priorActivationVerification(): string {
+function priorActivationVerification(
+  operation: "activate" | "reconcile-activate" = "activate",
+  runId = "5000",
+): string {
   const kinds = [
     ["prepare", ".github/workflows/configure-automatic-maintenance-worker-fence.yml"],
     ["quiesce", ".github/workflows/bootstrap-permanent-staging-worker-fence.yml"],
@@ -474,9 +492,10 @@ function priorActivationVerification(): string {
     ["restore", ".github/workflows/bootstrap-permanent-staging-worker-fence.yml"],
   ] as const;
   return canonical({
-    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v1",
+    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2",
     policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
-    operation: "activate",
+    operation,
+    bootstrapPath: "healthy-legacy",
     candidateSha: CANDIDATE,
     expectedDeploymentSha: null,
     repository: "blackmagic30/Beer",
@@ -485,7 +504,7 @@ function priorActivationVerification(): string {
       workflowPath:
         ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
       githubEnvironment: "permanent-staging-provider-mutation",
-      runId: "5000",
+      runId,
       runAttempt: 1,
       startedAt: "2026-08-21T01:09:00.000Z",
     },
@@ -547,6 +566,119 @@ function priorActivationVerification(): string {
     secretMaterialIncluded: false,
     secretDerivedCommitmentsIncluded: false,
   });
+}
+
+function activationReconcileAuthority(): string {
+  return `${JSON.stringify({
+    command: "verify-github-reviewed-candidate-authority",
+    ok: true,
+    schemaVersion: 1,
+    kind: "pintpath-github-reviewed-candidate-authority",
+    repository: "blackmagic30/Beer",
+    candidateSha: CANDIDATE,
+    reviewedPrHeadSha: REVIEWED_HEAD,
+    reviewedPullRequestNumber: 51,
+    operation: "staging-worker-fence-reconcile-activate",
+    workflowPath:
+      ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+    workflowRunId: CURRENT_RUN,
+    workflowRunAttempt: 1,
+    priorAmbiguousStagingActivateRunId: "4999",
+    exactPriorStagingActivateCandidateRunBound: true,
+    secondStagingActivateVariableWritePreventedExact: true,
+    runnerLossRecoveryOriginalRunCompletedAt: "2026-08-21T01:08:30.000Z",
+    runnerLossRecoveryGraceHours: 24,
+    runnerLossRecoveryWithinGraceExact: true,
+    reviewedAuthorityExact: true,
+    freshDispatchWriteGuardExact: true,
+  })}\n`;
+}
+
+function activatedProviderSnapshot() {
+  const deploymentId = "77777777-7777-4777-8777-777777777777";
+  const snapshotId = "88888888-8888-4888-8888-888888888888";
+  return {
+    environmentId: ENVIRONMENT_ID,
+    serviceInstanceId: "99999999-9999-4999-8999-999999999999",
+    serviceId: SERVICE_ID,
+    numReplicas: 1,
+    rows: [
+      {
+        id: "row-unrelated",
+        name: "UNRELATED_FIXTURE",
+        environmentId: ENVIRONMENT_ID,
+        serviceId: SERVICE_ID,
+        isSealed: false,
+        references: [],
+      },
+      {
+        id: "row-enabled",
+        name: "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED",
+        environmentId: ENVIRONMENT_ID,
+        serviceId: SERVICE_ID,
+        isSealed: false,
+        references: [],
+      },
+      {
+        id: "row-candidate",
+        name: "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+        environmentId: ENVIRONMENT_ID,
+        serviceId: SERVICE_ID,
+        isSealed: false,
+        references: [],
+      },
+    ],
+    domains: [{
+      kind: "service" as const,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      domain: "beer-staging.up.railway.app",
+      targetPort: 8_080,
+    }],
+    latestDeployment: {
+      id: deploymentId,
+      status: "SUCCESS",
+      deploymentStopped: false,
+      snapshotId,
+    },
+    activeDeployments: [{
+      id: deploymentId,
+      status: "SUCCESS",
+      deploymentStopped: false,
+    }],
+    deployment: {
+      id: deploymentId,
+      projectId: PROJECT_ID,
+      environmentId: ENVIRONMENT_ID,
+      serviceId: SERVICE_ID,
+      snapshotId,
+      commitHash: CANDIDATE,
+      imageDigest: `sha256:${"e".repeat(64)}`,
+      patchId: null,
+    },
+  };
+}
+
+function activatedRuntimeProof() {
+  const deploymentId = activatedProviderSnapshot().deployment.id;
+  return {
+    required: true as const,
+    observed: true as const,
+    pollRounds: 1,
+    expectedSourceSha: CANDIDATE,
+    expectedAutomaticMaintenance: {
+      enabled: true as const,
+      candidateBound: true as const,
+    },
+    deploymentIdSha256: railwayDeploymentIdentityIdSha256(
+      "deployment",
+      deploymentId,
+    )!,
+    responseSha256s: {
+      "/health": sha("health"),
+      "/startup": sha("startup"),
+      "/ready": sha("ready"),
+    },
+  };
 }
 
 interface RunInput {
@@ -921,10 +1053,99 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
     expect(stagingWorkerBootstrapPrerequisiteInternals.validatePriorVerification(
       activationVerificationSource,
       JSON.parse(activationVerificationSource),
-      { operation: "activate", candidateSha: CANDIDATE, runId: "5000" },
+      {
+        operation: "activate",
+        bootstrapPath: "healthy-legacy",
+        candidateSha: CANDIDATE,
+        runId: "5000",
+      },
     )).toMatchObject({
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       expectedDeploymentSha: null,
+    });
+  });
+
+  it("reconciles activation runner loss read-only and emits the alternate receipt", async () => {
+    const snapshot = activatedProviderSnapshot();
+    const runtime = activatedRuntimeProof();
+    const written = new Map<string, string>();
+    const output: string[] = [];
+    const code = await runPermanentStagingActivationReconciliationProbe({
+      argv: [
+        "--candidate-sha", CANDIDATE,
+        "--bootstrap-path", "healthy-legacy",
+        "--prior-activate-run-id", "4999",
+        "--prerequisites-verification-file",
+        "/private/activate/prerequisites-verification.json",
+        "--reviewed-authority-file", "/private/activate/reviewed-authority.json",
+        "--evidence-dir", "/private/activate/evidence",
+      ],
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: CURRENT_RUN,
+        PINTPATH_PROTECTED_ENVIRONMENT:
+          "permanent-staging-provider-mutation",
+        PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION:
+          `RECONCILE_ACTIVATE_AUTOMATIC_MAINTENANCE_IN_PERMANENT_STAGING_FOR_${CANDIDATE}`,
+        PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN:
+          "production-metadata-token-long-enough",
+        PINTPATH_RAILWAY_STAGING_METADATA_TOKEN:
+          "staging-metadata-token-long-enough",
+      },
+      cwd: process.cwd(),
+      fetchImpl: vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        data: {
+          projectToken: {
+            projectId: PROJECT_ID,
+            environmentId: ENVIRONMENT_ID,
+          },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } })),
+      now: () => Date.parse("2026-08-21T01:10:00.000Z"),
+      sleep: vi.fn(),
+      readState: vi.fn().mockResolvedValue(snapshot),
+      probeRuntime: vi.fn().mockResolvedValue(runtime),
+      boundaryCheck: vi.fn().mockResolvedValue({
+        passed: true,
+        receiptSha256: sha("boundary"),
+      }),
+      reassertRepositoryState: () => true,
+      readPrivateEvidence: (filename) => filename.endsWith(
+        "reviewed-authority.json",
+      )
+        ? activationReconcileAuthority()
+        : priorActivationVerification("reconcile-activate", CURRENT_RUN),
+      writeDurable: (_directory, leaf, source) => {
+        written.set(leaf, source);
+        return sha(source);
+      },
+      writeOutput: (source) => output.push(source),
+    });
+    expect(code, output.at(-1)).toBe(0);
+    expect(JSON.parse(output.at(-1)!)).toMatchObject({
+      outcome: "reconciled_activated_after_runner_loss",
+      attempts: 0,
+      checks: {
+        mutationCredentialsAbsent: true,
+        noProviderWriteAttempted: true,
+      },
+    });
+    const receiptSource = written.get(
+      "automatic-maintenance-worker-fence-terminal.json",
+    )!;
+    expect(stagingWorkerBootstrapPrerequisiteInternals.validateWorkerReceipt(
+      receiptSource,
+      JSON.parse(receiptSource),
+      CANDIDATE,
+      "activate",
+    )).toMatchObject({
+      outcome: "reconciled_activated_after_runner_loss",
+      replicasBefore: 1,
+      replicasAfter: 1,
     });
   });
 
@@ -947,6 +1168,100 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       "--activate-terminal-file", ACTIVATE_FILE,
       "--output", OUTPUT_FILE,
     ])).toThrow("arguments_invalid");
+  });
+
+  it("accepts the cold-dead chain through every post-quiesce consumer", () => {
+    const coldPrepare = [
+      "--cold-prepare-run-id", PREPARE_RUN,
+      "--cold-prepare-terminal-file", COLD_PREPARE_FILE,
+    ];
+    const coldQuiesce = [
+      "--cold-quiesce-run-id", QUIESCE_RUN,
+      "--cold-quiesce-receipt-file", COLD_QUIESCE_FILE,
+      "--cold-quiesce-verification-file", COLD_QUIESCE_VERIFICATION_FILE,
+    ];
+    const fencedDeployment = [
+      "--fenced-deployment-run-id", FENCED_DEPLOYMENT_RUN,
+      "--fenced-deployment-receipt-file", FENCED_DEPLOYMENT_FILE,
+    ];
+    const restore = [
+      "--restore-run-id", "4000",
+      "--restore-receipt-file", RESTORE_FILE,
+      "--restore-verification-file", RESTORE_VERIFICATION_FILE,
+    ];
+    const activate = [
+      "--activate-run-id", "5000",
+      "--activate-terminal-file", ACTIVATE_FILE,
+      "--activate-verification-file", ACTIVATE_VERIFICATION_FILE,
+    ];
+    const activeDeployment = [
+      "--active-deployment-run-id", "6000",
+      "--active-deployment-receipt-file", ACTIVE_DEPLOYMENT_FILE,
+    ];
+    const cases = [
+      {
+        operation: "cold-quiesce",
+        extra: ["--expected-deployment-sha", COLD_SOURCE, ...coldPrepare],
+        kinds: ["cold-prepare"],
+      },
+      {
+        operation: "cold-reconcile-quiesce",
+        extra: ["--expected-deployment-sha", COLD_SOURCE, ...coldPrepare],
+        kinds: ["cold-prepare"],
+      },
+      {
+        operation: "fenced-deploy",
+        extra: [...coldPrepare, ...coldQuiesce],
+        kinds: ["cold-prepare", "cold-quiesce"],
+      },
+      {
+        operation: "restore",
+        extra: [
+          "--expected-deployment-sha", CANDIDATE,
+          ...coldPrepare,
+          ...coldQuiesce,
+          ...fencedDeployment,
+        ],
+        kinds: ["cold-prepare", "cold-quiesce", "fenced-deployment"],
+      },
+      {
+        operation: "activate",
+        extra: [
+          ...coldPrepare,
+          ...coldQuiesce,
+          ...fencedDeployment,
+          ...restore,
+        ],
+        kinds: [
+          "cold-prepare",
+          "cold-quiesce",
+          "fenced-deployment",
+          "restore",
+        ],
+      },
+      {
+        operation: "active-deploy",
+        extra: activate,
+        kinds: ["activate"],
+      },
+      {
+        operation: "scale-evidence",
+        extra: [...activate, ...activeDeployment],
+        kinds: ["activate", "active-deployment"],
+      },
+    ];
+
+    for (const fixture of cases) {
+      const parsed = stagingWorkerBootstrapPrerequisiteInternals.parseArguments([
+        "--operation", fixture.operation,
+        "--bootstrap-path", "cold-dead",
+        "--candidate-sha", CANDIDATE,
+        ...fixture.extra,
+        "--output", OUTPUT_FILE,
+      ]);
+      expect(parsed.bootstrapPath).toBe("cold-dead");
+      expect([...parsed.inputs.keys()]).toEqual(fixture.kinds);
+    }
   });
 
   it("requires the complete ordered chain for activate mode arguments", () => {

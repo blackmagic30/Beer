@@ -16,6 +16,8 @@ const readToken = "supabase-secrets-read-token";
 const writeToken = "supabase-secrets-write-token";
 const publishableKey = `sb_publishable_${"p".repeat(32)}`;
 const secretKey = `sb_secret_${"s".repeat(32)}`;
+const disableOperation = "disable-enabled-legacy-keys";
+const reconcileOperation = "reconcile-already-disabled-legacy-keys";
 
 function legacyJwt(role: "anon" | "service_role"): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
@@ -35,26 +37,36 @@ const filenames = {
   evidence: "/private/evidence",
 };
 
-function argv(): string[] {
-  return [
+function argv(operation = disableOperation): string[] {
+  const values = [
     "--candidate-sha", candidateSha,
+    "--operation", operation,
     "--management-read-token-file", filenames.read,
-    "--management-write-token-file", filenames.write,
     "--new-publishable-key-file", filenames.publishable,
     "--new-secret-key-file", filenames.secret,
     "--old-anon-key-file", filenames.anon,
     "--old-service-role-key-file", filenames.serviceRole,
     "--evidence-dir", filenames.evidence,
   ];
+  if (operation === disableOperation) {
+    values.push("--management-write-token-file", filenames.write);
+  }
+  return values;
 }
 
-function environment(overrides: Record<string, string> = {}): Record<string, string> {
+function environment(
+  overrides: Record<string, string> = {},
+  operation = disableOperation,
+): Record<string, string> {
   return {
     GITHUB_REF: "refs/heads/main",
     GITHUB_SHA: candidateSha,
     GITHUB_RUN_ATTEMPT: "1",
+    PINTPATH_SUPABASE_CUTOVER_OPERATION: operation,
     PINTPATH_SUPABASE_CUTOVER_CONFIRMATION:
-      "DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS",
+      operation === reconcileOperation
+        ? "RECONCILE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS"
+        : "DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS",
     ...overrides,
   };
 }
@@ -70,6 +82,8 @@ type LegacyKeyFamily = "anon" | "service_role";
 
 interface ProviderOptions {
   ambiguousWrite?: boolean;
+  initiallyDisabled?: boolean;
+  reEnableOnSecondManagementRead?: boolean;
   alreadyRejected?: LegacyKeyFamily;
   invalidPostDisableRejection?: {
     family: LegacyKeyFamily;
@@ -83,8 +97,9 @@ function provider(options: ProviderOptions = {}): {
   putCount: () => number;
   oldProbeCount: (family: LegacyKeyFamily) => number;
 } {
-  let enabled = true;
+  let enabled = options.initiallyDisabled !== true;
   let puts = 0;
+  let managementReads = 0;
   const oldProbes: Record<LegacyKeyFamily, number> = { anon: 0, service_role: 0 };
   const rejection = (family: LegacyKeyFamily): Response => {
     const invalid = options.invalidPostDisableRejection;
@@ -104,6 +119,10 @@ function provider(options: ProviderOptions = {}): {
         return json({ enabled: false });
       }
       expect(headers?.authorization).toBe(`Bearer ${readToken}`);
+      managementReads += 1;
+      if (options.reEnableOnSecondManagementRead && managementReads === 2) {
+        enabled = true;
+      }
       return json({ enabled });
     }
     const apiKey = headers?.apikey;
@@ -196,10 +215,14 @@ describe("protected permanent-staging Supabase cutover", () => {
     expect(receipt.attempts).toBe(1);
     expect(receipt.retryAllowed).toBe(false);
     expect(receipt.checks).toEqual(expect.objectContaining({
+      operationExact: true,
+      managementWriteCredentialAbsentExact: false,
+      managementWriteCredentialSeparateExact: true,
       canaryBBeforeExact: true,
       legacyPreflightEnabledExact: true,
       oldAnonAcceptedBeforeExact: true,
       oldServiceRoleAcceptedBeforeExact: true,
+      managementWriteSkippedExact: false,
       disableAcknowledgementExact: true,
       postflightAttempted: true,
       legacyPostflightDisabledExact: true,
@@ -217,6 +240,144 @@ describe("protected permanent-staging Supabase cutover", () => {
     const allDurable = `${output.join("")}\n${[...evidence.values()].join("\n")}`;
     for (const secret of [readToken, writeToken, publishableKey, secretKey,
       oldAnon, oldServiceRole]) expect(allDurable).not.toContain(secret);
+  });
+
+  it("reconciles an already-disabled project without a management write", async () => {
+    const output: string[] = [];
+    const evidence = new Map<string, string>();
+    const live = provider({ initiallyDisabled: true });
+    const read = vi.fn(readSecret);
+    const exitCode = await runProtectedPermanentStagingSupabaseCutover({
+      argv: argv(reconcileOperation), env: environment({}, reconcileOperation),
+      cwd: projectRoot, fetchImpl: live.fetchImpl, readSecret: read,
+      writeDurable: durable(evidence), writeOutput: (value) => output.push(value),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(live.putCount()).toBe(0);
+    expect(read).not.toHaveBeenCalledWith(filenames.write);
+    expect(live.oldProbeCount("anon")).toBe(2);
+    expect(live.oldProbeCount("service_role")).toBe(2);
+    expect(output).toHaveLength(1);
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      schemaVersion: PROTECTED_SUPABASE_CUTOVER_SCHEMA,
+      outcome: "already_disabled",
+      attempts: 0,
+      retryAllowed: false,
+      checks: {
+        canaryBBeforeExact: true,
+        legacyPreflightEnabledExact: false,
+        legacyPreflightDisabledExact: true,
+        oldAnonAcceptedBeforeExact: false,
+        oldServiceRoleAcceptedBeforeExact: false,
+        oldAnonDeniedBeforeExact: true,
+        oldServiceRoleDeniedBeforeExact: true,
+        managementWriteCredentialAbsentExact: true,
+        managementWriteCredentialSeparateExact: false,
+        managementWriteSkippedExact: true,
+        disableAcknowledgementExact: false,
+        postflightAttempted: true,
+        legacyPostflightDisabledExact: true,
+        canaryBAfterExact: true,
+        oldAnonDeniedExact: true,
+        oldServiceRoleDeniedExact: true,
+        terminalEvidenceExact: true,
+      },
+    });
+    expect([...evidence.keys()]).toEqual(["intent.json", "terminal.json"]);
+    expect(JSON.parse(evidence.get("intent.json")!)).toMatchObject({
+      schemaVersion: "pintpath-protected-permanent-staging-supabase-cutover-intent/v2",
+      requestedOperation: reconcileOperation,
+      operation: "reconcile-already-disabled-legacy-jwt-api-keys",
+      maximumAttempts: 0,
+      legacyPreflightEnabled: false,
+      legacyPreflightDisabled: true,
+      oldAnonDeniedBeforeReconciliation: true,
+      oldServiceRoleDeniedBeforeReconciliation: true,
+    });
+    const allDurable = `${output.join("")}\n${[...evidence.values()].join("\n")}`;
+    for (const secret of [readToken, writeToken, publishableKey, secretKey,
+      oldAnon, oldServiceRole]) expect(allDurable).not.toContain(secret);
+  });
+
+  it("fails closed without a write when the already-disabled state changes during reconciliation", async () => {
+    const output: string[] = [];
+    const live = provider({
+      initiallyDisabled: true,
+      reEnableOnSecondManagementRead: true,
+    });
+    const exitCode = await runProtectedPermanentStagingSupabaseCutover({
+      argv: argv(reconcileOperation), env: environment({}, reconcileOperation),
+      cwd: projectRoot, fetchImpl: live.fetchImpl,
+      readSecret, writeDurable: durable(new Map()), writeOutput: (value) => output.push(value),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(live.putCount()).toBe(0);
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: {
+        legacyPreflightDisabledExact: true,
+        managementWriteSkippedExact: true,
+        postflightAttempted: true,
+        legacyPostflightDisabledExact: false,
+      },
+    });
+  });
+
+  it("rejects explicit operation and provider-state mismatches before intent or write", async () => {
+    for (const fixture of [
+      {
+        operation: disableOperation,
+        live: provider({ initiallyDisabled: true }),
+      },
+      {
+        operation: reconcileOperation,
+        live: provider(),
+      },
+    ]) {
+      const output: string[] = [];
+      const evidence = new Map<string, string>();
+      const read = vi.fn(readSecret);
+      const exitCode = await runProtectedPermanentStagingSupabaseCutover({
+        argv: argv(fixture.operation),
+        env: environment({}, fixture.operation),
+        cwd: projectRoot,
+        fetchImpl: fixture.live.fetchImpl,
+        readSecret: read,
+        writeDurable: durable(evidence),
+        writeOutput: (value) => output.push(value),
+      });
+
+      expect(exitCode).toBe(1);
+      expect(fixture.live.putCount()).toBe(0);
+      expect(evidence.size).toBe(0);
+      expect(JSON.parse(output[0]!)).toMatchObject({
+        outcome: "failed_before_attempt",
+        attempts: 0,
+        intentSha256: null,
+      });
+      if (fixture.operation === reconcileOperation) {
+        expect(read).not.toHaveBeenCalledWith(filenames.write);
+      }
+    }
+  });
+
+  it("requires operation-specific write-token argument custody", () => {
+    const { parseArguments } = protectedPermanentStagingSupabaseCutoverInternals;
+    expect(parseArguments(argv(disableOperation))).not.toBeNull();
+    expect(parseArguments(argv(reconcileOperation))).not.toBeNull();
+
+    const disableWithoutWrite = argv(disableOperation);
+    const writeIndex = disableWithoutWrite.indexOf("--management-write-token-file");
+    disableWithoutWrite.splice(writeIndex, 2);
+    expect(parseArguments(disableWithoutWrite)).toBeNull();
+    expect(parseArguments([
+      ...argv(reconcileOperation),
+      "--management-write-token-file",
+      filenames.write,
+    ])).toBeNull();
   });
 
   it("does not retry an applied write whose acknowledgement is lost", async () => {
@@ -239,7 +400,7 @@ describe("protected permanent-staging Supabase cutover", () => {
   });
 
   it.each(["anon", "service_role"] as const)(
-    "rejects an already-disabled well-formed %s input before intent or PUT",
+    "rejects an already-rejected %s input while management still reports enabled",
     async (family) => {
       const output: string[] = [];
       const evidence = new Map<string, string>();
@@ -330,21 +491,53 @@ describe("protected permanent-staging Supabase cutover", () => {
     expect(JSON.parse(output[0]!).attempts).toBe(0);
   });
 
-  it("keeps the workflow manual, protected, one-shot, and secret-file based", () => {
+  it("keeps the workflow manual, protected, explicit-mode, one-shot, and secret-file based", () => {
     const workflow = fs.readFileSync(path.join(projectRoot,
       ".github/workflows/permanent-staging-supabase-legacy-cutover.yml"), "utf8");
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("environment: permanent-staging-supabase-legacy-disable");
     expect(workflow).toContain("actions: read");
     expect(workflow).toContain("replacement_run_id:");
+    expect(workflow).toContain("fenced_deployment_run_id:");
     expect(workflow).toContain("deployment_run_id:");
+    expect(workflow).toContain("operation:");
+    expect(workflow).toContain(
+      "run-name: Permanent staging Supabase legacy cutover | ${{ inputs.operation }} | ${{ inputs.candidate_sha }}",
+    );
+    expect(workflow).toContain("- reconcile-already-disabled-legacy-keys");
+    expect(workflow).toContain("- disable-enabled-legacy-keys");
+    expect(workflow).toContain(
+      "RECONCILE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS",
+    );
     expect(workflow).toContain("test \"$RUN_ATTEMPT\" = 1");
     expect(workflow).toContain(
       "scripts/verify-github-permanent-staging-deployment.mjs",
     );
     expect(workflow).toContain("--replacement-run-id \"$REPLACEMENT_RUN_ID\"");
+    expect(workflow).toContain(
+      "--fenced-deployment-run-id \"$FENCED_DEPLOYMENT_RUN_ID\"",
+    );
     expect(workflow).toContain("--deployment-run-id \"$DEPLOYMENT_RUN_ID\"");
+    expect(workflow).toContain("--fenced-deployment-receipt");
+    expect(workflow).toContain("--deployment-receipt");
+    expect(workflow).toContain(
+      "pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}",
+    );
+    expect(workflow).toContain(
+      "pintpath-permanent-staging-deployment-${{ inputs.candidate_sha }}",
+    );
+    expect(workflow).toContain(
+      'schemaVersion:"pintpath-protected-supabase-cutover-dispatch/v3"',
+    );
+    expect(workflow).toContain("--cutover-mode \"$OPERATION\"");
+    expect(workflow).toContain("--operation \"$OPERATION\"");
     expect(workflow).toContain("--management-write-token-file");
+    expect(workflow).toContain(
+      "if: inputs.operation == 'disable-enabled-legacy-keys'",
+    );
+    expect(workflow).toContain(
+      "test ! -e \"$RUNNER_TEMP/pintpath-supabase-cutover-input/management-write-token\"",
+    );
     expect(workflow).toContain("if: always()\n        shell: bash\n        run: |");
     expect(workflow).toContain("shred -u");
     expect(workflow).not.toContain("npm install --global");
@@ -356,7 +549,18 @@ describe("protected permanent-staging Supabase cutover", () => {
     const secretCustodyIndex = workflow.indexOf(
       "PINTPATH_SUPABASE_STAGING_SECRETS_READ_TOKEN",
     );
+    const writeCustodyIndex = workflow.indexOf(
+      "Add separate write-token custody only for enabled-state disablement",
+    );
+    const writeSecretIndex = workflow.indexOf(
+      "PINTPATH_SUPABASE_STAGING_SECRETS_WRITE_TOKEN",
+    );
     expect(authorityIndex).toBeGreaterThan(0);
     expect(secretCustodyIndex).toBeGreaterThan(authorityIndex);
+    expect(writeCustodyIndex).toBeGreaterThan(secretCustodyIndex);
+    expect(writeSecretIndex).toBeGreaterThan(writeCustodyIndex);
+    expect(workflow.slice(secretCustodyIndex, writeCustodyIndex)).not.toContain(
+      "PINTPATH_SUPABASE_STAGING_SECRETS_WRITE_TOKEN",
+    );
   });
 });

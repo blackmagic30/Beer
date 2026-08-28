@@ -10,7 +10,7 @@ function read(filename: string): string {
 }
 
 describe("protected provider mutation workflows", () => {
-  it("keeps provider variables behind one protected, main-only, non-rerunnable mutation", () => {
+  it("keeps staging variables behind one protected, main-only, non-rerunnable plan", () => {
     const workflow = read(
       ".github/workflows/permanent-staging-provider-mutation.yml",
     );
@@ -29,6 +29,39 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain("test \"$DISPATCH_REF\" = 'refs/heads/main'");
     expect(workflow).toContain("test \"$RUN_ATTEMPT\" = '1'");
     expect(workflow).toContain("supabase:keys:consumer-compatibility:check");
+    expect(workflow).toContain("remove-forbidden-offsite-backup-variables");
+    expect(workflow).toContain(
+      "resume-forbidden-offsite-backup-deletion-patch",
+    );
+    expect(workflow).toContain(
+      "cancel-forbidden-offsite-backup-deletion-patch",
+    );
+    expect(workflow).toContain('--prior-run-id "$PRIOR_CLEANUP_RUN_ID"');
+    expect(workflow).toContain("run-id: ${{ inputs.prior_cleanup_run_id }}");
+    expect(workflow).toContain("id: prior_cleanup_evidence");
+    expect(workflow).toContain("continue-on-error: true");
+    expect(workflow).toContain(
+      "if: steps.prior_cleanup_evidence.outcome == 'success'",
+    );
+    expect(workflow).toContain(
+      '--reviewed-authority-file "$RUNNER_TEMP/pintpath-provider-input/reviewed-authority.json"',
+    );
+    expect(workflow).toContain(
+      "if test \"$PINTPATH_PRIOR_CLEANUP_EVIDENCE_OUTCOME\" = 'success'; then",
+    );
+    expect(workflow).toContain(
+      "pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-${{ inputs.candidate_sha }}",
+    );
+    expect(workflow).toContain(
+      "Execute one reviewed protected Railway mutation plan",
+    );
+    expect(workflow).toContain("external_mutation_freeze_attestation:");
+    expect(workflow).toContain(
+      "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    );
+    expect(workflow).toContain(
+      "PINTPATH_EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}",
+    );
     expect(workflow).toContain("actions: read");
     expect(workflow).toContain("pull-requests: read");
     expect(workflow).toContain(
@@ -52,10 +85,52 @@ describe("protected provider mutation workflows", () => {
       projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
       productionEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
       stagingEnvironmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
-      mutation: {
-        maximumAttempts: 1,
+      authorizedBaselines: {
+        coldDeadNullReplica: {
+          serviceInstanceId: "5a2f3970-2850-44e0-9b6c-f5c7627dde13",
+          replicas: null,
+          latestDeploymentId: "c71fdb35-2be0-4031-b952-85595dfb2913",
+          latestDeploymentStatus: "FAILED",
+          latestDeploymentStopped: true,
+          activeDeploymentCount: 0,
+          sourceRepo: null,
+          sourceImage: null,
+        },
+      },
+      mutationPlans: {
+        variableUpsert: { maximumAttempts: 1, skipDeploys: true },
+        forbiddenVariableDeletion: {
+          merge: false,
+          stageMaximumAttempts: 1,
+          commitSkipDeploys: true,
+          commitMaximumAttempts: 1,
+          exactApplicationServicePatchOnly: true,
+          strandedPatchRecovery: {
+            reviewedPriorCandidateRunAuthorityRequired: true,
+            priorArtifactVerification: "OPTIONAL_ADDITIONAL_IF_AVAILABLE",
+            exactPatchSha256:
+              "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91",
+            completedDeletionReadOnlyReconciliationAllowed: true,
+            completedDeletionMaximumAttempts: 0,
+            noEffectRecovery: {
+              exactOriginalRowsAndEmptyPatchRequired: true,
+              resumeStageMaximumAttempts: 1,
+              resumeCommitMaximumAttempts: 1,
+              cancelReadOnlyMaximumAttempts: 0,
+              ambiguousSameModeRedispatchAllowed: true,
+            },
+            maximumAttempts: 1,
+            crossOperationRetryAllowed: false,
+          },
+        },
         automaticRetriesAllowed: false,
         rerunsAllowed: false,
+        externalMutationFreeze: {
+          required: true,
+          enforcement: "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+          providerCommitSelector: "ENVIRONMENT_ID_ONLY",
+          providerStagedCommitPatchIdCasOrLockAvailable: false,
+        },
         unconditionalPostflightRequired: true,
       },
     });
@@ -63,7 +138,11 @@ describe("protected provider mutation workflows", () => {
       executor.match(/PROTECTED_STAGING_VARIABLE_MUTATION_QUERY/g),
     ).toHaveLength(2);
     expect(executor).toContain("checks.postflightAttempted = true");
+    expect(executor).toContain("PROTECTED_STAGING_VARIABLE_PATCH_QUERY");
+    expect(executor).toContain("checks.committedDeletionPatchExact");
     expect(executor).toContain("retryAllowed: false");
+    expect(executor).not.toContain("CANARY_SERVICE_ID");
+    expect(executor).not.toContain("supabaseCanaryServiceId");
   });
 
   it("authenticates cutover and runtime-variable callers before secret custody", () => {
@@ -103,6 +182,7 @@ describe("protected provider mutation workflows", () => {
     }
     expect(cutover).toContain('--replacement-run-id "$REPLACEMENT_RUN_ID"');
     expect(cutover).toContain('--deployment-run-id "$DEPLOYMENT_RUN_ID"');
+    expect(cutover).toContain('--cutover-mode "$OPERATION"');
     expect(worker).toContain("--operation runtime-variable");
     expect(worker).toContain('--target "$TARGET"');
     expect(worker).toContain('--variable-name "$VARIABLE_NAME"');

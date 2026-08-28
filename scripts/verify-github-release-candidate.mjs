@@ -48,6 +48,7 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_ASSOCIATED_PULL_PAGES = 10;
 const MAX_MUTATION_HISTORY_PAGES = 10;
 const MAX_STAGING_MUTATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const RUNNER_LOSS_RECOVERY_GRACE_MS = 24 * 60 * 60 * 1000;
 const STAGING_DEPLOYMENT_CHECK = "Deploy permanent staging";
 const STAGING_SCALE_CHECK = "Scale 1→2, prove, and converge 2→1";
 const PROVIDER_MUTATION_WORKFLOW_PATH =
@@ -65,15 +66,74 @@ const STAGING_BOOTSTRAP_WORKFLOW_PATH =
   ".github/workflows/bootstrap-permanent-staging-worker-fence.yml";
 const STAGING_BOOTSTRAP_WORKFLOW_ID =
   "bootstrap-permanent-staging-worker-fence.yml";
-const PROVIDER_MUTATION_JOB = "One atomic variable mutation";
+const COLD_RECOVERY_WORKFLOW_PATH =
+  ".github/workflows/recover-permanent-staging-cold-zero.yml";
+const COLD_RECOVERY_WORKFLOW_ID =
+  "recover-permanent-staging-cold-zero.yml";
+const COLD_RECOVERY_JOBS = Object.freeze({
+  prepare: Object.freeze({
+    jobName: "Bind the exact replacement and prepare the dead baseline",
+    writeStep: "Prepare the exact dead staging baseline once",
+  }),
+  "reconcile-prepare": Object.freeze({
+    jobName: "Reconcile an ambiguous cold prepare at the exact dead baseline",
+    writeStep: null,
+    proofStep: "Prove the lost prepare acknowledgement without another write",
+  }),
+  quiesce: Object.freeze({
+    jobName: "Initialize the exact dead baseline at explicit zero",
+    writeStep: "Initialize the dead baseline from null to explicit zero once",
+  }),
+  "reconcile-quiesce": Object.freeze({
+    jobName: "Reconcile an ambiguous cold quiesce at exact zero",
+    writeStep: null,
+    proofStep:
+      "Prove the ambiguous cold quiesce reached exact zero without a second write",
+  }),
+});
+const STAGING_WORKER_JOBS = Object.freeze({
+  configure: Object.freeze({
+    jobName: "One candidate-bound automatic-maintenance transition",
+    writeStep: "Execute at most one exact atomic Railway variable upsert",
+    proofStep: null,
+  }),
+  "reconcile-activate": Object.freeze({
+    jobName: "Reconcile an ambiguous staging automatic-maintenance activation",
+    writeStep: null,
+    proofStep: "Prove the lost activation acknowledgement without another write",
+  }),
+});
+const STAGING_BOOTSTRAP_JOBS = Object.freeze({
+  bootstrap: Object.freeze({
+    jobName: "Verify the chain and perform one exact protected scale transition",
+    writeStep: "Perform at most one exact candidate-bound scale transition",
+    proofStep: null,
+  }),
+  "reconcile-restore": Object.freeze({
+    jobName: "Reconcile an ambiguous staging bootstrap restore at exact one",
+    writeStep: null,
+    proofStep:
+      "Prove the ambiguous restore reached exact one without a second write",
+  }),
+});
+const PROVIDER_MUTATION_JOB = "One protected variable mutation plan";
 const PROVIDER_MUTATION_STEP =
-  "Execute exactly one reviewed atomic Railway mutation";
+  "Execute one reviewed protected Railway mutation plan";
 const PROVIDER_MUTATION_OPERATIONS = Object.freeze([
   "provider-google-maps-api-key",
   "provider-google-maps-map-id",
   "provider-google-places-api-key",
   "provider-openai-api-key",
   "supabase-key-replacement",
+  "remove-forbidden-offsite-backup-variables",
+  "resume-forbidden-offsite-backup-deletion-patch",
+  "cancel-forbidden-offsite-backup-deletion-patch",
+]);
+const OFFSITE_CLEANUP_OPERATION =
+  "remove-forbidden-offsite-backup-variables";
+const OFFSITE_CLEANUP_RECOVERY_OPERATIONS = new Set([
+  "resume-forbidden-offsite-backup-deletion-patch",
+  "cancel-forbidden-offsite-backup-deletion-patch",
 ]);
 const RUNTIME_VARIABLE_TARGETS = Object.freeze([
   "permanent-staging",
@@ -529,7 +589,7 @@ function runtimeVariableTitle(value, candidateSha) {
 }
 
 function stagingWorkerOperationForTitle(value, candidateSha) {
-  for (const operation of ["prepare", "activate"]) {
+  for (const operation of ["prepare", "activate", "reconcile-activate"]) {
     if (
       value ===
         `Automatic maintenance worker fence | permanent-staging | ${operation} | ${candidateSha}`
@@ -539,13 +599,102 @@ function stagingWorkerOperationForTitle(value, candidateSha) {
 }
 
 function stagingBootstrapOperationForTitle(value, candidateSha) {
-  for (const operation of ["quiesce", "restore"]) {
+  for (const operation of ["quiesce", "restore", "reconcile-restore"]) {
     if (
       value ===
         `Permanent staging worker bootstrap | ${operation} | ${candidateSha}`
     ) return operation;
   }
   return null;
+}
+
+function coldRecoveryOperationForTitle(value, candidateSha) {
+  for (const operation of [
+    "prepare",
+    "reconcile-prepare",
+    "quiesce",
+    "reconcile-quiesce",
+  ]) {
+    if (
+      value ===
+        `Permanent staging cold recovery | ${operation} | ${candidateSha}`
+    ) return operation;
+  }
+  return null;
+}
+
+async function workflowJobDisposition(
+  fetchImpl,
+  token,
+  policy,
+  run,
+  jobs,
+  selectedJobKey,
+  expectedKind,
+) {
+  const configuration = jobs[selectedJobKey];
+  if (
+    !configuration ||
+    (expectedKind === "write" && (
+      !configuration.writeStep ||
+      !["failure", "cancelled", "timed_out"].includes(run.conclusion)
+    )) ||
+    (expectedKind === "reconcile" && (
+      !configuration.proofStep || run.conclusion !== "success"
+    )) ||
+    (expectedKind === "reconcile-retry" && (
+      !configuration.proofStep ||
+      !["failure", "cancelled", "timed_out"].includes(run.conclusion)
+    ))
+  ) return "invalid";
+  const listing = await githubGet(
+    fetchImpl,
+    token,
+    policy.repository,
+    `/actions/runs/${run.id}/jobs?filter=all&per_page=100`,
+  );
+  const jobNames = Object.values(jobs).map((item) => item.jobName);
+  if (
+    listing?.total_count !== jobNames.length ||
+    !Array.isArray(listing?.jobs) ||
+    listing.jobs.length !== jobNames.length ||
+    new Set(listing.jobs.map((job) => job?.name)).size !== jobNames.length ||
+    jobNames.some((name) => !listing.jobs.some((job) => job?.name === name))
+  ) return "invalid";
+  const selected = listing.jobs.find((job) =>
+    job?.name === configuration.jobName);
+  if (
+    selected?.run_id !== run.id ||
+    selected?.run_attempt !== 1 ||
+    selected?.status !== "completed" ||
+    selected?.conclusion !== run.conclusion ||
+    !Array.isArray(selected?.steps) ||
+    listing.jobs.some((job) => job !== selected && (
+      job?.run_id !== run.id ||
+      job?.run_attempt !== 1 ||
+      job?.status !== "completed" ||
+      job?.conclusion !== "skipped"
+    ))
+  ) return "invalid";
+  if (expectedKind === "reconcile-retry") return "read-only-retry";
+  const expectedStep = expectedKind === "write"
+    ? configuration.writeStep
+    : configuration.proofStep;
+  const writeSteps = selected.steps.filter((step) =>
+    step?.name === expectedStep);
+  if (
+    writeSteps.length !== 1 ||
+    writeSteps[0]?.status !== "completed"
+  ) return "invalid";
+  if (expectedKind === "reconcile") {
+    return writeSteps[0]?.conclusion === "success"
+      ? "read-only-reconciled"
+      : "invalid";
+  }
+  if (writeSteps[0]?.conclusion === "skipped") return "skipped";
+  return ["success", "failure", "cancelled", "timed_out"].includes(
+    writeSteps[0]?.conclusion,
+  ) ? "may-have-written" : "invalid";
 }
 
 function validateMutationWorkflowRun(
@@ -580,14 +729,14 @@ function validateMutationWorkflowRun(
   return Object.freeze({ ...value, createdAtMs, startedAtMs, updatedAtMs });
 }
 
-async function providerFailureSkippedWrite(
+async function providerWriteDisposition(
   fetchImpl,
   token,
   policy,
   run,
 ) {
   if (!["failure", "cancelled", "timed_out"].includes(run.conclusion)) {
-    return false;
+    return "invalid";
   }
   const listing = await githubGet(
     fetchImpl,
@@ -599,7 +748,7 @@ async function providerFailureSkippedWrite(
     listing?.total_count !== 1 ||
     !Array.isArray(listing?.jobs) ||
     listing.jobs.length !== 1
-  ) return false;
+  ) return "invalid";
   const job = listing.jobs[0];
   if (
     job?.run_id !== run.id ||
@@ -608,12 +757,15 @@ async function providerFailureSkippedWrite(
     job?.status !== "completed" ||
     job?.conclusion !== run.conclusion ||
     !Array.isArray(job?.steps)
-  ) return false;
+  ) return "invalid";
   const mutationSteps = job.steps.filter((step) =>
     step?.name === PROVIDER_MUTATION_STEP);
-  return mutationSteps.length === 1 &&
-    mutationSteps[0]?.status === "completed" &&
-    mutationSteps[0]?.conclusion === "skipped";
+  if (mutationSteps.length !== 1 ||
+    mutationSteps[0]?.status !== "completed") return "invalid";
+  if (mutationSteps[0]?.conclusion === "skipped") return "skipped";
+  return ["success", "failure", "cancelled", "timed_out"].includes(
+    mutationSteps[0]?.conclusion,
+  ) ? "may-have-written" : "invalid";
 }
 
 async function verifyStagingMutationClosure(input) {
@@ -624,9 +776,68 @@ async function verifyStagingMutationClosure(input) {
     mergedAtMs === null ||
     deployStartedAtMs === null ||
     consumerStartedAtMs === null ||
-    deployStartedAtMs < mergedAtMs ||
-    deployStartedAtMs - mergedAtMs > MAX_STAGING_MUTATION_WINDOW_MS
+    deployStartedAtMs < mergedAtMs
   ) throw new Error("staging_mutation_history_expired");
+  const initialWriteDeadlineMs = mergedAtMs + MAX_STAGING_MUTATION_WINDOW_MS;
+  const recoveryOriginalCompletionTimes = [];
+  const requireInitialWriteInWindow = (run) => {
+    if (run.updatedAtMs > initialWriteDeadlineMs) {
+      throw new Error("staging_mutation_history_expired");
+    }
+  };
+  const recordRunnerLossRecovery = (original, recovery, priorReadOnlyRetries) => {
+    requireInitialWriteInWindow(original);
+    const retries = [...priorReadOnlyRetries].sort((left, right) =>
+      left.startedAtMs - right.startedAtMs);
+    if (
+      new Set(retries.map((run) => run.id)).size !== retries.length ||
+      retries.some((run, index) =>
+        (index === 0
+          ? original.updatedAtMs >= run.startedAtMs
+          : retries[index - 1].updatedAtMs >= run.startedAtMs)) ||
+      (retries.length === 0
+        ? original.updatedAtMs >= recovery.startedAtMs
+        : retries.at(-1).updatedAtMs >= recovery.startedAtMs)
+    ) {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
+    const recoveryDeadlineMs =
+      original.updatedAtMs + RUNNER_LOSS_RECOVERY_GRACE_MS;
+    if (
+      retries.some((run) => run.updatedAtMs > recoveryDeadlineMs) ||
+      recovery.updatedAtMs > recoveryDeadlineMs
+    ) {
+      throw new Error("staging_mutation_history_expired");
+    }
+    recoveryOriginalCompletionTimes.push(original.updatedAtMs);
+    return Object.freeze(retries);
+  };
+
+  if (
+    !Array.isArray(input.deployments) ||
+    input.deployments.length !== 2 ||
+    !input.scale
+  ) throw new Error("staging_bootstrap_history_invalid");
+  const [fencedDeployment, activeDeployment] = input.deployments;
+  const fencedStartedAtMs = timestamp(fencedDeployment.startedAt);
+  const fencedCompletedAtMs = timestamp(fencedDeployment.completedAt);
+  const activeStartedAtMs = timestamp(activeDeployment.startedAt);
+  const activeCompletedAtMs = timestamp(activeDeployment.completedAt);
+  const scaleStartedAtMs = timestamp(input.scale.startedAt);
+  const fencedRun = input.workflowRuns.get(fencedDeployment.runId);
+  const activeRun = input.workflowRuns.get(activeDeployment.runId);
+  if (
+    fencedStartedAtMs === null ||
+    fencedCompletedAtMs === null ||
+    activeStartedAtMs === null ||
+    activeCompletedAtMs === null ||
+    scaleStartedAtMs === null ||
+    activeStartedAtMs !== deployStartedAtMs ||
+    fencedRun?.display_title !==
+      `Deploy permanent staging | fenced | ${input.candidateSha}` ||
+    activeRun?.display_title !==
+      `Deploy permanent staging | active | ${input.candidateSha}`
+  ) throw new Error("staging_bootstrap_history_invalid");
 
   const providerRuns = await listMutationWorkflowRuns(
     input.fetchImpl,
@@ -636,6 +847,12 @@ async function verifyStagingMutationClosure(input) {
     input.reviewedPullRequest.mergedAt,
     input.consumerStartedAt,
   );
+  const ambiguousOffsiteCleanupRuns = [];
+  const ambiguousOffsiteCleanupRecoveryRuns = [];
+  const successfulOffsiteCleanupRecoveryRuns = [];
+  const safeSkippedOffsiteCleanupRuns = [];
+  const safeSkippedOffsiteCleanupRecoveryRuns = [];
+  let successfulOffsiteCleanupRuns = 0;
   for (const observed of providerRuns.filter((run) =>
     run?.head_sha === input.candidateSha)) {
     const operation = providerOperationForTitle(
@@ -654,17 +871,103 @@ async function verifyStagingMutationClosure(input) {
       run.createdAtMs < mergedAtMs ||
       run.createdAtMs > consumerStartedAtMs
     ) throw new Error("staging_mutation_history_invalid");
-    if (
-      run.conclusion !== "success" &&
-      !await providerFailureSkippedWrite(
+    if (run.conclusion === "success") {
+      if (operation === OFFSITE_CLEANUP_OPERATION) {
+        successfulOffsiteCleanupRuns += 1;
+        requireInitialWriteInWindow(run);
+      }
+      if (OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(operation)) {
+        successfulOffsiteCleanupRecoveryRuns.push({ operation, run });
+      } else if (operation !== OFFSITE_CLEANUP_OPERATION) {
+        requireInitialWriteInWindow(run);
+      }
+    } else {
+      const disposition = await providerWriteDisposition(
         input.fetchImpl,
         input.token,
         input.policy,
         run,
-      )
-    ) throw new Error("staging_mutation_history_invalid");
+      );
+      if (disposition === "skipped") {
+        if (operation === OFFSITE_CLEANUP_OPERATION) {
+          safeSkippedOffsiteCleanupRuns.push(run);
+        } else if (OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(operation)) {
+          safeSkippedOffsiteCleanupRecoveryRuns.push({ operation, run });
+        }
+      } else if (
+        operation === OFFSITE_CLEANUP_OPERATION &&
+        disposition === "may-have-written"
+      ) {
+        requireInitialWriteInWindow(run);
+        ambiguousOffsiteCleanupRuns.push(run);
+      } else if (
+        OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(operation) &&
+        disposition === "may-have-written"
+      ) {
+        ambiguousOffsiteCleanupRecoveryRuns.push({ operation, run });
+      } else {
+        throw new Error("staging_mutation_history_invalid");
+      }
+    }
     if (run.updatedAtMs >= deployStartedAtMs) {
       throw new Error("staging_mutation_after_closeout_deployment");
+    }
+  }
+  if (successfulOffsiteCleanupRuns > 1) {
+    throw new Error("staging_mutation_history_invalid");
+  }
+  ambiguousOffsiteCleanupRecoveryRuns.sort((left, right) =>
+    left.run.startedAtMs - right.run.startedAtMs);
+  if (ambiguousOffsiteCleanupRuns.length === 0) {
+    if (successfulOffsiteCleanupRecoveryRuns.length !== 0 ||
+      ambiguousOffsiteCleanupRecoveryRuns.length !== 0 ||
+      safeSkippedOffsiteCleanupRecoveryRuns.length !== 0) {
+      throw new Error("staging_mutation_history_invalid");
+    }
+  } else if (
+    ambiguousOffsiteCleanupRuns.length !== 1 ||
+    successfulOffsiteCleanupRecoveryRuns.length !== 1 ||
+    successfulOffsiteCleanupRuns !== 0 ||
+    ambiguousOffsiteCleanupRuns[0].updatedAtMs >=
+      successfulOffsiteCleanupRecoveryRuns[0].run.startedAtMs ||
+    ambiguousOffsiteCleanupRecoveryRuns.some((item) =>
+      item.operation !== successfulOffsiteCleanupRecoveryRuns[0].operation ||
+      item.run.startedAtMs <= ambiguousOffsiteCleanupRuns[0].updatedAtMs ||
+      item.run.updatedAtMs >=
+        successfulOffsiteCleanupRecoveryRuns[0].run.startedAtMs)
+  ) {
+    throw new Error("staging_mutation_history_invalid");
+  } else {
+    const originalCleanup = ambiguousOffsiteCleanupRuns[0];
+    const finalRecovery = successfulOffsiteCleanupRecoveryRuns[0];
+    const recoveryDeadlineMs =
+      originalCleanup.updatedAtMs + RUNNER_LOSS_RECOVERY_GRACE_MS;
+    const priorRecoveryAttempts = [
+      ...ambiguousOffsiteCleanupRecoveryRuns.map((item) => ({
+        ...item,
+        disposition: "may-have-written",
+      })),
+      ...safeSkippedOffsiteCleanupRecoveryRuns.map((item) => ({
+        ...item,
+        disposition: "skipped",
+      })),
+    ].sort((left, right) => left.run.startedAtMs - right.run.startedAtMs);
+    if (priorRecoveryAttempts.some((item, index) =>
+        item.run.startedAtMs <= originalCleanup.updatedAtMs ||
+        item.run.updatedAtMs >= finalRecovery.run.startedAtMs ||
+        (index > 0 && priorRecoveryAttempts[index - 1].run.updatedAtMs >=
+          item.run.startedAtMs))) {
+      throw new Error("staging_mutation_history_invalid");
+    }
+    if (
+      priorRecoveryAttempts.some((item) =>
+        item.run.updatedAtMs > recoveryDeadlineMs) ||
+      finalRecovery.run.updatedAtMs > recoveryDeadlineMs
+    ) throw new Error("staging_mutation_history_expired");
+    recoveryOriginalCompletionTimes.push(originalCleanup.updatedAtMs);
+    if (safeSkippedOffsiteCleanupRuns.some((run) =>
+      run.updatedAtMs >= originalCleanup.startedAtMs)) {
+      throw new Error("staging_mutation_history_invalid");
     }
   }
 
@@ -698,35 +1001,11 @@ async function verifyStagingMutationClosure(input) {
     if (run.conclusion !== "success") {
       throw new Error("staging_mutation_history_invalid");
     }
+    requireInitialWriteInWindow(run);
     if (run.updatedAtMs >= deployStartedAtMs) {
       throw new Error("staging_mutation_after_closeout_deployment");
     }
   }
-
-  if (
-    !Array.isArray(input.deployments) ||
-    input.deployments.length !== 2 ||
-    !input.scale
-  ) throw new Error("staging_bootstrap_history_invalid");
-  const [fencedDeployment, activeDeployment] = input.deployments;
-  const fencedStartedAtMs = timestamp(fencedDeployment.startedAt);
-  const fencedCompletedAtMs = timestamp(fencedDeployment.completedAt);
-  const activeStartedAtMs = timestamp(activeDeployment.startedAt);
-  const activeCompletedAtMs = timestamp(activeDeployment.completedAt);
-  const scaleStartedAtMs = timestamp(input.scale.startedAt);
-  const fencedRun = input.workflowRuns.get(fencedDeployment.runId);
-  const activeRun = input.workflowRuns.get(activeDeployment.runId);
-  if (
-    fencedStartedAtMs === null ||
-    fencedCompletedAtMs === null ||
-    activeStartedAtMs === null ||
-    activeCompletedAtMs === null ||
-    scaleStartedAtMs === null ||
-    fencedRun?.display_title !==
-      `Deploy permanent staging | fenced | ${input.candidateSha}` ||
-    activeRun?.display_title !==
-      `Deploy permanent staging | active | ${input.candidateSha}`
-  ) throw new Error("staging_bootstrap_history_invalid");
 
   const workerRuns = await listMutationWorkflowRuns(
     input.fetchImpl,
@@ -737,6 +1016,9 @@ async function verifyStagingMutationClosure(input) {
     input.consumerStartedAt,
   );
   const stagingWorkers = [];
+  const safeSkippedWorkers = [];
+  const ambiguousActivations = [];
+  const priorReadOnlyActivationReconciliations = [];
   for (const observed of workerRuns.filter((run) =>
     run?.head_sha === input.candidateSha &&
     String(run?.display_title ?? "").startsWith(
@@ -754,14 +1036,64 @@ async function verifyStagingMutationClosure(input) {
       WORKER_FENCE_WORKFLOW_PATH,
       observed.display_title,
     );
-    if (
-      run.conclusion !== "success" ||
-      run.createdAtMs < mergedAtMs ||
-      run.createdAtMs > consumerStartedAtMs
-    ) {
+    if (run.createdAtMs < mergedAtMs ||
+      run.createdAtMs > consumerStartedAtMs ||
+      run.updatedAtMs >= activeStartedAtMs) {
       throw new Error("staging_bootstrap_history_invalid");
     }
-    stagingWorkers.push(Object.freeze({ operation, run }));
+    if (run.conclusion === "success") {
+      if (operation === "reconcile-activate") {
+        if (await workflowJobDisposition(
+          input.fetchImpl,
+          input.token,
+          input.policy,
+          run,
+          STAGING_WORKER_JOBS,
+          "reconcile-activate",
+          "reconcile",
+        ) !== "read-only-reconciled") {
+          throw new Error("staging_bootstrap_history_invalid");
+        }
+      } else {
+        requireInitialWriteInWindow(run);
+      }
+      stagingWorkers.push(Object.freeze({ operation, run }));
+      continue;
+    }
+    if (operation === "reconcile-activate") {
+      if (await workflowJobDisposition(
+        input.fetchImpl,
+        input.token,
+        input.policy,
+        run,
+        STAGING_WORKER_JOBS,
+        "reconcile-activate",
+        "reconcile-retry",
+      ) !== "read-only-retry") {
+        throw new Error("staging_bootstrap_history_invalid");
+      }
+      priorReadOnlyActivationReconciliations.push(
+        Object.freeze({ operation, run }),
+      );
+      continue;
+    }
+    const disposition = await workflowJobDisposition(
+      input.fetchImpl,
+      input.token,
+      input.policy,
+      run,
+      STAGING_WORKER_JOBS,
+      "configure",
+      "write",
+    );
+    if (disposition === "skipped") {
+      safeSkippedWorkers.push(Object.freeze({ operation, run }));
+    } else if (operation === "activate" && disposition === "may-have-written") {
+      requireInitialWriteInWindow(run);
+      ambiguousActivations.push(Object.freeze({ operation, run }));
+    } else {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
   }
 
   const bootstrapRuns = await listMutationWorkflowRuns(
@@ -773,6 +1105,9 @@ async function verifyStagingMutationClosure(input) {
     input.consumerStartedAt,
   );
   const stagingBootstrap = [];
+  const safeSkippedBootstrap = [];
+  const ambiguousRestores = [];
+  const priorReadOnlyRestoreReconciliations = [];
   for (const observed of bootstrapRuns.filter((run) =>
     run?.head_sha === input.candidateSha)) {
     const operation = stagingBootstrapOperationForTitle(
@@ -787,14 +1122,157 @@ async function verifyStagingMutationClosure(input) {
       STAGING_BOOTSTRAP_WORKFLOW_PATH,
       observed.display_title,
     );
-    if (
-      run.conclusion !== "success" ||
-      run.createdAtMs < mergedAtMs ||
-      run.createdAtMs > consumerStartedAtMs
-    ) {
+    if (run.createdAtMs < mergedAtMs ||
+      run.createdAtMs > consumerStartedAtMs ||
+      run.updatedAtMs >= activeStartedAtMs) {
       throw new Error("staging_bootstrap_history_invalid");
     }
-    stagingBootstrap.push(Object.freeze({ operation, run }));
+    if (run.conclusion === "success") {
+      if (operation === "reconcile-restore") {
+        if (await workflowJobDisposition(
+          input.fetchImpl,
+          input.token,
+          input.policy,
+          run,
+          STAGING_BOOTSTRAP_JOBS,
+          "reconcile-restore",
+          "reconcile",
+        ) !== "read-only-reconciled") {
+          throw new Error("staging_bootstrap_history_invalid");
+        }
+      } else {
+        requireInitialWriteInWindow(run);
+      }
+      stagingBootstrap.push(Object.freeze({ operation, run }));
+      continue;
+    }
+    if (operation === "reconcile-restore") {
+      if (await workflowJobDisposition(
+        input.fetchImpl,
+        input.token,
+        input.policy,
+        run,
+        STAGING_BOOTSTRAP_JOBS,
+        "reconcile-restore",
+        "reconcile-retry",
+      ) !== "read-only-retry") {
+        throw new Error("staging_bootstrap_history_invalid");
+      }
+      priorReadOnlyRestoreReconciliations.push(
+        Object.freeze({ operation, run }),
+      );
+      continue;
+    }
+    const disposition = await workflowJobDisposition(
+      input.fetchImpl,
+      input.token,
+      input.policy,
+      run,
+      STAGING_BOOTSTRAP_JOBS,
+      "bootstrap",
+      "write",
+    );
+    if (disposition === "skipped") {
+      safeSkippedBootstrap.push(Object.freeze({ operation, run }));
+    } else if (operation === "restore" && disposition === "may-have-written") {
+      requireInitialWriteInWindow(run);
+      ambiguousRestores.push(Object.freeze({ operation, run }));
+    } else {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
+  }
+
+  const coldRuns = await listMutationWorkflowRuns(
+    input.fetchImpl,
+    input.token,
+    input.policy,
+    COLD_RECOVERY_WORKFLOW_ID,
+    input.reviewedPullRequest.mergedAt,
+    input.consumerStartedAt,
+  );
+  const stagingColdRecovery = [];
+  const safeSkippedColdRecovery = [];
+  const ambiguousColdPrepare = [];
+  const ambiguousColdQuiesce = [];
+  const priorReadOnlyColdReconciliations = [];
+  let observedCandidateColdRuns = 0;
+  for (const observed of coldRuns.filter((run) =>
+    run?.head_sha === input.candidateSha)) {
+    observedCandidateColdRuns += 1;
+    const operation = coldRecoveryOperationForTitle(
+      observed?.display_title,
+      input.candidateSha,
+    );
+    if (operation === null) throw new Error("staging_bootstrap_history_invalid");
+    const run = validateMutationWorkflowRun(
+      observed,
+      input.policy,
+      input.candidateSha,
+      COLD_RECOVERY_WORKFLOW_PATH,
+      observed.display_title,
+    );
+    if (run.createdAtMs < mergedAtMs ||
+      run.createdAtMs > consumerStartedAtMs ||
+      run.updatedAtMs >= activeStartedAtMs) {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
+    if (run.conclusion === "success") {
+      if (operation.startsWith("reconcile-")) {
+        if (await workflowJobDisposition(
+          input.fetchImpl,
+          input.token,
+          input.policy,
+          run,
+          COLD_RECOVERY_JOBS,
+          operation,
+          "reconcile",
+        ) !== "read-only-reconciled") {
+          throw new Error("staging_bootstrap_history_invalid");
+        }
+      } else {
+        requireInitialWriteInWindow(run);
+      }
+      stagingColdRecovery.push(Object.freeze({ operation, run }));
+      continue;
+    }
+    if (operation.startsWith("reconcile-")) {
+      if (await workflowJobDisposition(
+        input.fetchImpl,
+        input.token,
+        input.policy,
+        run,
+        COLD_RECOVERY_JOBS,
+        operation,
+        "reconcile-retry",
+      ) !== "read-only-retry") {
+        throw new Error("staging_bootstrap_history_invalid");
+      }
+      priorReadOnlyColdReconciliations.push(Object.freeze({ operation, run }));
+      continue;
+    }
+    const disposition = await workflowJobDisposition(
+      input.fetchImpl,
+      input.token,
+      input.policy,
+      run,
+      COLD_RECOVERY_JOBS,
+      operation,
+      "write",
+    );
+    if (disposition === "skipped") {
+      safeSkippedColdRecovery.push(Object.freeze({ operation, run }));
+    } else if (disposition === "may-have-written") {
+      requireInitialWriteInWindow(run);
+      if (operation === "prepare") {
+        ambiguousColdPrepare.push(Object.freeze({ operation, run }));
+      } else if (operation === "quiesce") {
+        ambiguousColdQuiesce.push(Object.freeze({ operation, run }));
+      } else {
+        throw new Error("staging_bootstrap_history_invalid");
+      }
+    } else {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
   }
 
   const one = (values, operation) => {
@@ -802,21 +1280,201 @@ async function verifyStagingMutationClosure(input) {
     if (matches.length !== 1) throw new Error("staging_bootstrap_history_invalid");
     return matches[0].run;
   };
-  if (stagingWorkers.length !== 2 || stagingBootstrap.length !== 2) {
+  const selectRecoveryPhase = (
+    successful,
+    ambiguous,
+    priorReadOnlyReconciliations,
+    normalOperation,
+    recoveryOperation,
+  ) => {
+    const normal = successful.filter((item) =>
+      item.operation === normalOperation);
+    const recovered = successful.filter((item) =>
+      item.operation === recoveryOperation);
+    const originals = ambiguous.filter((item) =>
+      item.operation === normalOperation);
+    const priorReadOnly = priorReadOnlyReconciliations.filter((item) =>
+      item.operation === recoveryOperation);
+    if (
+      normal.length === 1 &&
+      recovered.length === 0 &&
+      originals.length === 0 &&
+      priorReadOnly.length === 0
+    ) {
+      return Object.freeze({
+        first: normal[0].run,
+        terminal: normal[0].run,
+        runs: Object.freeze([normal[0].run]),
+      });
+    }
+    if (normal.length === 0 && recovered.length === 1 && originals.length === 1) {
+      const orderedPriorReadOnly = recordRunnerLossRecovery(
+        originals[0].run,
+        recovered[0].run,
+        priorReadOnly.map((item) => item.run),
+      );
+      return Object.freeze({
+        first: originals[0].run,
+        terminal: recovered[0].run,
+        runs: Object.freeze([
+          originals[0].run,
+          ...orderedPriorReadOnly,
+          recovered[0].run,
+        ]),
+      });
+    }
     throw new Error("staging_bootstrap_history_invalid");
-  }
-  const prepare = one(stagingWorkers, "prepare");
-  const activate = one(stagingWorkers, "activate");
-  const quiesce = one(stagingBootstrap, "quiesce");
-  const restore = one(stagingBootstrap, "restore");
+  };
+  const requireSafeRetriesBetween = (
+    safeRetries,
+    operation,
+    priorCompletedAtMs,
+    selectedStartedAtMs,
+  ) => {
+    const selectedRetries = safeRetries.filter((item) =>
+      item.operation === operation).sort((left, right) =>
+        left.run.startedAtMs - right.run.startedAtMs);
+    if (
+      new Set(selectedRetries.map((item) => item.run.id)).size !==
+        selectedRetries.length ||
+      selectedRetries.some((item, index) =>
+        item.run.startedAtMs <= priorCompletedAtMs ||
+        item.run.updatedAtMs >= selectedStartedAtMs ||
+        (index > 0 &&
+          selectedRetries[index - 1].run.updatedAtMs >= item.run.startedAtMs))
+    ) {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
+  };
+
+  const workerPrepare = stagingWorkers.filter((item) =>
+    item.operation === "prepare");
+  const bootstrapQuiesce = stagingBootstrap.filter((item) =>
+    item.operation === "quiesce");
+  const normalPath =
+    workerPrepare.length === 1 &&
+    bootstrapQuiesce.length === 1 &&
+    observedCandidateColdRuns === 0;
+  const coldPath =
+    workerPrepare.length === 0 &&
+    bootstrapQuiesce.length === 0 &&
+    safeSkippedWorkers.filter((item) => item.operation === "prepare").length === 0 &&
+    safeSkippedBootstrap.filter((item) => item.operation === "quiesce").length === 0 &&
+    observedCandidateColdRuns > 0;
+  if (normalPath === coldPath) throw new Error("staging_bootstrap_history_invalid");
+
+  const preparePhase = normalPath
+    ? Object.freeze({
+        first: one(stagingWorkers, "prepare"),
+        terminal: one(stagingWorkers, "prepare"),
+        runs: Object.freeze([one(stagingWorkers, "prepare")]),
+      })
+    : selectRecoveryPhase(
+        stagingColdRecovery,
+        ambiguousColdPrepare,
+        priorReadOnlyColdReconciliations,
+        "prepare",
+        "reconcile-prepare",
+      );
+  const quiescePhase = normalPath
+    ? Object.freeze({
+        first: one(stagingBootstrap, "quiesce"),
+        terminal: one(stagingBootstrap, "quiesce"),
+        runs: Object.freeze([one(stagingBootstrap, "quiesce")]),
+      })
+    : selectRecoveryPhase(
+        stagingColdRecovery,
+        ambiguousColdQuiesce,
+        priorReadOnlyColdReconciliations,
+        "quiesce",
+        "reconcile-quiesce",
+      );
+  const restorePhase = selectRecoveryPhase(
+    stagingBootstrap,
+    ambiguousRestores,
+    priorReadOnlyRestoreReconciliations,
+    "restore",
+    "reconcile-restore",
+  );
+  const activatePhase = selectRecoveryPhase(
+    stagingWorkers,
+    ambiguousActivations,
+    priorReadOnlyActivationReconciliations,
+    "activate",
+    "reconcile-activate",
+  );
+
   if (
-    prepare.updatedAtMs >= quiesce.startedAtMs ||
-    quiesce.updatedAtMs >= fencedStartedAtMs ||
-    fencedCompletedAtMs >= restore.startedAtMs ||
-    restore.updatedAtMs >= activate.startedAtMs ||
-    activate.updatedAtMs >= activeStartedAtMs ||
+    stagingWorkers.length !== (normalPath ? 2 : 1) ||
+    stagingBootstrap.length !== (normalPath ? 2 : 1) ||
+    stagingColdRecovery.length !== (coldPath ? 2 : 0) ||
+    ambiguousColdPrepare.length > 1 ||
+    ambiguousColdQuiesce.length > 1 ||
+    ambiguousRestores.length > 1 ||
+    ambiguousActivations.length > 1
+  ) throw new Error("staging_bootstrap_history_invalid");
+
+  requireSafeRetriesBetween(
+    normalPath ? safeSkippedWorkers : safeSkippedColdRecovery,
+    "prepare",
+    mergedAtMs,
+    preparePhase.first.startedAtMs,
+  );
+  requireSafeRetriesBetween(
+    normalPath ? safeSkippedBootstrap : safeSkippedColdRecovery,
+    "quiesce",
+    preparePhase.terminal.updatedAtMs,
+    quiescePhase.first.startedAtMs,
+  );
+  requireSafeRetriesBetween(
+    safeSkippedBootstrap,
+    "restore",
+    fencedCompletedAtMs,
+    restorePhase.first.startedAtMs,
+  );
+  requireSafeRetriesBetween(
+    safeSkippedWorkers,
+    "activate",
+    restorePhase.terminal.updatedAtMs,
+    activatePhase.first.startedAtMs,
+  );
+  if (normalPath && (
+    safeSkippedColdRecovery.length !== 0 ||
+    ambiguousColdPrepare.length !== 0 ||
+    ambiguousColdQuiesce.length !== 0
+  )) throw new Error("staging_bootstrap_history_invalid");
+
+  const selectedMutationRuns = [
+    ...preparePhase.runs,
+    ...quiescePhase.runs,
+    ...restorePhase.runs,
+    ...activatePhase.runs,
+  ];
+  if (
+    new Set(selectedMutationRuns.map((run) => run.id)).size !==
+      selectedMutationRuns.length
+  ) throw new Error("staging_bootstrap_history_invalid");
+  if (
+    preparePhase.terminal.updatedAtMs >= quiescePhase.first.startedAtMs ||
+    quiescePhase.terminal.updatedAtMs >= fencedStartedAtMs ||
+    fencedCompletedAtMs >= restorePhase.first.startedAtMs ||
+    restorePhase.terminal.updatedAtMs >= activatePhase.first.startedAtMs ||
+    activatePhase.terminal.updatedAtMs >= activeStartedAtMs ||
     activeCompletedAtMs >= scaleStartedAtMs
   ) throw new Error("staging_bootstrap_history_invalid");
+
+  if (deployStartedAtMs > initialWriteDeadlineMs) {
+    if (recoveryOriginalCompletionTimes.length === 0) {
+      throw new Error("staging_mutation_history_expired");
+    }
+    const closeoutGraceDeadlineMs = Math.max(
+      ...recoveryOriginalCompletionTimes.map((completedAtMs) =>
+        completedAtMs + RUNNER_LOSS_RECOVERY_GRACE_MS),
+    );
+    if (deployStartedAtMs > closeoutGraceDeadlineMs) {
+      throw new Error("staging_mutation_history_expired");
+    }
+  }
 }
 
 function selectCheckRunCandidates(value, requirement, candidateSha) {

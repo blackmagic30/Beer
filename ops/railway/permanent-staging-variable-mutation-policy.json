@@ -1,16 +1,45 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v1",
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v5",
   "policyId": "pintpath-permanent-staging-protected-variable-mutations",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
   "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
   "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
   "applicationServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-  "supabaseCanaryServiceId": "34a312cd-0920-4a7e-90db-8561c1e0746b",
   "githubEnvironment": "permanent-staging-provider-mutation",
   "requiredGitRef": "refs/heads/main",
+  "authorizedBaselines": {
+    "healthyLegacyOneReplica": {
+      "replicas": 1,
+      "latestDeploymentStatus": "SUCCESS",
+      "latestDeploymentStopped": false,
+      "activeDeploymentCount": 1,
+      "candidateDeploymentForbidden": true,
+      "deploymentPatchId": null,
+      "sourceDetached": false,
+      "stagedPatchEmpty": true
+    },
+    "coldDeadNullReplica": {
+      "serviceInstanceId": "5a2f3970-2850-44e0-9b6c-f5c7627dde13",
+      "replicas": null,
+      "sourceRepo": null,
+      "sourceImage": null,
+      "latestDeploymentId": "c71fdb35-2be0-4031-b952-85595dfb2913",
+      "latestDeploymentStatus": "FAILED",
+      "latestDeploymentStopped": true,
+      "snapshotId": "f1061f4f-e1dd-49f3-b91a-60efbc3d6841",
+      "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+      "deploymentImageDigest": null,
+      "deploymentPatchId": null,
+      "activeDeploymentCount": 0,
+      "serviceDomainId": "afbb2417-c6df-48e3-9987-271b10ab2962",
+      "stagedPatchEmpty": true
+    },
+    "domain": "beer-staging.up.railway.app",
+    "targetPort": 8080
+  },
   "operations": {
-    "providerCreates": [
+    "providerReconciliations": [
       "GOOGLE_MAPS_API_KEY",
       "GOOGLE_MAPS_MAP_ID",
       "GOOGLE_PLACES_API_KEY",
@@ -19,17 +48,74 @@
     "supabaseAtomicReplacement": [
       "SUPABASE_ANON_KEY",
       "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "supabasePairCanary": {
+      "origin": "https://bbfibbadwjxzrcdncavy.supabase.co",
+      "publishableEndpoint": "/auth/v1/settings",
+      "secretEndpoint": "/rest/v1/profiles?select=id&limit=1",
+      "exactInputPairRequired": true,
+      "requiredHttpStatus": 200,
+      "mustCompleteBeforeRailwayWrite": true
+    },
+    "stagingForbiddenVariableDeletion": [
+      "OFFSITE_BACKUP_BUCKET",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SUPABASE_URL"
+    ],
+    "stagingForbiddenVariableDeletionPatchSha256": "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91",
+    "stagingForbiddenVariableDeletionRecoveryOperations": [
+      "resume-forbidden-offsite-backup-deletion-patch",
+      "cancel-forbidden-offsite-backup-deletion-patch"
     ]
   },
-  "mutation": {
-    "operationName": "variableCollectionUpsert",
-    "skipDeploys": true,
-    "maximumAttempts": 1,
+  "mutationPlans": {
+    "variableUpsert": {
+      "operationName": "variableCollectionUpsert",
+      "skipDeploys": true,
+      "maximumAttempts": 1
+    },
+    "forbiddenVariableDeletion": {
+      "stageOperationName": "environmentStageChanges",
+      "merge": false,
+      "stageMaximumAttempts": 1,
+      "commitOperationName": "environmentPatchCommitStaged",
+      "commitSkipDeploys": true,
+      "commitMaximumAttempts": 1,
+      "exactApplicationServicePatchOnly": true,
+      "strandedPatchRecovery": {
+        "reviewedPriorCandidateRunAuthorityRequired": true,
+        "priorArtifactVerification": "OPTIONAL_ADDITIONAL_IF_AVAILABLE",
+        "exactPatchSha256": "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91",
+        "resumeOperationName": "environmentPatchCommitStaged",
+        "resumeSkipDeploys": true,
+        "cancelOperationName": "environmentStageChanges",
+        "cancelReplacementPatch": {},
+        "cancelMerge": false,
+        "completedDeletionReadOnlyReconciliationAllowed": true,
+        "completedDeletionMaximumAttempts": 0,
+        "noEffectRecovery": {
+          "exactOriginalRowsAndEmptyPatchRequired": true,
+          "resumeStageMaximumAttempts": 1,
+          "resumeCommitMaximumAttempts": 1,
+          "cancelReadOnlyMaximumAttempts": 0,
+          "ambiguousSameModeRedispatchAllowed": true
+        },
+        "maximumAttempts": 1,
+        "crossOperationRetryAllowed": false
+      }
+    },
     "automaticRetriesAllowed": false,
     "rerunsAllowed": false,
-    "externalMutationFreezeRequired": true,
+    "externalMutationFreeze": {
+      "required": true,
+      "dispatchAttestation": "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+      "enforcement": "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+      "providerCommitSelector": "ENVIRONMENT_ID_ONLY",
+      "providerStagedCommitPatchIdCasOrLockAvailable": false,
+      "residualRisk": "OUT_OF_BAND_STAGED_PATCH_REPLACEMENT_CAN_COMMIT_BEFORE_POSTFLIGHT_DETECTION"
+    },
     "unconditionalPostflightRequired": true,
-    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+    "ambiguousOutcomeAction": "REVIEWED_SAME_MODE_CONVERGENCE_NO_CROSS_MODE"
   },
   "evidence": {
     "durableIntentRequiredBeforeAttempt": true,

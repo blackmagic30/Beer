@@ -7,9 +7,10 @@ This document is the operator contract for the protected manual workflows that c
 the former repository-side transport gaps without granting an unattended path
 to Railway:
 
-- `.github/workflows/permanent-staging-provider-mutation.yml` creates one of
-  the four reviewed Google/OpenAI variables or atomically replaces both
-  Supabase keys in permanent staging.
+- `.github/workflows/permanent-staging-provider-mutation.yml` reconciles one of
+  the four reviewed Google/OpenAI variables in place, atomically replaces both
+  Supabase keys, or removes exactly the three prohibited staging
+  `OFFSITE_BACKUP_*` rows through a staged, deploy-suppressed patch.
 - `.github/workflows/permanent-staging-scale-evidence.yml` scales the exact
   reviewed application deployment from one replica to two, runs expected-peak,
   2x-peak, and 60-minute soak proof, and unconditionally converges the service
@@ -52,15 +53,21 @@ runtime-variable worker call `github:reviewed-candidate-authority:verify`. The
 provider guard's exact run title is
 `Permanent staging provider mutation | <operation> | <candidate>` and keys
 history by candidate+operation. The legacy guard's exact title is
-`Permanent staging Supabase legacy cutover | <candidate>` and keys history by
-candidate. Runtime-variable history is keyed by candidate+target+variable
+`Permanent staging Supabase legacy cutover | <selected-operation> | <candidate>`
+and keys complete candidate history by the selected read-only reconcile or
+write-capable disable mode. Runtime-variable history is keyed by candidate+target+variable
 through `Configure runtime variable | <target> | <variable> | <candidate>`.
 Every guard requires a complete authenticated Actions history from the
 associated PR's `merged_at` through the authenticated current `run_started_at`,
 not its `created_at`, because retained queued runs can start out of creation
 order. That `run_started_at` must be no more than 168 hours after `merged_at`.
 An older candidate or incomplete history fails closed and requires a newly
-reviewed and merged candidate, not a waiver or longer lookup window.
+reviewed and merged candidate, not a waiver or longer lookup window. The only
+exception is an exact recovery identity for a selected original ambiguous run:
+the original write must still have begun inside 168 hours, while its same-mode
+or read-only convergence may start for at most 24 hours after that original
+run's `updated_at`. Later recovery failures never extend that deadline, and the
+candidate must remain the exact current protected-main head.
 
 A first dispatch is eligible only when there is no prior matching run. A fresh
 dispatch after prior matches is eligible only when every prior run is an
@@ -75,24 +82,99 @@ runtime-variable guard is stricter: any prior run for the exact
 candidate+target+variable blocks redispatch, even if its write step was skipped;
 use a newly reviewed candidate instead.
 
+Narrow recovery exceptions remain write-safe. A mode-bound read-only
+legacy-key reconciliation may follow exactly one failed, cancelled, or timed-out
+disable run whose exact cutover step may have written; the reconciliation
+receives no write credential, and any second disable remains blocked. An
+OFFSITE cleanup recovery must select the exact failed same-candidate cleanup
+run through the reviewed GitHub authority. A retained prior artifact is checked
+as additional evidence when available, but runner loss after the provider write
+cannot make that artifact a prerequisite. Live state must be either the fixed
+Beer-service three-null deletion patch (SHA-256
+`3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91`),
+or the exact already-completed deletion with an empty staged patch and all three
+rows absent. The operator may commit the exact staged patch, replace it with
+`{}` using `merge=false`, or use `resume` to reconcile the already-completed
+state read-only with zero mutation attempts. If provider state proves the prior
+cleanup had no effect (the exact three original rows and an empty patch),
+`resume` may stage and commit once under the reviewed recovery authority, while
+`cancel` closes the already-cancelled state read-only. An ambiguous recovery may
+be redispatched only in the same mode: each run re-proves exact live state and
+converges toward the same result. The opposite mode remains blocked.
+
+Cold prepare, cold quiesce, staging restore, and staging worker activation also
+have distinct runner-loss reconciliation identities. Each binds the exact
+original same-candidate failed/cancelled/timed-out run, carries metadata
+credentials only, proves the intended live provider/runtime/repository state
+before and after, makes zero provider writes, and emits an alternate receipt
+that cannot impersonate the normal mutation. Failed/cancelled read-only probe
+attempts may be redispatched only when their exact job topology proves the
+normal write job skipped; history must be strictly non-overlapping in the order
+original -> read-only retry(s) -> exactly one successful reconciliation, all
+inside the original run's fixed 24-hour deadline. A reconciled cold-prepare
+receipt is accepted as the selected prepare for the later quiesce chain.
+
+These recovery operations are not transferable across candidates. From the
+first potentially reached write through final recovery and staging closeout,
+operations must impose a protected-main merge freeze. If a later merge changes
+the current head, the stranded SHA cannot be recovered by rebinding its state
+to the new candidate; that condition remains P1/NO-GO.
+
 The executors run the production/staging Railway mutation boundary immediately
 before and after writes. Every write has a durable secret-free intent, a maximum
-of one attempt, no automatic retry, unconditional read-only reconciliation, and
-secret-free terminal evidence. An ambiguous provider-variable or legacy-cutover
-write is terminal and cannot be retried. The route close/open executor has a
-different, explicitly bounded lost-ack rule: it records the one exact
-before→after transition with no collateral change as
-`*_reconciled_after_lost_ack`; it never treats desired state alone, a
+of one attempt per named mutation, no automatic retry, unconditional read-only
+reconciliation, and secret-free terminal evidence. The OFFSITE cleanup rechecks
+the boundary between its one staging call and its one staged-patch commit. An
+ambiguous provider-value upsert or legacy-cutover write is terminal and cannot
+be retried. The OFFSITE cleanup and route close/open executors have distinct,
+explicitly bounded lost-ack rules: each requires its unique exact before→after
+transition with no collateral change. They never treat desired state alone, a
 pre-existing state, or an incomplete inventory as success.
 
+Railway does not currently expose a staged environment-patch ETag/version or a
+provider lock that the deploy-suppressed stage/commit/cancel operations can
+consume. The OFFSITE executor therefore reasserts the exact live patch
+immediately before the terminal call, records and rechecks its provider patch
+identity afterward, and requires an explicit external-mutation-freeze
+attestation. That narrows the race but is not provider-enforced CAS. Out-of-band
+Railway mutation exclusion remains a P1 operational trust assumption and a
+launch NO-GO unless the freeze is actively controlled for the entire ceremony.
+
 The paired Supabase operation is one Railway `variableCollectionUpsert` with
-`skipDeploys=true`; it is not two CLI writes. The operation and response shape
+`skipDeploys=true`; it is not two CLI writes and has no Railway canary-service
+dependency. Its preflight requires only the exact Beer application literals:
+an unsealed `SUPABASE_ANON_KEY` and sealed `SUPABASE_SERVICE_ROLE_KEY`, with no
+references or same-name shared/foreign rows. Runtime Auth/admin/Storage canaries
+later run directly from the protected GitHub runner during legacy cutover. The
+operation and response shape
 were verified against the pinned Railway CLI 5.32.0 source. It never includes
 the key values or a value-derived digest in evidence. A successful mutation is
 reported as `acknowledged_pending_runtime_proof`, not as a completed rotation:
 the same candidate's second, closeout permanent-staging deployment must then
 pass the Auth, Storage, browser, server, mobile, and sealed-variable gates before
 a legacy key can be disabled.
+
+Provider reconciliation and OFFSITE cleanup accept exactly one of two
+policy-pinned staging baselines: the original healthy legacy deployment at one
+replica, or the currently observed detached dead state at `replicas=null` with
+the exact service-instance, failed/stopped deployment, snapshot, source SHA,
+empty active set, domain, port, null image digest, and empty staged patch. A
+generic failed, stopped, zero-active, null-replica, or detached service never
+qualifies. The current recovery path performs these non-deploying variable
+mutations on that exact dead baseline before cold prepare.
+
+## Existing permanent-staging row disposition
+
+- Reconcile the four existing Google/OpenAI Beer rows in place with their
+  same-name protected secrets. Do not delete or recreate them.
+- Keep the existing Beer `SUPABASE_ANON_KEY` row. Seal the existing Beer
+  `SUPABASE_SERVICE_ROLE_KEY` row in place, then replace both values atomically.
+  Do not delete or recreate either row.
+- Delete the three inherited Beer `OFFSITE_BACKUP_*` rows through the exact
+  protected cleanup plan. Do not recreate them in permanent staging.
+- Do not recreate the missing Railway canary service. It is not an application
+  staging prerequisite; the later protected legacy-cutover runner supplies the
+  required direct Auth/admin/Storage runtime proof.
 
 ## One-time GitHub setup
 
@@ -375,24 +457,50 @@ route open. The controlling policy is schema v2 at SHA-256
    ancestry. Human PR approval is not required in this solo-owner repository;
    require the exact merged non-draft same-repository PR and pass all required
    checks on the exact candidate.
-2. Prepare and quiesce the candidate-bound worker transition: run worker
-   `prepare`, scale the exact legacy deployment from one replica to zero, run
-   the `fenced` phase of `Deploy Pint Path permanent staging` at zero, then
-   restore the candidate from zero to one with automatic maintenance disabled
-   and candidate-bound. Retain every authenticated artifact; the fenced upload
-   is the first of exactly two same-candidate staging deployment successes.
-3. Run `Mutate Pint Path permanent-staging provider variables` once per absent
-   Google/OpenAI variable. The confirmation is
+2. While the authorized staging baseline is still exact and before any worker
+   prepare, remove the inherited production-copy configuration. The current
+   recovery uses the policy-pinned dead/null baseline; a still-healthy legacy
+   service may instead use the separately constrained one-replica baseline.
+   Dispatch
+   `remove-forbidden-offsite-backup-variables` only when the complete inventory
+   has exactly one Beer-service literal row for each of
+   `OFFSITE_BACKUP_BUCKET`, `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, and
+   `OFFSITE_BACKUP_SUPABASE_URL`, no shared/foreign shadow, and an empty staged
+   patch. The executor stages only those three `null` entries with `merge=false`,
+   reads that exact patch with variable decryption disabled, rechecks the
+   production boundary, commits once with `skipDeploys=true`, and proves all
+   three rows absent, every other row unchanged, the staged patch empty, and
+   the deployment/topology unchanged. It may report
+   `cleanup_reconciled_after_lost_ack` only for that unique proved transition;
+   it never repeats either mutation.
+3. Run `Mutate Pint Path permanent-staging provider variables` once per
+   Google/OpenAI variable that needs reconciliation. Existing exact Beer rows
+   are adopted in place; an absent row may be created. Shared, foreign, sealed,
+   or referenced target rows fail closed. The confirmation is
    `MUTATE_<UPPERCASE_OPERATION_WITH_UNDERSCORES>_IN_PERMANENT_STAGING`. The run
    guard reserves the exact candidate+operation; redispatch only when every
    prior matching run's exact write step is authenticated as skipped.
-4. If rotating Supabase keys, run the same workflow with
+   The provider value remains unreadable in Railway metadata, so the successful
+   receipt is still pending runtime proof rather than proof of value equality.
+4. If rotating Supabase keys, first seal the Beer application
+   `SUPABASE_SERVICE_ROLE_KEY` row through the separately protected owner action,
+   then run the same workflow with
    `supabase-key-replacement`. Supply both publishable and secret keys to one
-   atomic `skipDeploys=true` mutation. Its receipt is not runtime proof.
-5. Run any general runtime-variable operation at most once for its exact
+   atomic `skipDeploys=true` mutation. No Railway canary service is required.
+   Its receipt is not runtime proof.
+5. For the current dead/null recovery, prove the exact staging `profiles` Data
+   API prerequisite from the protected runner, run cold `prepare` without
+   changing the null runtime, then authenticate cold quiesce from null to zero.
+   Upload the candidate only at explicit zero, then restore it from zero to one
+   with automatic maintenance disabled and candidate-bound. A healthy legacy
+   route instead uses the normal prepare and one-to-zero quiesce proof. Never
+   mix receipts between those two paths. Retain every authenticated artifact;
+   the fenced upload is the first of exactly two same-candidate staging
+   deployment successes.
+   Run any general runtime-variable operation at most once for its exact
    candidate+target+variable guard; even a skipped prior run requires a new
-   reviewed candidate. Complete those reviewed provider/runtime writes while
-   the restored candidate remains worker-disabled. Then run staging worker
+   reviewed candidate. Complete those reviewed runtime writes while the
+   restored candidate remains worker-disabled. Then run staging worker
    `activate`, which independently authenticates the full prepare→quiesce→
    fenced-upload→restore chain. Run the `active` deployment phase once at one
    replica and require both its activation terminal and sibling full-chain
@@ -407,9 +515,15 @@ route open. The controlling policy is schema v2 at SHA-256
    not-required human-approval policy, merge commit, linear history, and exact
    tree equality.
 6. Only then run `Permanent staging Supabase legacy-key cutover`, supplying the
-   exact replacement and later deployment run IDs. Its verifier authenticates
-   both same-candidate attempt-one artifacts and their chronology before secret
-   custody. Its candidate-keyed guard permits a later fresh dispatch only when
+   exact replacement, fenced zero-replica deployment, and active closeout run
+   IDs. Its verifier authenticates all three same-candidate attempt-one
+   artifacts, the exact fenced/active run titles, their receipts, and strict
+   replacement -> fenced -> active -> cutover chronology before secret custody.
+   The active closeout must be a zero-write `already_deployed` reconciliation;
+   a fenced retry may adopt an already-present exact candidate only after one
+   authenticated earlier ambiguous fenced run, and no deployment dispatch may
+   follow the selected active closeout. Its candidate-keyed guard permits a
+   later fresh dispatch only when
    every prior matching cutover run's exact write step is authenticated as
    skipped, and the replacement history has exactly the selected success plus
    only safely skipped earlier attempts. It also rejects any same-candidate

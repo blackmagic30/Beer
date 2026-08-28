@@ -61,6 +61,19 @@
       "runtimeAutomaticMaintenanceEnabled": true,
       "runtimeAutomaticMaintenanceCandidateBound": true,
       "runtimeProofRequired": true
+    },
+    "reconcileActivate": {
+      "allowedTargets": [
+        "permanent-staging"
+      ],
+      "providerMutationAllowed": false,
+      "variableMutationCredentialAllowed": false,
+      "priorAmbiguousActivateRunRequired": true,
+      "sameCandidateAndBootstrapChainRequired": true,
+      "soleHealthyCandidateRequiredBeforeAndAfter": true,
+      "runtimeAutomaticMaintenanceEnabled": true,
+      "runtimeAutomaticMaintenanceCandidateBound": true,
+      "runtimeProofRequired": true
     }
   },
   "activationPrerequisites": {
@@ -119,6 +132,7 @@
     "rerunsAllowed": false,
     "unconditionalReadOnlyReconciliationRequired": true,
     "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY",
+    "readOnlyRunnerLossReconciliationMustBindPriorRun": true,
     "otherProviderChangesAllowed": false
   },
   "runtimeProof": {
@@ -141,6 +155,7 @@
     "stagingActivationPrerequisitesIncludedInArtifact": true,
     "productionActivationPrerequisitesIncludedInArtifact": true,
     "productionActivationPrerequisitesTransitivelyBoundByIntentSha256": true,
+    "stagingActivationRunnerLossReconciliationReceiptMustBindPriorRun": true,
     "secretMaterialAllowed": false,
     "secretDerivedCommitmentsAllowed": false
   }

@@ -69,6 +69,225 @@ function mutationRun(input: {
   };
 }
 
+function coldRecoveryRun(
+  operation:
+    | "prepare"
+    | "reconcile-prepare"
+    | "quiesce"
+    | "reconcile-quiesce",
+  options: {
+    id?: number;
+    conclusion?: string | null;
+    createdAt?: string;
+    startedAt?: string;
+    updatedAt?: string;
+  } = {},
+) {
+  const prepare = operation === "prepare";
+  const reconcilePrepare = operation === "reconcile-prepare";
+  const reconcileQuiesce = operation === "reconcile-quiesce";
+  return mutationRun({
+    id: options.id ?? (prepare
+      ? 710
+      : reconcilePrepare
+      ? 715
+      : reconcileQuiesce
+      ? 714
+      : 711),
+    workflowPath:
+      ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    displayTitle:
+      `Permanent staging cold recovery | ${operation} | ${CANDIDATE}`,
+    createdAt: options.createdAt ?? (prepare
+      ? "2026-08-14T01:01:00.000Z"
+      : reconcilePrepare
+      ? "2026-08-14T01:02:01.000Z"
+      : reconcileQuiesce
+      ? "2026-08-14T01:03:05.000Z"
+      : "2026-08-14T01:02:05.000Z"),
+    startedAt: options.startedAt ?? (prepare
+      ? "2026-08-14T01:01:10.000Z"
+      : reconcilePrepare
+      ? "2026-08-14T01:02:02.000Z"
+      : reconcileQuiesce
+      ? "2026-08-14T01:03:10.000Z"
+      : "2026-08-14T01:02:10.000Z"),
+    updatedAt: options.updatedAt ?? (prepare
+      ? "2026-08-14T01:02:00.000Z"
+      : reconcilePrepare
+      ? "2026-08-14T01:02:04.000Z"
+      : reconcileQuiesce
+      ? "2026-08-14T01:04:00.000Z"
+      : "2026-08-14T01:03:00.000Z"),
+    ...(options.conclusion === undefined
+      ? {}
+      : { conclusion: options.conclusion }),
+  });
+}
+
+function coldRecoveryJobs(
+  run: ReturnType<typeof coldRecoveryRun>,
+  operation:
+    | "prepare"
+    | "reconcile-prepare"
+    | "quiesce"
+    | "reconcile-quiesce",
+  selectedStepConclusion: string,
+) {
+  const configurations = [
+    {
+      operation: "prepare",
+      jobName: "Bind the exact replacement and prepare the dead baseline",
+      stepName: "Prepare the exact dead staging baseline once",
+    },
+    {
+      operation: "reconcile-prepare",
+      jobName: "Reconcile an ambiguous cold prepare at the exact dead baseline",
+      stepName: "Prove the lost prepare acknowledgement without another write",
+    },
+    {
+      operation: "quiesce",
+      jobName: "Initialize the exact dead baseline at explicit zero",
+      stepName: "Initialize the dead baseline from null to explicit zero once",
+    },
+    {
+      operation: "reconcile-quiesce",
+      jobName: "Reconcile an ambiguous cold quiesce at exact zero",
+      stepName:
+        "Prove the ambiguous cold quiesce reached exact zero without a second write",
+    },
+  ];
+  return {
+    total_count: configurations.length,
+    jobs: configurations.map((configuration) => {
+      const selected = configuration.operation === operation;
+      return {
+        run_id: run.id,
+        run_attempt: 1,
+        name: configuration.jobName,
+        status: "completed",
+        conclusion: selected ? run.conclusion : "skipped",
+        steps: selected
+          ? [{
+              name: configuration.stepName,
+              status: "completed",
+              conclusion: selectedStepConclusion,
+            }]
+          : [],
+      };
+    }),
+  };
+}
+
+function stagingWorkerRun(
+  operation: "prepare" | "activate" | "reconcile-activate",
+  options: {
+    id: number;
+    conclusion?: string;
+    createdAt: string;
+    startedAt: string;
+    updatedAt: string;
+  },
+) {
+  return mutationRun({
+    ...options,
+    workflowPath:
+      ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+    displayTitle:
+      `Automatic maintenance worker fence | permanent-staging | ${operation} | ${CANDIDATE}`,
+  });
+}
+
+function stagingBootstrapRun(
+  operation: "quiesce" | "restore" | "reconcile-restore",
+  options: {
+    id: number;
+    conclusion?: string;
+    createdAt: string;
+    startedAt: string;
+    updatedAt: string;
+  },
+) {
+  return mutationRun({
+    ...options,
+    workflowPath:
+      ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+    displayTitle:
+      `Permanent staging worker bootstrap | ${operation} | ${CANDIDATE}`,
+  });
+}
+
+function twoJobDisposition(
+  run: ReturnType<typeof mutationRun>,
+  configurations: Array<{ jobName: string; stepName: string }>,
+  selectedJobName: string,
+  selectedStepConclusion: string,
+) {
+  return {
+    total_count: configurations.length,
+    jobs: configurations.map((configuration) => {
+      const selected = configuration.jobName === selectedJobName;
+      return {
+        run_id: run.id,
+        run_attempt: 1,
+        name: configuration.jobName,
+        status: "completed",
+        conclusion: selected ? run.conclusion : "skipped",
+        steps: selected
+          ? [{
+              name: configuration.stepName,
+              status: "completed",
+              conclusion: selectedStepConclusion,
+            }]
+          : [],
+      };
+    }),
+  };
+}
+
+const WORKER_JOB_FIXTURES = [
+  {
+    jobName: "One candidate-bound automatic-maintenance transition",
+    stepName: "Execute at most one exact atomic Railway variable upsert",
+  },
+  {
+    jobName: "Reconcile an ambiguous staging automatic-maintenance activation",
+    stepName: "Prove the lost activation acknowledgement without another write",
+  },
+];
+const BOOTSTRAP_JOB_FIXTURES = [
+  {
+    jobName: "Verify the chain and perform one exact protected scale transition",
+    stepName: "Perform at most one exact candidate-bound scale transition",
+  },
+  {
+    jobName: "Reconcile an ambiguous staging bootstrap restore at exact one",
+    stepName:
+      "Prove the ambiguous restore reached exact one without a second write",
+  },
+];
+
+function providerMutationJobs(
+  run: ReturnType<typeof mutationRun>,
+  selectedStepConclusion: string,
+) {
+  return {
+    total_count: 1,
+    jobs: [{
+      run_id: run.id,
+      run_attempt: 1,
+      name: "One protected variable mutation plan",
+      status: "completed",
+      conclusion: run.conclusion,
+      steps: [{
+        name: "Execute one reviewed protected Railway mutation plan",
+        status: "completed",
+        conclusion: selectedStepConclusion,
+      }],
+    }],
+  };
+}
+
 function harness(
   options: {
     phase?: "staging" | "production" | "close" | "activation" | "promotion-recovery" | "open" | "release";
@@ -109,7 +328,10 @@ function harness(
     runtimeMutationRuns?: Array<Record<string, unknown>>;
     workerFenceRuns?: Array<Record<string, unknown>>;
     stagingBootstrapRuns?: Array<Record<string, unknown>>;
+    coldRecoveryRuns?: Array<Record<string, unknown>>;
+    stagingBootstrapPath?: "normal" | "cold";
     mutationJobs?: Record<number, unknown>;
+    mergedAt?: string;
   } = {},
 ) {
   type RequiredCheck = {
@@ -246,9 +468,11 @@ function harness(
     });
   }
   const hasStagingChain = requiredChecks.some((item) =>
-    item.name === "Deploy permanent staging");
+      item.name === "Deploy permanent staging");
+  const stagingBootstrapPath = options.stagingBootstrapPath ?? "normal";
   const defaultWorkerFenceRuns = hasStagingChain
-    ? [
+    ? stagingBootstrapPath === "normal"
+      ? [
       mutationRun({
         id: 710,
         workflowPath:
@@ -270,9 +494,22 @@ function harness(
         updatedAt: "2026-08-14T01:08:34.000Z",
       }),
     ]
+      : [
+        mutationRun({
+          id: 713,
+          workflowPath:
+            ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+          displayTitle:
+            `Automatic maintenance worker fence | permanent-staging | activate | ${CANDIDATE}`,
+          createdAt: "2026-08-14T01:08:32.000Z",
+          startedAt: "2026-08-14T01:08:33.000Z",
+          updatedAt: "2026-08-14T01:08:34.000Z",
+        }),
+      ]
     : [];
   const defaultStagingBootstrapRuns = hasStagingChain
-    ? [
+    ? stagingBootstrapPath === "normal"
+      ? [
       mutationRun({
         id: 711,
         workflowPath:
@@ -293,6 +530,25 @@ function harness(
         startedAt: "2026-08-14T01:08:31.000Z",
         updatedAt: "2026-08-14T01:08:32.000Z",
       }),
+    ]
+      : [
+        mutationRun({
+          id: 712,
+          workflowPath:
+            ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+          displayTitle:
+            `Permanent staging worker bootstrap | restore | ${CANDIDATE}`,
+          createdAt: "2026-08-14T01:08:30.500Z",
+          startedAt: "2026-08-14T01:08:31.000Z",
+          updatedAt: "2026-08-14T01:08:32.000Z",
+        }),
+      ]
+    : [];
+  const defaultColdRecoveryRuns = hasStagingChain &&
+      stagingBootstrapPath === "cold"
+    ? [
+      coldRecoveryRun("prepare"),
+      coldRecoveryRun("quiesce"),
     ]
     : [];
   const fetchImpl = vi.fn(async (url: string) => {
@@ -329,7 +585,7 @@ function harness(
         merged: options.pullMerged ?? true,
         draft: options.pullDraft ?? false,
         merge_commit_sha: options.pullMergeCommitSha ?? CANDIDATE,
-        merged_at: "2026-08-14T01:00:00.000Z",
+        merged_at: options.mergedAt ?? "2026-08-14T01:00:00.000Z",
         user: { id: options.pullAuthorId ?? 101 },
         merged_by: { id: options.pullMergedById ?? 202 },
         base: {
@@ -403,6 +659,15 @@ function harness(
     )) {
       const workflowRuns = options.stagingBootstrapRuns ??
         defaultStagingBootstrapRuns;
+      return jsonResponse({
+        total_count: workflowRuns.length,
+        workflow_runs: workflowRuns,
+      });
+    }
+    if (url.includes(
+      "/actions/workflows/recover-permanent-staging-cold-zero.yml/runs?",
+    )) {
+      const workflowRuns = options.coldRecoveryRuns ?? defaultColdRecoveryRuns;
       return jsonResponse({
         total_count: workflowRuns.length,
         workflow_runs: workflowRuns,
@@ -887,11 +1152,943 @@ describe("GitHub release-candidate verifier", () => {
     })).resolves.toBe(0);
   });
 
+  it("accepts same-mode OFFSITE recovery convergence and rejects a cross-mode retry", async () => {
+    const cleanup = mutationRun({
+      id: 720,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | remove-forbidden-offsite-backup-variables | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:04:00.000Z",
+      startedAt: "2026-08-14T01:04:10.000Z",
+      updatedAt: "2026-08-14T01:05:00.000Z",
+      conclusion: "failure",
+    });
+    const priorRecovery = mutationRun({
+      id: 721,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | resume-forbidden-offsite-backup-deletion-patch | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:05:10.000Z",
+      startedAt: "2026-08-14T01:05:20.000Z",
+      updatedAt: "2026-08-14T01:06:00.000Z",
+      conclusion: "failure",
+    });
+    const recovery = mutationRun({
+      id: 722,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | resume-forbidden-offsite-backup-deletion-patch | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:06:10.000Z",
+      startedAt: "2026-08-14T01:06:20.000Z",
+      updatedAt: "2026-08-14T01:07:00.000Z",
+    });
+    const mutationJob = (runId: number, conclusion = "failure") => ({
+      total_count: 1,
+      jobs: [{
+        run_id: runId,
+        run_attempt: 1,
+        name: "One protected variable mutation plan",
+        status: "completed",
+        conclusion,
+        steps: [{
+          name: "Execute one reviewed protected Railway mutation plan",
+          status: "completed",
+          conclusion,
+        }],
+      }],
+    });
+    const fixture = harness({
+      providerMutationRuns: [cleanup, priorRecovery, recovery],
+      mutationJobs: {
+        720: mutationJob(720),
+        721: mutationJob(721),
+      },
+    });
+    let summary = "";
+    await expect(runGithubReleaseCandidateVerification(fixture.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(0);
+    expect(JSON.parse(summary)).toMatchObject({ ok: true });
+
+    const priorOppositeModeRecovery = mutationRun({
+      id: 723,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | cancel-forbidden-offsite-backup-deletion-patch | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:05:10.000Z",
+      startedAt: "2026-08-14T01:05:20.000Z",
+      updatedAt: "2026-08-14T01:06:00.000Z",
+      conclusion: "failure",
+    });
+    const crossMode = harness({
+      providerMutationRuns: [cleanup, priorOppositeModeRecovery, recovery],
+      mutationJobs: {
+        720: mutationJob(720),
+        723: mutationJob(723),
+      },
+    });
+    let crossModeSummary = "";
+    await expect(runGithubReleaseCandidateVerification(crossMode.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: crossMode.fetchImpl,
+      writeOutput: (value: string) => { crossModeSummary += value; },
+    })).resolves.toBe(1);
+    expect(JSON.parse(crossModeSummary)).toMatchObject({
+      ok: false,
+      failureCode: "staging_mutation_history_invalid",
+    });
+
+    const skippedOppositeModeRecovery = mutationRun({
+      id: 724,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | cancel-forbidden-offsite-backup-deletion-patch | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:06:01.000Z",
+      startedAt: "2026-08-14T01:06:02.000Z",
+      updatedAt: "2026-08-14T01:06:05.000Z",
+      conclusion: "failure",
+    });
+    const harmlessSkippedCrossMode = harness({
+      providerMutationRuns: [
+        cleanup,
+        priorRecovery,
+        skippedOppositeModeRecovery,
+        recovery,
+      ],
+      mutationJobs: {
+        720: mutationJob(720),
+        721: mutationJob(721),
+        724: providerMutationJobs(skippedOppositeModeRecovery, "skipped"),
+      },
+    });
+    await expect(runGithubReleaseCandidateVerification(
+      harmlessSkippedCrossMode.argv,
+      {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: harmlessSkippedCrossMode.fetchImpl,
+        writeOutput: () => undefined,
+      },
+    )).resolves.toBe(0);
+  });
+
+  it("allows only the fixed OFFSITE recovery grace beyond merge plus 168 hours", async () => {
+    const cleanup = mutationRun({
+      id: 730,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | remove-forbidden-offsite-backup-variables | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:04:00.000Z",
+      startedAt: "2026-08-14T01:04:10.000Z",
+      updatedAt: "2026-08-14T01:05:00.000Z",
+      conclusion: "failure",
+    });
+    const recovery = mutationRun({
+      id: 731,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | resume-forbidden-offsite-backup-deletion-patch | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:06:00.000Z",
+      startedAt: "2026-08-14T01:06:10.000Z",
+      updatedAt: "2026-08-14T01:07:00.000Z",
+    });
+    const grace = harness({
+      mergedAt: "2026-08-07T01:08:35.000Z",
+      providerMutationRuns: [cleanup, recovery],
+      mutationJobs: {
+        730: providerMutationJobs(cleanup, "failure"),
+      },
+    });
+    await expect(runGithubReleaseCandidateVerification(grace.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: grace.fetchImpl,
+      writeOutput: () => undefined,
+    })).resolves.toBe(0);
+
+    const noRecovery = harness({
+      mergedAt: "2026-08-07T01:08:35.000Z",
+    });
+    let noRecoverySummary = "";
+    await expect(runGithubReleaseCandidateVerification(noRecovery.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: noRecovery.fetchImpl,
+      writeOutput: (value: string) => { noRecoverySummary += value; },
+    })).resolves.toBe(1);
+    expect(JSON.parse(noRecoverySummary)).toMatchObject({
+      failureCode: "staging_mutation_history_expired",
+    });
+
+    const staleCleanup = {
+      ...cleanup,
+      created_at: "2026-08-12T01:04:00.000Z",
+      run_started_at: "2026-08-12T01:04:10.000Z",
+      updated_at: "2026-08-12T01:05:00.000Z",
+    };
+    const chainedExtension = harness({
+      mergedAt: "2026-08-07T01:08:35.000Z",
+      providerMutationRuns: [staleCleanup, recovery],
+      mutationJobs: {
+        730: providerMutationJobs(staleCleanup, "failure"),
+      },
+    });
+    let chainedSummary = "";
+    await expect(runGithubReleaseCandidateVerification(
+      chainedExtension.argv,
+      {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: chainedExtension.fetchImpl,
+        writeOutput: (value: string) => { chainedSummary += value; },
+      },
+    )).resolves.toBe(1);
+    expect(JSON.parse(chainedSummary)).toMatchObject({
+      failureCode: "staging_mutation_history_expired",
+    });
+  });
+
   it("requires the complete candidate-bound staging worker bootstrap history", async () => {
     for (const fixture of [
       harness({ workerFenceRuns: [] }),
       harness({ stagingBootstrapRuns: [] }),
     ]) {
+      let summary = "";
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      expect(code).toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({
+        ok: false,
+        failureCode: "staging_bootstrap_history_invalid",
+      });
+    }
+  });
+
+  it("accepts the exact cold prepare-to-quiesce staging bootstrap chain", async () => {
+    const fixture = harness({ stagingBootstrapPath: "cold" });
+    const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: () => undefined,
+    });
+    expect(code).toBe(0);
+    expect(fixture.fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "/actions/workflows/recover-permanent-staging-cold-zero.yml/runs?",
+      ),
+      expect.anything(),
+    );
+  });
+
+  it("accepts only authenticated pre-write-skipped cold retries", async () => {
+    const skippedPrepare = coldRecoveryRun("prepare", {
+      id: 708,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:01.000Z",
+      startedAt: "2026-08-14T01:00:05.000Z",
+      updatedAt: "2026-08-14T01:00:20.000Z",
+    });
+    const skippedQuiesce = coldRecoveryRun("quiesce", {
+      id: 709,
+      conclusion: "cancelled",
+      createdAt: "2026-08-14T01:02:01.000Z",
+      startedAt: "2026-08-14T01:02:02.000Z",
+      updatedAt: "2026-08-14T01:02:05.000Z",
+    });
+    const fixture = harness({
+      stagingBootstrapPath: "cold",
+      coldRecoveryRuns: [
+        skippedPrepare,
+        coldRecoveryRun("prepare"),
+        skippedQuiesce,
+        coldRecoveryRun("quiesce"),
+      ],
+      mutationJobs: {
+        708: coldRecoveryJobs(skippedPrepare, "prepare", "skipped"),
+        709: coldRecoveryJobs(skippedQuiesce, "quiesce", "skipped"),
+      },
+    });
+    await expect(runGithubReleaseCandidateVerification(fixture.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: () => undefined,
+    })).resolves.toBe(0);
+  });
+
+  it("accepts one ambiguous cold quiesce only through one read-only reconciliation", async () => {
+    const ambiguousQuiesce = coldRecoveryRun("quiesce", {
+      conclusion: "failure",
+    });
+    const reconciledQuiesce = coldRecoveryRun("reconcile-quiesce");
+    const fixture = harness({
+      stagingBootstrapPath: "cold",
+      coldRecoveryRuns: [
+        coldRecoveryRun("prepare"),
+        ambiguousQuiesce,
+        reconciledQuiesce,
+      ],
+      mutationJobs: {
+        711: coldRecoveryJobs(ambiguousQuiesce, "quiesce", "failure"),
+        714: coldRecoveryJobs(
+          reconciledQuiesce,
+          "reconcile-quiesce",
+          "success",
+        ),
+      },
+    });
+    await expect(runGithubReleaseCandidateVerification(fixture.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: () => undefined,
+    })).resolves.toBe(0);
+  });
+
+  it("accepts the exact read-only recovery chain for lost prepare, restore, and activation acknowledgements", async () => {
+    const ambiguousPrepare = coldRecoveryRun("prepare", {
+      conclusion: "failure",
+    });
+    const priorPrepareReconcile = coldRecoveryRun("reconcile-prepare", {
+      id: 728,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:02:00.100Z",
+      startedAt: "2026-08-14T01:02:00.200Z",
+      updatedAt: "2026-08-14T01:02:01.000Z",
+    });
+    const reconciledPrepare = coldRecoveryRun("reconcile-prepare");
+    const ambiguousQuiesce = coldRecoveryRun("quiesce", {
+      conclusion: "cancelled",
+    });
+    const priorQuiesceReconcile = coldRecoveryRun("reconcile-quiesce", {
+      id: 729,
+      conclusion: "timed_out",
+      createdAt: "2026-08-14T01:03:00.100Z",
+      startedAt: "2026-08-14T01:03:00.200Z",
+      updatedAt: "2026-08-14T01:03:01.000Z",
+    });
+    const reconciledQuiesce = coldRecoveryRun("reconcile-quiesce");
+    const ambiguousRestore = stagingBootstrapRun("restore", {
+      id: 712,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:08:30.500Z",
+      startedAt: "2026-08-14T01:08:31.000Z",
+      updatedAt: "2026-08-14T01:08:32.000Z",
+    });
+    const reconciledRestore = stagingBootstrapRun("reconcile-restore", {
+      id: 716,
+      createdAt: "2026-08-14T01:08:32.100Z",
+      startedAt: "2026-08-14T01:08:32.200Z",
+      updatedAt: "2026-08-14T01:08:32.700Z",
+    });
+    const priorRestoreReconcile = stagingBootstrapRun("reconcile-restore", {
+      id: 732,
+      conclusion: "cancelled",
+      createdAt: "2026-08-14T01:08:32.010Z",
+      startedAt: "2026-08-14T01:08:32.020Z",
+      updatedAt: "2026-08-14T01:08:32.100Z",
+    });
+    const ambiguousActivation = stagingWorkerRun("activate", {
+      id: 713,
+      conclusion: "timed_out",
+      createdAt: "2026-08-14T01:08:32.800Z",
+      startedAt: "2026-08-14T01:08:33.000Z",
+      updatedAt: "2026-08-14T01:08:34.000Z",
+    });
+    const reconciledActivation = stagingWorkerRun("reconcile-activate", {
+      id: 717,
+      createdAt: "2026-08-14T01:08:34.100Z",
+      startedAt: "2026-08-14T01:08:34.200Z",
+      updatedAt: "2026-08-14T01:08:34.800Z",
+    });
+    const priorActivationReconcile = stagingWorkerRun("reconcile-activate", {
+      id: 733,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:08:34.010Z",
+      startedAt: "2026-08-14T01:08:34.020Z",
+      updatedAt: "2026-08-14T01:08:34.100Z",
+    });
+    const fixture = harness({
+      stagingBootstrapPath: "cold",
+      mergedAt: "2026-08-07T01:08:34.500Z",
+      coldRecoveryRuns: [
+        ambiguousPrepare,
+        priorPrepareReconcile,
+        reconciledPrepare,
+        ambiguousQuiesce,
+        priorQuiesceReconcile,
+        reconciledQuiesce,
+      ],
+      stagingBootstrapRuns: [
+        ambiguousRestore,
+        priorRestoreReconcile,
+        reconciledRestore,
+      ],
+      workerFenceRuns: [
+        ambiguousActivation,
+        priorActivationReconcile,
+        reconciledActivation,
+      ],
+      mutationJobs: {
+        710: coldRecoveryJobs(ambiguousPrepare, "prepare", "failure"),
+        728: coldRecoveryJobs(
+          priorPrepareReconcile,
+          "reconcile-prepare",
+          "skipped",
+        ),
+        715: coldRecoveryJobs(
+          reconciledPrepare,
+          "reconcile-prepare",
+          "success",
+        ),
+        711: coldRecoveryJobs(ambiguousQuiesce, "quiesce", "cancelled"),
+        729: coldRecoveryJobs(
+          priorQuiesceReconcile,
+          "reconcile-quiesce",
+          "skipped",
+        ),
+        714: coldRecoveryJobs(
+          reconciledQuiesce,
+          "reconcile-quiesce",
+          "success",
+        ),
+        712: twoJobDisposition(
+          ambiguousRestore,
+          BOOTSTRAP_JOB_FIXTURES,
+          BOOTSTRAP_JOB_FIXTURES[0].jobName,
+          "failure",
+        ),
+        732: twoJobDisposition(
+          priorRestoreReconcile,
+          BOOTSTRAP_JOB_FIXTURES,
+          BOOTSTRAP_JOB_FIXTURES[1].jobName,
+          "skipped",
+        ),
+        716: twoJobDisposition(
+          reconciledRestore,
+          BOOTSTRAP_JOB_FIXTURES,
+          BOOTSTRAP_JOB_FIXTURES[1].jobName,
+          "success",
+        ),
+        713: twoJobDisposition(
+          ambiguousActivation,
+          WORKER_JOB_FIXTURES,
+          WORKER_JOB_FIXTURES[0].jobName,
+          "timed_out",
+        ),
+        733: twoJobDisposition(
+          priorActivationReconcile,
+          WORKER_JOB_FIXTURES,
+          WORKER_JOB_FIXTURES[1].jobName,
+          "skipped",
+        ),
+        717: twoJobDisposition(
+          reconciledActivation,
+          WORKER_JOB_FIXTURES,
+          WORKER_JOB_FIXTURES[1].jobName,
+          "success",
+        ),
+      },
+    });
+    await expect(runGithubReleaseCandidateVerification(fixture.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: () => undefined,
+    })).resolves.toBe(0);
+  });
+
+  it("rejects unauthenticated, duplicate, overlapping, post-closeout, or generic ambiguous staging writes", async () => {
+    const prepare = stagingWorkerRun("prepare", {
+      id: 710,
+      createdAt: "2026-08-14T01:01:00.000Z",
+      startedAt: "2026-08-14T01:01:10.000Z",
+      updatedAt: "2026-08-14T01:02:00.000Z",
+    });
+    const ambiguousActivation = stagingWorkerRun("activate", {
+      id: 713,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:08:32.800Z",
+      startedAt: "2026-08-14T01:08:33.000Z",
+      updatedAt: "2026-08-14T01:08:34.000Z",
+    });
+    const reconciledActivation = stagingWorkerRun("reconcile-activate", {
+      id: 717,
+      createdAt: "2026-08-14T01:08:34.100Z",
+      startedAt: "2026-08-14T01:08:34.200Z",
+      updatedAt: "2026-08-14T01:08:34.800Z",
+    });
+    const activationFailureJobs = twoJobDisposition(
+      ambiguousActivation,
+      WORKER_JOB_FIXTURES,
+      WORKER_JOB_FIXTURES[0].jobName,
+      "failure",
+    );
+    const activationReconcileJobs = twoJobDisposition(
+      reconciledActivation,
+      WORKER_JOB_FIXTURES,
+      WORKER_JOB_FIXTURES[1].jobName,
+      "success",
+    );
+    const duplicateReconcile = stagingWorkerRun("reconcile-activate", {
+      id: 718,
+      createdAt: "2026-08-14T01:08:35.000Z",
+      startedAt: "2026-08-14T01:08:35.100Z",
+      updatedAt: "2026-08-14T01:08:35.500Z",
+    });
+    const overlappingReconcile = stagingWorkerRun("reconcile-activate", {
+      id: 719,
+      createdAt: "2026-08-14T01:08:33.100Z",
+      startedAt: "2026-08-14T01:08:33.200Z",
+      updatedAt: "2026-08-14T01:08:34.800Z",
+    });
+    const overlappingPriorReadOnlyRetry = stagingWorkerRun(
+      "reconcile-activate",
+      {
+        id: 734,
+        conclusion: "cancelled",
+        createdAt: "2026-08-14T01:08:33.100Z",
+        startedAt: "2026-08-14T01:08:33.200Z",
+        updatedAt: "2026-08-14T01:08:33.800Z",
+      },
+    );
+    const postCloseoutReconcile = stagingWorkerRun("reconcile-activate", {
+      id: 725,
+      createdAt: "2026-08-14T01:08:40.100Z",
+      startedAt: "2026-08-14T01:08:40.200Z",
+      updatedAt: "2026-08-14T01:08:40.800Z",
+    });
+    const ambiguousPrepare = stagingWorkerRun("prepare", {
+      id: 726,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:01:00.000Z",
+      startedAt: "2026-08-14T01:01:10.000Z",
+      updatedAt: "2026-08-14T01:02:00.000Z",
+    });
+    const normalActivation = stagingWorkerRun("activate", {
+      id: 713,
+      createdAt: "2026-08-14T01:08:32.800Z",
+      startedAt: "2026-08-14T01:08:33.000Z",
+      updatedAt: "2026-08-14T01:08:34.000Z",
+    });
+    const quiesce = stagingBootstrapRun("quiesce", {
+      id: 711,
+      createdAt: "2026-08-14T01:02:05.000Z",
+      startedAt: "2026-08-14T01:02:10.000Z",
+      updatedAt: "2026-08-14T01:03:00.000Z",
+    });
+    const ambiguousRestore = stagingBootstrapRun("restore", {
+      id: 712,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:08:30.500Z",
+      startedAt: "2026-08-14T01:08:31.000Z",
+      updatedAt: "2026-08-14T01:08:32.000Z",
+    });
+    const overlappingRestoreReconcile = stagingBootstrapRun(
+      "reconcile-restore",
+      {
+        id: 727,
+        createdAt: "2026-08-14T01:08:31.100Z",
+        startedAt: "2026-08-14T01:08:31.200Z",
+        updatedAt: "2026-08-14T01:08:32.700Z",
+      },
+    );
+    const fixtures = [
+      harness({
+        workerFenceRuns: [prepare, ambiguousActivation, reconciledActivation],
+        mutationJobs: {
+          713: activationFailureJobs,
+          717: { total_count: 0, jobs: [] },
+        },
+      }),
+      harness({
+        workerFenceRuns: [
+          prepare,
+          ambiguousActivation,
+          reconciledActivation,
+          duplicateReconcile,
+        ],
+        mutationJobs: {
+          713: activationFailureJobs,
+          717: activationReconcileJobs,
+          718: twoJobDisposition(
+            duplicateReconcile,
+            WORKER_JOB_FIXTURES,
+            WORKER_JOB_FIXTURES[1].jobName,
+            "success",
+          ),
+        },
+      }),
+      harness({
+        workerFenceRuns: [prepare, ambiguousActivation, overlappingReconcile],
+        mutationJobs: {
+          713: activationFailureJobs,
+          719: twoJobDisposition(
+            overlappingReconcile,
+            WORKER_JOB_FIXTURES,
+            WORKER_JOB_FIXTURES[1].jobName,
+            "success",
+          ),
+        },
+      }),
+      harness({
+        workerFenceRuns: [
+          prepare,
+          ambiguousActivation,
+          overlappingPriorReadOnlyRetry,
+          reconciledActivation,
+        ],
+        mutationJobs: {
+          713: activationFailureJobs,
+          734: twoJobDisposition(
+            overlappingPriorReadOnlyRetry,
+            WORKER_JOB_FIXTURES,
+            WORKER_JOB_FIXTURES[1].jobName,
+            "skipped",
+          ),
+          717: activationReconcileJobs,
+        },
+      }),
+      harness({
+        workerFenceRuns: [prepare, ambiguousActivation, postCloseoutReconcile],
+        mutationJobs: {
+          713: activationFailureJobs,
+          725: twoJobDisposition(
+            postCloseoutReconcile,
+            WORKER_JOB_FIXTURES,
+            WORKER_JOB_FIXTURES[1].jobName,
+            "success",
+          ),
+        },
+      }),
+      harness({
+        workerFenceRuns: [ambiguousPrepare, normalActivation],
+        mutationJobs: {
+          726: twoJobDisposition(
+            ambiguousPrepare,
+            WORKER_JOB_FIXTURES,
+            WORKER_JOB_FIXTURES[0].jobName,
+            "failure",
+          ),
+        },
+      }),
+      harness({
+        stagingBootstrapRuns: [
+          quiesce,
+          ambiguousRestore,
+          overlappingRestoreReconcile,
+        ],
+        mutationJobs: {
+          712: twoJobDisposition(
+            ambiguousRestore,
+            BOOTSTRAP_JOB_FIXTURES,
+            BOOTSTRAP_JOB_FIXTURES[0].jobName,
+            "failure",
+          ),
+          727: twoJobDisposition(
+            overlappingRestoreReconcile,
+            BOOTSTRAP_JOB_FIXTURES,
+            BOOTSTRAP_JOB_FIXTURES[1].jobName,
+            "success",
+          ),
+        },
+      }),
+    ];
+    for (const fixture of fixtures) {
+      let summary = "";
+      await expect(runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      })).resolves.toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({
+        failureCode: "staging_bootstrap_history_invalid",
+      });
+    }
+  });
+
+  it("measures runner-loss grace from the original ambiguous write completion", async () => {
+    const originalPrepare = coldRecoveryRun("prepare", {
+      conclusion: "failure",
+      createdAt: "2026-08-12T01:01:00.000Z",
+      startedAt: "2026-08-12T01:01:10.000Z",
+      updatedAt: "2026-08-12T01:02:00.000Z",
+    });
+    const lateReconcile = coldRecoveryRun("reconcile-prepare");
+    const fixture = harness({
+      stagingBootstrapPath: "cold",
+      mergedAt: "2026-08-07T01:08:35.000Z",
+      coldRecoveryRuns: [
+        originalPrepare,
+        lateReconcile,
+        coldRecoveryRun("quiesce"),
+      ],
+      mutationJobs: {
+        710: coldRecoveryJobs(originalPrepare, "prepare", "failure"),
+        715: coldRecoveryJobs(
+          lateReconcile,
+          "reconcile-prepare",
+          "success",
+        ),
+      },
+    });
+    let summary = "";
+    await expect(runGithubReleaseCandidateVerification(fixture.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(1);
+    expect(JSON.parse(summary)).toMatchObject({
+      failureCode: "staging_mutation_history_expired",
+    });
+  });
+
+  it("rejects ambiguous or repeated cold reconciliation histories", async () => {
+    const ambiguousQuiesce = coldRecoveryRun("quiesce", {
+      conclusion: "failure",
+    });
+    const secondAmbiguousQuiesce = coldRecoveryRun("quiesce", {
+      id: 715,
+      conclusion: "timed_out",
+      createdAt: "2026-08-14T01:03:01.000Z",
+      startedAt: "2026-08-14T01:03:02.000Z",
+      updatedAt: "2026-08-14T01:03:04.000Z",
+    });
+    const mayHaveWrittenPrepare = coldRecoveryRun("prepare", {
+      id: 708,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:01.000Z",
+      startedAt: "2026-08-14T01:00:05.000Z",
+      updatedAt: "2026-08-14T01:00:20.000Z",
+    });
+    const fixtures = [
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [coldRecoveryRun("prepare"), ambiguousQuiesce],
+        mutationJobs: {
+          711: coldRecoveryJobs(ambiguousQuiesce, "quiesce", "failure"),
+        },
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [
+          coldRecoveryRun("prepare"),
+          ambiguousQuiesce,
+          coldRecoveryRun("reconcile-quiesce"),
+        ],
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [
+          coldRecoveryRun("prepare"),
+          ambiguousQuiesce,
+          secondAmbiguousQuiesce,
+          coldRecoveryRun("reconcile-quiesce"),
+        ],
+        mutationJobs: {
+          711: coldRecoveryJobs(ambiguousQuiesce, "quiesce", "failure"),
+          715: coldRecoveryJobs(
+            secondAmbiguousQuiesce,
+            "quiesce",
+            "timed_out",
+          ),
+        },
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [
+          mayHaveWrittenPrepare,
+          coldRecoveryRun("prepare"),
+          coldRecoveryRun("quiesce"),
+        ],
+        mutationJobs: {
+          708: coldRecoveryJobs(
+            mayHaveWrittenPrepare,
+            "prepare",
+            "failure",
+          ),
+        },
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [
+          coldRecoveryRun("prepare"),
+          ambiguousQuiesce,
+          coldRecoveryRun("reconcile-quiesce"),
+          coldRecoveryRun("reconcile-quiesce", { id: 716 }),
+        ],
+        mutationJobs: {
+          711: coldRecoveryJobs(ambiguousQuiesce, "quiesce", "failure"),
+        },
+      }),
+    ];
+    for (const fixture of fixtures) {
+      let summary = "";
+      await expect(runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      })).resolves.toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({
+        ok: false,
+        failureCode: "staging_bootstrap_history_invalid",
+      });
+    }
+  });
+
+  it("rejects mixed, extra, failed, missing, or ambiguous cold histories", async () => {
+    const fixtures = [
+      harness({
+        coldRecoveryRuns: [
+          coldRecoveryRun("prepare"),
+          coldRecoveryRun("quiesce"),
+        ],
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [
+          coldRecoveryRun("prepare"),
+          coldRecoveryRun("quiesce"),
+          coldRecoveryRun("prepare", { id: 714 }),
+        ],
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [
+          coldRecoveryRun("prepare", { conclusion: "failure" }),
+          coldRecoveryRun("quiesce"),
+        ],
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [coldRecoveryRun("prepare")],
+      }),
+      harness({
+        stagingBootstrapPath: "cold",
+        coldRecoveryRuns: [
+          coldRecoveryRun("prepare", { id: 710 }),
+          coldRecoveryRun("quiesce", { id: 710 }),
+        ],
+      }),
+    ];
+    for (const fixture of fixtures) {
       let summary = "";
       const code = await runGithubReleaseCandidateVerification(fixture.argv, {
         env: {

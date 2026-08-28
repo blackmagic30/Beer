@@ -29,7 +29,7 @@ export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_TERMINAL_SCHEMA =
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_EXECUTOR_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_POLICY_SHA256 =
-  "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb" as const;
+  "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461" as const;
 
 const POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json";
@@ -2098,13 +2098,17 @@ export const automaticMaintenanceWorkerFenceInternals = {
   confirmation,
   deploymentPart,
   metadataPart,
+  otherRows,
   parseArguments,
   policyExact,
   soleHealthyCandidate,
   soleHealthyLegacyBaseline,
+  serviceShapeStable,
   targetRowsAfterExact,
   targetRowsBeforeExact,
+  targetOriginAttached,
   tokenScopeExact,
+  topologyCanonical,
 };
 
 if (

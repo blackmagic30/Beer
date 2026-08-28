@@ -7,6 +7,15 @@ const MIGRATION_PATH = path.resolve(
   process.cwd(),
   "supabase/migrations/20260828010000_bootstrap_external_venue_directory.sql",
 );
+const DRIFT_REHEARSAL_PATH = path.resolve(
+  process.cwd(),
+  "scripts/ci/supabase-venue-directory-drift.sql",
+);
+const SCHEMA_VERIFIER_PATH = path.resolve(
+  process.cwd(),
+  "scripts/ci/supabase-venue-directory-schema-verify.sql",
+);
+const CI_WORKFLOW_PATH = path.resolve(process.cwd(), ".github/workflows/ci.yml");
 
 describe("external venue-directory bootstrap migration", () => {
   const sql = fs.readFileSync(MIGRATION_PATH, "utf8").toLowerCase();
@@ -51,5 +60,32 @@ describe("external venue-directory bootstrap migration", () => {
     expect(sql).toContain("where directory_eligible = true");
     expect(sql).toContain("and business_status = 'operational'");
     expect(sql).not.toMatch(/update\s+public\.venues[\s\S]*set\s+business_status\s*=\s*'operational'/);
+  });
+
+  it("rehearses the observed missing-column drift, preserves legacy rows, and proves idempotency", () => {
+    const rehearsal = fs.readFileSync(DRIFT_REHEARSAL_PATH, "utf8").toLowerCase();
+    const verifier = fs.readFileSync(SCHEMA_VERIFIER_PATH, "utf8").toLowerCase();
+    const ci = fs.readFileSync(CI_WORKFLOW_PATH, "utf8");
+
+    expect(rehearsal).toContain("begin;");
+    expect(rehearsal).toContain("drop column business_status");
+    expect(rehearsal).toContain("drop column last_checked_at");
+    expect(rehearsal).toContain("drop column directory_eligible");
+    expect(
+      rehearsal.match(/20260828010000_bootstrap_external_venue_directory\.sql/g),
+    ).toHaveLength(2);
+    expect(rehearsal).toContain("business_status is null");
+    expect(rehearsal).toContain("directory_eligible = false");
+    expect(rehearsal.trimEnd()).toMatch(/rollback;$/);
+
+    expect(verifier).toContain("venue directory status columns do not match");
+    expect(verifier).toContain("venues_business_status_check");
+    expect(verifier).toContain("venues_australian_postcode_check");
+    expect(verifier).toContain("venues_operational_directory_name_id_idx");
+    expect(verifier).toContain("row level security is disabled");
+    expect(verifier).toContain("browser roles retain direct public.venues privileges");
+    expect(verifier).toContain("venue updated_at trigger is absent or not invoker-safe");
+    expect(verifier).not.toContain("\\set");
+    expect(ci).toContain("--file scripts/ci/supabase-venue-directory-drift.sql");
   });
 });

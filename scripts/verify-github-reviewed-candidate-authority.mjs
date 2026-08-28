@@ -17,6 +17,8 @@ const RUN_ID = /^[1-9][0-9]{0,19}$/;
 const MAX_HISTORY_PAGES = 10;
 const MAX_CANDIDATE_AGE_HOURS = 7 * 24;
 const MAX_CANDIDATE_AGE_MS = MAX_CANDIDATE_AGE_HOURS * 60 * 60 * 1000;
+const RECOVERY_GRACE_HOURS = 24;
+const RECOVERY_GRACE_MS = RECOVERY_GRACE_HOURS * 60 * 60 * 1000;
 const NONTERMINAL_RUN_STATUSES = new Set([
   "in_progress",
   "pending",
@@ -34,22 +36,61 @@ const CUTOVER_WORKFLOW_ID = "permanent-staging-supabase-legacy-cutover.yml";
 const RUNTIME_VARIABLE_WORKFLOW_PATH =
   ".github/workflows/configure-runtime-variable.yml";
 const RUNTIME_VARIABLE_WORKFLOW_ID = "configure-runtime-variable.yml";
+const COLD_RECOVERY_WORKFLOW_PATH =
+  ".github/workflows/recover-permanent-staging-cold-zero.yml";
+const COLD_RECOVERY_WORKFLOW_ID =
+  "recover-permanent-staging-cold-zero.yml";
+const STAGING_BOOTSTRAP_WORKFLOW_PATH =
+  ".github/workflows/bootstrap-permanent-staging-worker-fence.yml";
+const STAGING_BOOTSTRAP_WORKFLOW_ID =
+  "bootstrap-permanent-staging-worker-fence.yml";
+const WORKER_FENCE_WORKFLOW_PATH =
+  ".github/workflows/configure-automatic-maintenance-worker-fence.yml";
+const WORKER_FENCE_WORKFLOW_ID =
+  "configure-automatic-maintenance-worker-fence.yml";
 const DEPLOYMENT_WORKFLOW_PATH =
   ".github/workflows/deploy-permanent-staging.yml";
 const DEPLOYMENT_WORKFLOW_ID = "deploy-permanent-staging.yml";
-const PROVIDER_JOB_NAME = "One atomic variable mutation";
+const PROVIDER_JOB_NAME = "One protected variable mutation plan";
 const PROVIDER_WRITE_STEP =
-  "Execute exactly one reviewed atomic Railway mutation";
-const CUTOVER_JOB_NAME = "Disable exact permanent-staging legacy keys";
+  "Execute one reviewed protected Railway mutation plan";
+const CUTOVER_JOB_NAME = "Reconcile or disable exact permanent-staging legacy keys";
 const CUTOVER_WRITE_STEP =
-  "Canary replacement keys, disable legacy keys once, and reconcile";
+  "Canary replacement keys and reconcile or disable legacy keys once";
+const CUTOVER_MODES = new Set([
+  "reconcile-already-disabled-legacy-keys",
+  "disable-enabled-legacy-keys",
+]);
+const COLD_RECOVERY_OPERATIONS = new Set([
+  "cold-recovery-prepare",
+  "cold-recovery-reconcile-prepare",
+  "cold-recovery-quiesce",
+  "cold-recovery-reconcile-quiesce",
+]);
+const RUNNER_LOSS_RECOVERY_OPERATIONS = new Set([
+  "cold-recovery-reconcile-prepare",
+  "cold-recovery-reconcile-quiesce",
+  "staging-worker-bootstrap-reconcile-restore",
+  "staging-worker-fence-reconcile-activate",
+]);
 const PROVIDER_OPERATIONS = new Set([
   "provider-google-maps-api-key",
   "provider-google-maps-map-id",
   "provider-google-places-api-key",
   "provider-openai-api-key",
   "supabase-key-replacement",
+  "remove-forbidden-offsite-backup-variables",
+  "resume-forbidden-offsite-backup-deletion-patch",
+  "cancel-forbidden-offsite-backup-deletion-patch",
 ]);
+const OFFSITE_CLEANUP_OPERATION =
+  "remove-forbidden-offsite-backup-variables";
+const OFFSITE_CLEANUP_RECOVERY_OPERATIONS = new Set([
+  "resume-forbidden-offsite-backup-deletion-patch",
+  "cancel-forbidden-offsite-backup-deletion-patch",
+]);
+const OFFSITE_CLEANUP_PATCH_SHA256 =
+  "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91";
 const RUNTIME_VARIABLE_TARGETS = new Set(["permanent-staging", "production"]);
 const RUNTIME_VARIABLE_NAMES = new Set([
   "DATABASE_URL",
@@ -90,7 +131,7 @@ function parseTimestamp(value, code) {
 }
 
 function parseArguments(argv) {
-  if (!Array.isArray(argv) || argv.length < 4 || argv.length > 8 || argv.length % 2) {
+  if (!Array.isArray(argv) || argv.length < 4 || argv.length > 10 || argv.length % 2) {
     fail("arguments_invalid");
   }
   const values = new Map();
@@ -103,6 +144,9 @@ function parseArguments(argv) {
         "--operation",
         "--replacement-run-id",
         "--deployment-run-id",
+        "--cutover-mode",
+        "--prior-run-id",
+        "--prepare-run-id",
         "--target",
         "--variable-name",
       ].includes(key) ||
@@ -116,16 +160,43 @@ function parseArguments(argv) {
   const operation = values.get("--operation") ?? "";
   const replacementRunId = values.get("--replacement-run-id") ?? null;
   const deploymentRunId = values.get("--deployment-run-id") ?? null;
+  const cutoverMode = values.get("--cutover-mode") ?? null;
+  const priorRunId = values.get("--prior-run-id") ?? null;
+  const prepareRunId = values.get("--prepare-run-id") ?? null;
   const target = values.get("--target") ?? null;
   const variableName = values.get("--variable-name") ?? null;
   const cutover = operation === "supabase-legacy-key-cutover";
   const runtimeVariable = operation === "runtime-variable";
+  const coldPrepare = operation === "cold-recovery-prepare";
+  const coldPrepareReconcile =
+    operation === "cold-recovery-reconcile-prepare";
+  const coldQuiesceReconcile =
+    operation === "cold-recovery-reconcile-quiesce";
+  const runnerLossReconcile = RUNNER_LOSS_RECOVERY_OPERATIONS.has(operation);
+  const offsiteCleanupRecovery =
+    OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(operation);
   if (
     !SHA.test(candidateSha) ||
-    (!cutover && !runtimeVariable && !PROVIDER_OPERATIONS.has(operation)) ||
+    (!cutover &&
+      !runtimeVariable &&
+      !PROVIDER_OPERATIONS.has(operation) &&
+      !COLD_RECOVERY_OPERATIONS.has(operation) &&
+      !RUNNER_LOSS_RECOVERY_OPERATIONS.has(operation)) ||
     (cutover
-      ? !RUN_ID.test(replacementRunId ?? "") || !RUN_ID.test(deploymentRunId ?? "")
-      : replacementRunId !== null || deploymentRunId !== null) ||
+      ? !RUN_ID.test(replacementRunId ?? "") ||
+        !RUN_ID.test(deploymentRunId ?? "") ||
+        !CUTOVER_MODES.has(cutoverMode)
+      : coldPrepare || coldPrepareReconcile
+      ? !RUN_ID.test(replacementRunId ?? "") ||
+        deploymentRunId !== null ||
+        cutoverMode !== null
+      : replacementRunId !== null || deploymentRunId !== null || cutoverMode !== null) ||
+    (offsiteCleanupRecovery || runnerLossReconcile
+      ? !RUN_ID.test(priorRunId ?? "")
+      : priorRunId !== null) ||
+    (coldQuiesceReconcile
+      ? !RUN_ID.test(prepareRunId ?? "") || prepareRunId === priorRunId
+      : prepareRunId !== null) ||
     (runtimeVariable
       ? !RUNTIME_VARIABLE_TARGETS.has(target) || !RUNTIME_VARIABLE_NAMES.has(variableName)
       : target !== null || variableName !== null)
@@ -135,20 +206,32 @@ function parseArguments(argv) {
     operation,
     replacementRunId,
     deploymentRunId,
+    cutoverMode,
+    priorRunId,
+    prepareRunId,
     target,
     variableName,
   });
 }
 
-function operationConfiguration(operation, candidateSha, target, variableName) {
+function operationConfiguration(
+  operation,
+  candidateSha,
+  target,
+  variableName,
+  cutoverMode = null,
+) {
   if (operation === "supabase-legacy-key-cutover") {
+    if (!CUTOVER_MODES.has(cutoverMode)) fail("arguments_invalid");
     return Object.freeze({
       workflowPath: CUTOVER_WORKFLOW_PATH,
       workflowId: CUTOVER_WORKFLOW_ID,
-      displayTitle: `Permanent staging Supabase legacy cutover | ${candidateSha}`,
+      displayTitle:
+        `Permanent staging Supabase legacy cutover | ${cutoverMode} | ${candidateSha}`,
       jobName: CUTOVER_JOB_NAME,
       writeStep: CUTOVER_WRITE_STEP,
       priorSkippedWriteAllowed: true,
+      cutoverMode,
     });
   }
   if (operation === "runtime-variable") {
@@ -160,6 +243,56 @@ function operationConfiguration(operation, candidateSha, target, variableName) {
       jobName: null,
       writeStep: null,
       priorSkippedWriteAllowed: false,
+    });
+  }
+  if (COLD_RECOVERY_OPERATIONS.has(operation)) {
+    const coldOperation = operation === "cold-recovery-prepare"
+      ? "prepare"
+      : operation === "cold-recovery-reconcile-prepare"
+      ? "reconcile-prepare"
+      : operation === "cold-recovery-quiesce"
+      ? "quiesce"
+      : "reconcile-quiesce";
+    return Object.freeze({
+      workflowPath: COLD_RECOVERY_WORKFLOW_PATH,
+      workflowId: COLD_RECOVERY_WORKFLOW_ID,
+      displayTitle:
+        `Permanent staging cold recovery | ${coldOperation} | ${candidateSha}`,
+      jobName: coldOperation === "prepare"
+        ? "Bind the exact replacement and prepare the dead baseline"
+        : coldOperation === "reconcile-prepare"
+        ? "Reconcile an ambiguous cold prepare at the exact dead baseline"
+        : coldOperation === "quiesce"
+        ? "Initialize the exact dead baseline at explicit zero"
+        : "Reconcile an ambiguous cold quiesce at exact zero",
+      writeStep: coldOperation === "prepare"
+        ? "Prepare the exact dead staging baseline once"
+        : coldOperation === "quiesce"
+        ? "Initialize the dead baseline from null to explicit zero once"
+        : null,
+      priorSkippedWriteAllowed: true,
+    });
+  }
+  if (operation === "staging-worker-bootstrap-reconcile-restore") {
+    return Object.freeze({
+      workflowPath: STAGING_BOOTSTRAP_WORKFLOW_PATH,
+      workflowId: STAGING_BOOTSTRAP_WORKFLOW_ID,
+      displayTitle:
+        `Permanent staging worker bootstrap | reconcile-restore | ${candidateSha}`,
+      jobName: "Reconcile an ambiguous staging bootstrap restore at exact one",
+      writeStep: null,
+      priorSkippedWriteAllowed: true,
+    });
+  }
+  if (operation === "staging-worker-fence-reconcile-activate") {
+    return Object.freeze({
+      workflowPath: WORKER_FENCE_WORKFLOW_PATH,
+      workflowId: WORKER_FENCE_WORKFLOW_ID,
+      displayTitle:
+        `Automatic maintenance worker fence | permanent-staging | reconcile-activate | ${candidateSha}`,
+      jobName: "Reconcile an ambiguous staging automatic-maintenance activation",
+      writeStep: null,
+      priorSkippedWriteAllowed: true,
     });
   }
   return Object.freeze({
@@ -184,6 +317,7 @@ function isNonterminalRun(value) {
 function validateRunIdentity(value, expected) {
   const createdAt = parseTimestamp(value?.created_at, expected.failureCode);
   const startedAt = parseTimestamp(value?.run_started_at, expected.failureCode);
+  const updatedAt = parseTimestamp(value?.updated_at, expected.failureCode);
   if (
     !Number.isSafeInteger(value?.id) ||
     value.id <= 0 ||
@@ -196,9 +330,10 @@ function validateRunIdentity(value, expected) {
     value?.event !== "workflow_dispatch" ||
     value?.display_title !== expected.displayTitle ||
     value?.run_attempt !== 1 ||
-    startedAt < createdAt
+    startedAt < createdAt ||
+    updatedAt < startedAt
   ) fail(expected.failureCode);
-  return Object.freeze({ ...value, createdAt, startedAt });
+  return Object.freeze({ ...value, createdAt, startedAt, updatedAt });
 }
 
 async function listWorkflowHistory(input) {
@@ -234,23 +369,47 @@ async function listWorkflowHistory(input) {
   return history;
 }
 
-async function priorRunSkippedWrite(input, run, configuration) {
+async function priorRunWriteDisposition(input, run, configuration) {
   if (
     run.status !== "completed" ||
     !["failure", "cancelled", "timed_out"].includes(run.conclusion)
-  ) return false;
+  ) return "invalid";
   const listing = await githubGet(
     input.fetchImpl,
     input.token,
     REPOSITORY,
     `/actions/runs/${run.id}/jobs?filter=all&per_page=100`,
   );
-  if (
-    listing?.total_count !== 1 ||
+  const coldJobNames = [
+    "Bind the exact replacement and prepare the dead baseline",
+    "Reconcile an ambiguous cold prepare at the exact dead baseline",
+    "Initialize the exact dead baseline at explicit zero",
+    "Reconcile an ambiguous cold quiesce at exact zero",
+  ];
+  const cold = configuration.workflowPath === COLD_RECOVERY_WORKFLOW_PATH;
+  const bootstrapJobNames = [
+    "Verify the chain and perform one exact protected scale transition",
+    "Reconcile an ambiguous staging bootstrap restore at exact one",
+  ];
+  const workerJobNames = [
+    "One candidate-bound automatic-maintenance transition",
+    "Reconcile an ambiguous staging automatic-maintenance activation",
+  ];
+  const workflowJobNames = cold
+    ? coldJobNames
+    : configuration.workflowPath === STAGING_BOOTSTRAP_WORKFLOW_PATH
+    ? bootstrapJobNames
+    : configuration.workflowPath === WORKER_FENCE_WORKFLOW_PATH
+    ? workerJobNames
+    : null;
+  const expectedJobCount = workflowJobNames?.length ?? 1;
+  if (listing?.total_count !== expectedJobCount ||
     !Array.isArray(listing?.jobs) ||
-    listing.jobs.length !== 1
-  ) return false;
-  const job = listing.jobs[0];
+    listing.jobs.length !== expectedJobCount) return "invalid";
+  const matchingJobs = listing.jobs.filter((job) =>
+    job?.name === configuration.jobName);
+  if (matchingJobs.length !== 1) return "invalid";
+  const job = matchingJobs[0];
   if (
     job?.run_id !== run.id ||
     job?.run_attempt !== 1 ||
@@ -258,11 +417,118 @@ async function priorRunSkippedWrite(input, run, configuration) {
     job?.status !== "completed" ||
     job?.conclusion !== run.conclusion ||
     !Array.isArray(job?.steps)
-  ) return false;
+  ) return "invalid";
+  if (workflowJobNames !== null) {
+    if (new Set(listing.jobs.map((item) => item?.name)).size !==
+        workflowJobNames.length ||
+      workflowJobNames.some((name) =>
+        !listing.jobs.some((item) => item?.name === name)) ||
+      listing.jobs.some((item) => item !== job &&
+        (item?.run_id !== run.id || item?.run_attempt !== 1 ||
+          item?.status !== "completed" || item?.conclusion !== "skipped"))) {
+      return "invalid";
+    }
+  }
   const writeSteps = job.steps.filter((step) => step?.name === configuration.writeStep);
-  return writeSteps.length === 1 &&
-    writeSteps[0]?.status === "completed" &&
-    writeSteps[0]?.conclusion === "skipped";
+  if (writeSteps.length !== 1 || writeSteps[0]?.status !== "completed") {
+    return "invalid";
+  }
+  if (writeSteps[0]?.conclusion === "skipped") return "skipped";
+  return ["success", "failure", "cancelled", "timed_out"].includes(
+    writeSteps[0]?.conclusion,
+  )
+    ? "may-have-written"
+    : "invalid";
+}
+
+function exactWorkflowJobNames(workflowPath) {
+  return workflowPath === COLD_RECOVERY_WORKFLOW_PATH
+    ? [
+        "Bind the exact replacement and prepare the dead baseline",
+        "Reconcile an ambiguous cold prepare at the exact dead baseline",
+        "Initialize the exact dead baseline at explicit zero",
+        "Reconcile an ambiguous cold quiesce at exact zero",
+      ]
+    : workflowPath === STAGING_BOOTSTRAP_WORKFLOW_PATH
+    ? [
+        "Verify the chain and perform one exact protected scale transition",
+        "Reconcile an ambiguous staging bootstrap restore at exact one",
+      ]
+    : workflowPath === WORKER_FENCE_WORKFLOW_PATH
+    ? [
+        "One candidate-bound automatic-maintenance transition",
+        "Reconcile an ambiguous staging automatic-maintenance activation",
+      ]
+    : null;
+}
+
+async function readOnlyReconciliationRunExact(
+  input,
+  run,
+  configuration,
+  allowedConclusions,
+) {
+  const jobNames = exactWorkflowJobNames(configuration.workflowPath);
+  if (configuration.writeStep !== null || jobNames === null ||
+    run.status !== "completed" ||
+    !allowedConclusions.includes(run.conclusion)) {
+    return false;
+  }
+  const listing = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/actions/runs/${run.id}/jobs?filter=all&per_page=100`,
+  );
+  if (listing?.total_count !== jobNames.length ||
+    !Array.isArray(listing?.jobs) ||
+    listing.jobs.length !== jobNames.length ||
+    new Set(listing.jobs.map((job) => job?.name)).size !== jobNames.length ||
+    jobNames.some((name) =>
+      !listing.jobs.some((job) => job?.name === name))) return false;
+  const selected = listing.jobs.find((job) =>
+    job?.name === configuration.jobName);
+  return selected?.run_id === run.id &&
+    selected.run_attempt === 1 &&
+    selected.status === "completed" &&
+    selected.conclusion === run.conclusion &&
+    Array.isArray(selected.steps) &&
+    listing.jobs.every((job) => job === selected || (
+      job?.run_id === run.id &&
+      job?.run_attempt === 1 &&
+      job?.status === "completed" &&
+      job?.conclusion === "skipped"
+    ));
+}
+
+async function priorReadOnlyReconciliationRunExact(
+  input,
+  run,
+  configuration,
+) {
+  return readOnlyReconciliationRunExact(
+    input,
+    run,
+    configuration,
+    ["failure", "cancelled", "timed_out"],
+  );
+}
+
+async function successfulReadOnlyReconciliationRunExact(
+  input,
+  run,
+  configuration,
+) {
+  return readOnlyReconciliationRunExact(
+    input,
+    run,
+    configuration,
+    ["success"],
+  );
+}
+
+async function priorRunSkippedWrite(input, run, configuration) {
+  return await priorRunWriteDisposition(input, run, configuration) === "skipped";
 }
 
 async function verifyOperationHistory(input, configuration, currentRun) {
@@ -308,6 +574,662 @@ async function verifyOperationHistory(input, configuration, currentRun) {
     safePriorRunIds.push(String(run.id));
   }
   return safePriorRunIds.sort((left, right) => Number(left) - Number(right));
+}
+
+function coldConfigurationForTitle(displayTitle, candidateSha) {
+  for (const operation of COLD_RECOVERY_OPERATIONS) {
+    const configuration = operationConfiguration(
+      operation,
+      candidateSha,
+      null,
+      null,
+    );
+    if (configuration.displayTitle === displayTitle) {
+      return Object.freeze({ operation, configuration });
+    }
+  }
+  return null;
+}
+
+async function verifyColdQuiesceReconciliationHistory(input, currentRun) {
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: COLD_RECOVERY_WORKFLOW_ID,
+  });
+  const candidateRuns = history.filter((run) =>
+    run?.head_sha === input.candidateSha);
+  if (new Set(candidateRuns.map((run) => run?.id)).size !== candidateRuns.length) {
+    fail("cold_reconciliation_history_invalid");
+  }
+  let currentSeen = false;
+  let selectedPrepare = null;
+  let ambiguousPrepare = null;
+  let selectedQuiesce = null;
+  const safePriorSkippedWriteRuns = [];
+  const safePrepareReadOnlyRuns = [];
+  const safeQuiesceReadOnlyRuns = [];
+  for (const observed of candidateRuns) {
+    const classified = coldConfigurationForTitle(
+      observed?.display_title,
+      input.candidateSha,
+    );
+    if (classified === null) fail("cold_reconciliation_history_invalid");
+    const run = validateRunIdentity(observed, {
+      runId: observed?.id,
+      candidateSha: input.candidateSha,
+      workflowPath: COLD_RECOVERY_WORKFLOW_PATH,
+      displayTitle: classified.configuration.displayTitle,
+      failureCode: "cold_reconciliation_history_invalid",
+    });
+    if (run.createdAt < input.mergedAtMs ||
+      run.createdAt > input.currentStartedAtMs) {
+      fail("cold_reconciliation_history_invalid");
+    }
+    if (run.id === currentRun.id) {
+      if (classified.operation !== "cold-recovery-reconcile-quiesce" ||
+        currentSeen || !isNonterminalRun(run) ||
+        run.created_at !== currentRun.created_at ||
+        run.run_started_at !== currentRun.run_started_at) {
+        fail("cold_reconciliation_history_invalid");
+      }
+      currentSeen = true;
+      continue;
+    }
+    if (classified.operation === "cold-recovery-reconcile-quiesce") {
+      if (!await priorReadOnlyReconciliationRunExact(
+        input,
+        run,
+        classified.configuration,
+      )) fail("cold_reconciliation_history_invalid");
+      safeQuiesceReadOnlyRuns.push(Object.freeze({
+        run,
+        updatedAt: run.updatedAt,
+      }));
+      continue;
+    }
+    if (classified.operation === "cold-recovery-reconcile-prepare") {
+      if (String(run.id) === input.prepareRunId) {
+        if (selectedPrepare !== null ||
+          !await successfulReadOnlyReconciliationRunExact(
+            input,
+            run,
+            classified.configuration,
+          )) {
+          fail("cold_reconciliation_history_invalid");
+        }
+        selectedPrepare = Object.freeze({
+          run,
+          updatedAt: run.updatedAt,
+          reconciled: true,
+        });
+      } else {
+        if (!await priorReadOnlyReconciliationRunExact(
+          input,
+          run,
+          classified.configuration,
+        )) fail("cold_reconciliation_history_invalid");
+        safePrepareReadOnlyRuns.push(Object.freeze({
+          run,
+          updatedAt: run.updatedAt,
+        }));
+      }
+      continue;
+    }
+    if (classified.operation === "cold-recovery-prepare" &&
+      String(run.id) === input.prepareRunId) {
+      if (selectedPrepare !== null || run.status !== "completed" ||
+        run.conclusion !== "success") {
+        fail("cold_reconciliation_history_invalid");
+      }
+      selectedPrepare = Object.freeze({
+        run,
+        updatedAt: run.updatedAt,
+        reconciled: false,
+      });
+      continue;
+    }
+    const disposition = await priorRunWriteDisposition(
+      input,
+      run,
+      classified.configuration,
+    );
+    if (classified.operation === "cold-recovery-quiesce" &&
+      String(run.id) === input.priorRunId) {
+      if (selectedQuiesce !== null || disposition !== "may-have-written") {
+        fail("cold_reconciliation_history_invalid");
+      }
+      selectedQuiesce = Object.freeze({
+        run,
+        updatedAt: parseTimestamp(
+          run.updated_at,
+          "cold_reconciliation_history_invalid",
+        ),
+      });
+      continue;
+    }
+    if (classified.operation === "cold-recovery-prepare" &&
+      disposition === "may-have-written") {
+      if (ambiguousPrepare !== null) {
+        fail("cold_reconciliation_history_invalid");
+      }
+      ambiguousPrepare = Object.freeze({ run, updatedAt: run.updatedAt });
+      continue;
+    }
+    if (disposition !== "skipped") {
+      fail("cold_reconciliation_history_invalid");
+    }
+    safePriorSkippedWriteRuns.push(Object.freeze({
+      operation: classified.operation,
+      run,
+      updatedAt: run.updatedAt,
+    }));
+  }
+  safePrepareReadOnlyRuns.sort((left, right) =>
+    left.run.startedAt - right.run.startedAt);
+  safeQuiesceReadOnlyRuns.sort((left, right) =>
+    left.run.startedAt - right.run.startedAt);
+  const prepareReconciliationChronologyExact = selectedPrepare !== null &&
+    (selectedPrepare.reconciled === false
+      ? ambiguousPrepare === null && safePrepareReadOnlyRuns.length === 0
+      : ambiguousPrepare !== null &&
+        ambiguousPrepare.run.startedAt - input.mergedAtMs <=
+          MAX_CANDIDATE_AGE_MS &&
+        safePrepareReadOnlyRuns.every((item, index) =>
+          (index === 0
+            ? ambiguousPrepare.updatedAt < item.run.startedAt
+            : safePrepareReadOnlyRuns[index - 1].updatedAt <
+              item.run.startedAt)) &&
+        (safePrepareReadOnlyRuns.length === 0
+          ? ambiguousPrepare.updatedAt < selectedPrepare.run.startedAt
+          : safePrepareReadOnlyRuns.at(-1).updatedAt <
+            selectedPrepare.run.startedAt));
+  const skippedChronologyExact = selectedPrepare !== null &&
+    selectedQuiesce !== null && safePriorSkippedWriteRuns.every((item) =>
+      item.updatedAt < (item.operation === "cold-recovery-prepare"
+        ? ambiguousPrepare?.run.startedAt ?? selectedPrepare.run.startedAt
+        : selectedQuiesce.run.startedAt));
+  if (!currentSeen || selectedPrepare === null || selectedQuiesce === null ||
+    !prepareReconciliationChronologyExact ||
+    !skippedChronologyExact ||
+    selectedPrepare.updatedAt >= selectedQuiesce.run.startedAt ||
+    selectedQuiesce.updatedAt >= currentRun.startedAt ||
+    selectedQuiesce.run.startedAt - input.mergedAtMs > MAX_CANDIDATE_AGE_MS ||
+    currentRun.startedAt - selectedQuiesce.updatedAt > RECOVERY_GRACE_MS ||
+    safeQuiesceReadOnlyRuns.some((item, index) =>
+      (index === 0
+        ? selectedQuiesce.updatedAt >= item.run.startedAt
+        : safeQuiesceReadOnlyRuns[index - 1].updatedAt >= item.run.startedAt)) ||
+    (safeQuiesceReadOnlyRuns.length > 0 &&
+      safeQuiesceReadOnlyRuns.at(-1).updatedAt >= currentRun.startedAt)) {
+    fail("cold_reconciliation_history_invalid");
+  }
+  return Object.freeze({
+    safePriorSkippedWriteRunIds: safePriorSkippedWriteRuns.map((item) =>
+      String(item.run.id)).sort(
+      (left, right) => Number(left) - Number(right),
+    ),
+    safePriorReadOnlyRunIds: [
+      ...safePrepareReadOnlyRuns,
+      ...safeQuiesceReadOnlyRuns,
+    ].map((item) => String(item.run.id)).sort(
+      (left, right) => Number(left) - Number(right),
+    ),
+    reconciledPriorAmbiguousDisableRunId: null,
+    priorAmbiguousColdQuiesceRunId: input.priorRunId,
+    selectedColdPrepareRunId: input.prepareRunId,
+    exactPriorColdQuiesceCandidateRunBound: true,
+    secondColdScaleWritePreventedExact: true,
+    runnerLossRecoveryOriginalRunCompletedAt: new Date(
+      selectedQuiesce.updatedAt,
+    ).toISOString(),
+    runnerLossRecoveryGraceHours: RECOVERY_GRACE_HOURS,
+    runnerLossRecoveryWithinGraceExact: true,
+  });
+}
+
+function runnerLossRecoveryConfiguration(operation, candidateSha) {
+  if (operation === "cold-recovery-reconcile-prepare") {
+    return Object.freeze({
+      workflowId: COLD_RECOVERY_WORKFLOW_ID,
+      workflowPath: COLD_RECOVERY_WORKFLOW_PATH,
+      current: operationConfiguration(operation, candidateSha, null, null),
+      original: operationConfiguration(
+        "cold-recovery-prepare",
+        candidateSha,
+        null,
+        null,
+      ),
+      allowedSuccessfulPredecessor: null,
+      output: "cold-prepare",
+    });
+  }
+  if (operation === "staging-worker-bootstrap-reconcile-restore") {
+    return Object.freeze({
+      workflowId: STAGING_BOOTSTRAP_WORKFLOW_ID,
+      workflowPath: STAGING_BOOTSTRAP_WORKFLOW_PATH,
+      current: operationConfiguration(operation, candidateSha, null, null),
+      original: Object.freeze({
+        workflowPath: STAGING_BOOTSTRAP_WORKFLOW_PATH,
+        workflowId: STAGING_BOOTSTRAP_WORKFLOW_ID,
+        displayTitle:
+          `Permanent staging worker bootstrap | restore | ${candidateSha}`,
+        jobName: "Verify the chain and perform one exact protected scale transition",
+        writeStep: "Perform at most one exact candidate-bound scale transition",
+      }),
+      allowedSuccessfulPredecessor:
+        `Permanent staging worker bootstrap | quiesce | ${candidateSha}`,
+      output: "restore",
+    });
+  }
+  if (operation === "staging-worker-fence-reconcile-activate") {
+    return Object.freeze({
+      workflowId: WORKER_FENCE_WORKFLOW_ID,
+      workflowPath: WORKER_FENCE_WORKFLOW_PATH,
+      current: operationConfiguration(operation, candidateSha, null, null),
+      original: Object.freeze({
+        workflowPath: WORKER_FENCE_WORKFLOW_PATH,
+        workflowId: WORKER_FENCE_WORKFLOW_ID,
+        displayTitle:
+          `Automatic maintenance worker fence | permanent-staging | activate | ${candidateSha}`,
+        jobName: "One candidate-bound automatic-maintenance transition",
+        writeStep: "Execute at most one exact atomic Railway variable upsert",
+      }),
+      allowedSuccessfulPredecessor:
+        `Automatic maintenance worker fence | permanent-staging | prepare | ${candidateSha}`,
+      output: "activate",
+    });
+  }
+  fail("runner_loss_reconciliation_history_invalid");
+}
+
+async function verifyRunnerLossReconciliationHistory(input, currentRun) {
+  const phase = runnerLossRecoveryConfiguration(input.operation, input.candidateSha);
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: phase.workflowId,
+  });
+  const candidateRuns = history.filter((run) =>
+    run?.head_sha === input.candidateSha);
+  if (new Set(candidateRuns.map((run) => run?.id)).size !== candidateRuns.length) {
+    fail("runner_loss_reconciliation_history_invalid");
+  }
+  let currentSeen = false;
+  let selectedOriginal = null;
+  let successfulPredecessor = null;
+  const safePriorSkippedWriteRunIds = [];
+  const safePriorReadOnlyRuns = [];
+  for (const observed of candidateRuns) {
+    const title = observed?.display_title;
+    const configuration = title === phase.current.displayTitle
+      ? phase.current
+      : title === phase.original.displayTitle
+      ? phase.original
+      : title === phase.allowedSuccessfulPredecessor
+      ? Object.freeze({
+          workflowPath: phase.workflowPath,
+          displayTitle: title,
+        })
+      : null;
+    if (configuration === null) {
+      fail("runner_loss_reconciliation_history_invalid");
+    }
+    const run = validateRunIdentity(observed, {
+      runId: observed?.id,
+      candidateSha: input.candidateSha,
+      workflowPath: phase.workflowPath,
+      displayTitle: configuration.displayTitle,
+      failureCode: "runner_loss_reconciliation_history_invalid",
+    });
+    if (run.createdAt < input.mergedAtMs ||
+      run.createdAt > input.currentStartedAtMs) {
+      fail("runner_loss_reconciliation_history_invalid");
+    }
+    if (run.id === currentRun.id) {
+      if (configuration !== phase.current || currentSeen || !isNonterminalRun(run) ||
+        run.created_at !== currentRun.created_at ||
+        run.run_started_at !== currentRun.run_started_at) {
+        fail("runner_loss_reconciliation_history_invalid");
+      }
+      currentSeen = true;
+      continue;
+    }
+    if (configuration === phase.current) {
+      if (!await priorReadOnlyReconciliationRunExact(
+        input,
+        run,
+        configuration,
+      )) fail("runner_loss_reconciliation_history_invalid");
+      safePriorReadOnlyRuns.push(Object.freeze({
+        run,
+        updatedAt: run.updatedAt,
+      }));
+      continue;
+    }
+    if (title === phase.allowedSuccessfulPredecessor) {
+      if (successfulPredecessor !== null || run.status !== "completed" ||
+        run.conclusion !== "success") {
+        fail("runner_loss_reconciliation_history_invalid");
+      }
+      successfulPredecessor = Object.freeze({
+        run,
+        updatedAt: parseTimestamp(
+          run.updated_at,
+          "runner_loss_reconciliation_history_invalid",
+        ),
+      });
+      continue;
+    }
+    const disposition = await priorRunWriteDisposition(input, run, phase.original);
+    if (String(run.id) === input.priorRunId) {
+      if (selectedOriginal !== null || disposition !== "may-have-written") {
+        fail("runner_loss_reconciliation_history_invalid");
+      }
+      selectedOriginal = Object.freeze({
+        run,
+        updatedAt: parseTimestamp(
+          run.updated_at,
+          "runner_loss_reconciliation_history_invalid",
+        ),
+      });
+    } else if (disposition === "skipped") {
+      safePriorSkippedWriteRunIds.push(String(run.id));
+    } else {
+      fail("runner_loss_reconciliation_history_invalid");
+    }
+  }
+  if (!currentSeen || selectedOriginal === null ||
+    selectedOriginal.updatedAt >= currentRun.startedAt ||
+    selectedOriginal.run.startedAt - input.mergedAtMs >
+      MAX_CANDIDATE_AGE_MS ||
+    (successfulPredecessor !== null &&
+      successfulPredecessor.updatedAt >= selectedOriginal.run.startedAt)) {
+    fail("runner_loss_reconciliation_history_invalid");
+  }
+  for (const skippedRunId of safePriorSkippedWriteRunIds) {
+    const skipped = candidateRuns.find((run) => String(run?.id) === skippedRunId);
+    if (parseTimestamp(
+      skipped?.updated_at,
+      "runner_loss_reconciliation_history_invalid",
+    ) >= selectedOriginal.run.startedAt) {
+      fail("runner_loss_reconciliation_history_invalid");
+    }
+  }
+  safePriorReadOnlyRuns.sort((left, right) =>
+    left.run.startedAt - right.run.startedAt);
+  if (safePriorReadOnlyRuns.some((item, index) =>
+    (index === 0
+      ? selectedOriginal.updatedAt >= item.run.startedAt
+      : safePriorReadOnlyRuns[index - 1].updatedAt >= item.run.startedAt)) ||
+    (safePriorReadOnlyRuns.length > 0 &&
+      safePriorReadOnlyRuns.at(-1).updatedAt >= currentRun.startedAt)) {
+    fail("runner_loss_reconciliation_history_invalid");
+  }
+  const common = {
+    safePriorSkippedWriteRunIds: safePriorSkippedWriteRunIds.sort(
+      (left, right) => Number(left) - Number(right),
+    ),
+    safePriorReadOnlyRunIds: safePriorReadOnlyRuns.map((item) =>
+      String(item.run.id)).sort((left, right) => Number(left) - Number(right)),
+    reconciledPriorAmbiguousDisableRunId: null,
+    runnerLossRecoveryOriginalRunCompletedAt: new Date(
+      selectedOriginal.updatedAt,
+    ).toISOString(),
+    runnerLossRecoveryGraceHours: RECOVERY_GRACE_HOURS,
+    runnerLossRecoveryWithinGraceExact:
+      currentRun.startedAt - selectedOriginal.updatedAt <= RECOVERY_GRACE_MS,
+  };
+  if (!common.runnerLossRecoveryWithinGraceExact) {
+    fail("runner_loss_reconciliation_grace_expired");
+  }
+  return phase.output === "cold-prepare"
+    ? Object.freeze({
+        ...common,
+        priorAmbiguousColdPrepareRunId: input.priorRunId,
+        selectedSupabaseReplacementRunId: input.replacementRunId,
+        exactPriorColdPrepareCandidateRunBound: true,
+        secondColdPrepareWritePreventedExact: true,
+      })
+    : phase.output === "restore"
+    ? Object.freeze({
+        ...common,
+        priorAmbiguousStagingRestoreRunId: input.priorRunId,
+        exactPriorStagingRestoreCandidateRunBound: true,
+        secondStagingRestoreScaleWritePreventedExact: true,
+      })
+    : Object.freeze({
+        ...common,
+        priorAmbiguousStagingActivateRunId: input.priorRunId,
+        exactPriorStagingActivateCandidateRunBound: true,
+        secondStagingActivateVariableWritePreventedExact: true,
+      });
+}
+
+function cutoverConfigurationForTitle(displayTitle, candidateSha) {
+  for (const cutoverMode of CUTOVER_MODES) {
+    const configuration = operationConfiguration(
+      "supabase-legacy-key-cutover",
+      candidateSha,
+      null,
+      null,
+      cutoverMode,
+    );
+    if (configuration.displayTitle === displayTitle) return configuration;
+  }
+  return null;
+}
+
+async function verifyCutoverOperationHistory(input, configuration, currentRun) {
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: configuration.workflowId,
+  });
+  const matching = history.filter((run) => run?.head_sha === input.candidateSha);
+  const identifiers = matching.map((run) => run?.id);
+  if (
+    identifiers.filter((id) => id === currentRun.id).length !== 1 ||
+    new Set(identifiers).size !== identifiers.length
+  ) fail("history_invalid");
+
+  const safePriorSkippedWriteRunIds = [];
+  const safePriorReadOnlyRunIds = [];
+  let reconciledPriorAmbiguousDisableRunId = null;
+  for (const observed of matching) {
+    const observedConfiguration = cutoverConfigurationForTitle(
+      observed?.display_title,
+      input.candidateSha,
+    );
+    if (observedConfiguration === null) fail("history_invalid");
+    const run = validateRunIdentity(observed, {
+      runId: observed?.id,
+      candidateSha: input.candidateSha,
+      workflowPath: observedConfiguration.workflowPath,
+      displayTitle: observedConfiguration.displayTitle,
+      failureCode: "history_invalid",
+    });
+    if (
+      run.createdAt < input.mergedAtMs ||
+      run.createdAt > input.currentStartedAtMs
+    ) fail("history_invalid");
+    if (run.id === currentRun.id) {
+      if (
+        observedConfiguration.cutoverMode !== configuration.cutoverMode ||
+        !isNonterminalRun(run) ||
+        run.created_at !== currentRun.created_at ||
+        run.run_started_at !== currentRun.run_started_at
+      ) fail("history_invalid");
+      continue;
+    }
+
+    if (observedConfiguration.cutoverMode ===
+      "reconcile-already-disabled-legacy-keys") {
+      if (
+        run.status !== "completed" ||
+        !["success", "failure", "cancelled", "timed_out"].includes(run.conclusion)
+      ) fail("history_invalid");
+      safePriorReadOnlyRunIds.push(String(run.id));
+      continue;
+    }
+
+    const disposition = await priorRunWriteDisposition(
+      input,
+      run,
+      observedConfiguration,
+    );
+    if (disposition === "skipped") {
+      safePriorSkippedWriteRunIds.push(String(run.id));
+      continue;
+    }
+    if (
+      disposition !== "may-have-written" ||
+      configuration.cutoverMode !== "reconcile-already-disabled-legacy-keys" ||
+      reconciledPriorAmbiguousDisableRunId !== null
+    ) fail("prior_write_ambiguous");
+    reconciledPriorAmbiguousDisableRunId = String(run.id);
+  }
+  const numericSort = (left, right) => Number(left) - Number(right);
+  return Object.freeze({
+    safePriorSkippedWriteRunIds: safePriorSkippedWriteRunIds.sort(numericSort),
+    safePriorReadOnlyRunIds: safePriorReadOnlyRunIds.sort(numericSort),
+    reconciledPriorAmbiguousDisableRunId,
+  });
+}
+
+async function verifyOffsiteCleanupRecoveryHistory(input, currentRun) {
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: PROVIDER_WORKFLOW_ID,
+  });
+  const cleanupConfiguration = operationConfiguration(
+    OFFSITE_CLEANUP_OPERATION,
+    input.candidateSha,
+    null,
+    null,
+  );
+  const recoveryConfigurations = [...OFFSITE_CLEANUP_RECOVERY_OPERATIONS].map(
+    (operation) => operationConfiguration(
+      operation,
+      input.candidateSha,
+      null,
+      null,
+    ),
+  );
+  const currentRecoveryConfiguration = operationConfiguration(
+    input.operation,
+    input.candidateSha,
+    null,
+    null,
+  );
+  let priorCleanupRun = null;
+  const safePriorRecoverySkippedWriteRunIds = [];
+  const ambiguousPriorSameModeRecoveryRuns = [];
+  const relevantRunIds = new Set();
+  let currentRunSeen = 0;
+  for (const observed of history.filter((run) =>
+    run?.head_sha === input.candidateSha)) {
+    const configuration = observed?.display_title ===
+      cleanupConfiguration.displayTitle
+      ? cleanupConfiguration
+      : recoveryConfigurations.find((candidate) =>
+        candidate.displayTitle === observed?.display_title) ?? null;
+    if (configuration === null) continue;
+    if (relevantRunIds.has(observed?.id)) {
+      fail("cleanup_recovery_history_invalid");
+    }
+    relevantRunIds.add(observed?.id);
+    const run = validateRunIdentity(observed, {
+      runId: observed?.id,
+      candidateSha: input.candidateSha,
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      displayTitle: configuration.displayTitle,
+      failureCode: "cleanup_recovery_history_invalid",
+    });
+    if (
+      run.createdAt < input.mergedAtMs ||
+      run.createdAt > input.currentStartedAtMs
+    ) fail("cleanup_recovery_history_invalid");
+    if (run.id === currentRun.id) {
+      if (configuration.displayTitle !== currentRecoveryConfiguration.displayTitle ||
+        !isNonterminalRun(run) ||
+        run.created_at !== currentRun.created_at ||
+        run.run_started_at !== currentRun.run_started_at) {
+        fail("cleanup_recovery_history_invalid");
+      }
+      currentRunSeen += 1;
+      continue;
+    }
+    const disposition = await priorRunWriteDisposition(input, run, configuration);
+    if (configuration === cleanupConfiguration) {
+      if (String(run.id) === input.priorRunId) {
+        if (priorCleanupRun !== null || disposition !== "may-have-written") {
+          fail("cleanup_recovery_history_invalid");
+        }
+        priorCleanupRun = Object.freeze({
+          run,
+          updatedAt: parseTimestamp(
+            run.updated_at,
+            "cleanup_recovery_history_invalid",
+          ),
+        });
+      } else if (disposition !== "skipped") {
+        fail("cleanup_recovery_history_invalid");
+      }
+      continue;
+    }
+    if (disposition === "skipped") {
+      safePriorRecoverySkippedWriteRunIds.push(String(run.id));
+      continue;
+    }
+    const updatedAt = parseTimestamp(
+      run.updated_at,
+      "cleanup_recovery_history_invalid",
+    );
+    if (configuration.displayTitle !== currentRecoveryConfiguration.displayTitle
+      || disposition !== "may-have-written"
+      || updatedAt >= currentRun.startedAt) fail("prior_write_ambiguous");
+    ambiguousPriorSameModeRecoveryRuns.push(Object.freeze({ run, updatedAt }));
+  }
+  ambiguousPriorSameModeRecoveryRuns.sort((left, right) =>
+    left.run.startedAt - right.run.startedAt);
+  const recoveryChronologyExact = ambiguousPriorSameModeRecoveryRuns.every(
+    (item, index) =>
+      (index === 0
+        ? priorCleanupRun !== null &&
+          priorCleanupRun.updatedAt < item.run.startedAt
+        : ambiguousPriorSameModeRecoveryRuns[index - 1].updatedAt <
+          item.run.startedAt),
+  );
+  if (
+    currentRunSeen !== 1 ||
+    priorCleanupRun === null ||
+    priorCleanupRun.run.startedAt >= currentRun.startedAt ||
+    priorCleanupRun.updatedAt >= currentRun.startedAt ||
+    priorCleanupRun.run.startedAt - input.mergedAtMs >
+      MAX_CANDIDATE_AGE_MS ||
+    currentRun.startedAt - priorCleanupRun.updatedAt > RECOVERY_GRACE_MS ||
+    !recoveryChronologyExact ||
+    (ambiguousPriorSameModeRecoveryRuns.length > 0 &&
+      ambiguousPriorSameModeRecoveryRuns.at(-1).updatedAt >=
+        currentRun.startedAt)
+  ) fail("cleanup_recovery_history_invalid");
+  return Object.freeze({
+    priorCleanupRunId: input.priorRunId,
+    priorCleanupPatchSha256: OFFSITE_CLEANUP_PATCH_SHA256,
+    exactPriorCleanupCandidateRunBound: true,
+    safePriorRecoverySkippedWriteRunIds:
+      safePriorRecoverySkippedWriteRunIds.sort(
+        (left, right) => Number(left) - Number(right),
+      ),
+    ambiguousPriorSameModeRecoveryRunIds:
+      ambiguousPriorSameModeRecoveryRuns.map((item) => String(item.run.id)).sort(
+        (left, right) => Number(left) - Number(right),
+      ),
+    sameModeRecoveryConvergenceExact: true,
+    offsiteCleanupRecoveryOriginalRunCompletedAt: new Date(
+      priorCleanupRun.updatedAt,
+    ).toISOString(),
+    offsiteCleanupRecoveryGraceHours: RECOVERY_GRACE_HOURS,
+    offsiteCleanupRecoveryWithinGraceExact: true,
+  });
 }
 
 async function verifySelectedReplacementHistory(input) {
@@ -621,6 +1543,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     input.candidateSha,
     input.target,
     input.variableName,
+    input.cutoverMode,
   );
   const pull = await verifyReviewedPullRequest(
     input.fetchImpl,
@@ -649,7 +1572,9 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
   const mergedAtMs = parseTimestamp(pull.mergedAt, "reviewed_pull_request_invalid");
   if (
     currentRun.createdAt < mergedAtMs ||
-    currentRun.startedAt - mergedAtMs > MAX_CANDIDATE_AGE_MS
+    (!RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation) &&
+      !OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(input.operation) &&
+      currentRun.startedAt - mergedAtMs > MAX_CANDIDATE_AGE_MS)
   ) fail("candidate_history_expired");
   const historyInput = {
     fetchImpl: input.fetchImpl,
@@ -660,17 +1585,60 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     mergedAt: pull.mergedAt,
     mergedAtMs,
   };
-  const safePriorRunIds = await verifyOperationHistory(
-    historyInput,
-    configuration,
-    currentRun,
-  );
+  const operationHistory = input.operation === "supabase-legacy-key-cutover"
+    ? await verifyCutoverOperationHistory(historyInput, configuration, currentRun)
+    : input.operation === "cold-recovery-reconcile-quiesce"
+    ? await verifyColdQuiesceReconciliationHistory({
+      ...historyInput,
+      priorRunId: input.priorRunId,
+      prepareRunId: input.prepareRunId,
+    }, currentRun)
+    : input.operation === "cold-recovery-reconcile-prepare" ||
+        input.operation === "staging-worker-bootstrap-reconcile-restore" ||
+        input.operation === "staging-worker-fence-reconcile-activate"
+    ? await verifyRunnerLossReconciliationHistory({
+      ...historyInput,
+      operation: input.operation,
+      priorRunId: input.priorRunId,
+      replacementRunId: input.replacementRunId,
+    }, currentRun)
+    : OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(input.operation)
+    ? Object.freeze({
+      safePriorSkippedWriteRunIds: [],
+      safePriorReadOnlyRunIds: [],
+      reconciledPriorAmbiguousDisableRunId: null,
+    })
+    : Object.freeze({
+      safePriorSkippedWriteRunIds: await verifyOperationHistory(
+        historyInput,
+        configuration,
+        currentRun,
+      ),
+      safePriorReadOnlyRunIds: [],
+      reconciledPriorAmbiguousDisableRunId: null,
+    });
+  const cleanupRecoveryHistory =
+    OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(input.operation)
+      ? await verifyOffsiteCleanupRecoveryHistory(
+        {
+          ...historyInput,
+          operation: input.operation,
+          priorRunId: input.priorRunId,
+        },
+        currentRun,
+      )
+      : null;
   const stagingDeploymentRunIds =
     PROVIDER_OPERATIONS.has(input.operation) ||
+      COLD_RECOVERY_OPERATIONS.has(input.operation) ||
+      RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation) ||
       (input.operation === "runtime-variable" && input.target === "permanent-staging")
       ? await verifyStagingLifecycleNotSealed(historyInput)
       : null;
-  const replacementHistory = input.operation === "supabase-legacy-key-cutover"
+  const replacementHistory =
+    input.operation === "supabase-legacy-key-cutover" ||
+      input.operation === "cold-recovery-prepare" ||
+      input.operation === "cold-recovery-reconcile-prepare"
     ? await verifySelectedReplacementHistory({
       ...historyInput,
       replacementRunId: input.replacementRunId,
@@ -712,6 +1680,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     reviewedPrHeadSha: pull.reviewedPrHeadSha,
     reviewedPullRequestNumber: pull.number,
     operation: input.operation,
+    ...(input.cutoverMode === null ? {} : { cutoverMode: input.cutoverMode }),
     workflowPath: configuration.workflowPath,
     workflowRunId: currentRunIdSource,
     workflowRunAttempt: 1,
@@ -719,7 +1688,71 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     reviewedPullRequestMergedAt: pull.mergedAt,
     candidateHistoryMaximumAgeHours: MAX_CANDIDATE_AGE_HOURS,
     completeRetainedHistoryExact: true,
-    safePriorSkippedWriteRunIds: safePriorRunIds,
+    safePriorSkippedWriteRunIds: operationHistory.safePriorSkippedWriteRunIds,
+    ...(operationHistory.safePriorReadOnlyRunIds.length === 0
+      ? {}
+      : { safePriorReadOnlyRunIds: operationHistory.safePriorReadOnlyRunIds }),
+    ...(operationHistory.reconciledPriorAmbiguousDisableRunId === null
+      ? {}
+      : {
+        reconciledPriorAmbiguousDisableRunId:
+          operationHistory.reconciledPriorAmbiguousDisableRunId,
+        secondCutoverWritePreventedExact: true,
+      }),
+    ...(input.operation === "cold-recovery-reconcile-quiesce"
+      ? {
+        priorAmbiguousColdQuiesceRunId:
+          operationHistory.priorAmbiguousColdQuiesceRunId,
+        selectedColdPrepareRunId: operationHistory.selectedColdPrepareRunId,
+        exactPriorColdQuiesceCandidateRunBound:
+          operationHistory.exactPriorColdQuiesceCandidateRunBound,
+        secondColdScaleWritePreventedExact:
+          operationHistory.secondColdScaleWritePreventedExact,
+      }
+      : {}),
+    ...(input.operation === "cold-recovery-reconcile-prepare"
+      ? {
+        priorAmbiguousColdPrepareRunId:
+          operationHistory.priorAmbiguousColdPrepareRunId,
+        selectedSupabaseReplacementRunId:
+          operationHistory.selectedSupabaseReplacementRunId,
+        exactPriorColdPrepareCandidateRunBound:
+          operationHistory.exactPriorColdPrepareCandidateRunBound,
+        secondColdPrepareWritePreventedExact:
+          operationHistory.secondColdPrepareWritePreventedExact,
+      }
+      : {}),
+    ...(input.operation === "staging-worker-bootstrap-reconcile-restore"
+      ? {
+        priorAmbiguousStagingRestoreRunId:
+          operationHistory.priorAmbiguousStagingRestoreRunId,
+        exactPriorStagingRestoreCandidateRunBound:
+          operationHistory.exactPriorStagingRestoreCandidateRunBound,
+        secondStagingRestoreScaleWritePreventedExact:
+          operationHistory.secondStagingRestoreScaleWritePreventedExact,
+      }
+      : {}),
+    ...(input.operation === "staging-worker-fence-reconcile-activate"
+      ? {
+        priorAmbiguousStagingActivateRunId:
+          operationHistory.priorAmbiguousStagingActivateRunId,
+        exactPriorStagingActivateCandidateRunBound:
+          operationHistory.exactPriorStagingActivateCandidateRunBound,
+        secondStagingActivateVariableWritePreventedExact:
+          operationHistory.secondStagingActivateVariableWritePreventedExact,
+      }
+      : {}),
+    ...(RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation)
+      ? {
+        runnerLossRecoveryOriginalRunCompletedAt:
+          operationHistory.runnerLossRecoveryOriginalRunCompletedAt,
+        runnerLossRecoveryGraceHours:
+          operationHistory.runnerLossRecoveryGraceHours,
+        runnerLossRecoveryWithinGraceExact:
+          operationHistory.runnerLossRecoveryWithinGraceExact,
+      }
+      : {}),
+    ...(cleanupRecoveryHistory ?? {}),
     ...(stagingDeploymentRunIds === null
       ? {}
       : {

@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   RAILWAY_ENVIRONMENT_MUTATION_BOUNDARY_QUERY,
+  RAILWAY_EXACT_STAGED_PATCH_BOUNDARY_RECEIPT_SCHEMA,
   RAILWAY_MUTATION_BOUNDARY_RECEIPT_SCHEMA,
   RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY,
   RAILWAY_PROJECT_TOKEN_SCOPE_QUERY,
   railwayMutationBoundaryInternals,
+  runRailwayExactStagedPatchBoundaryCheck,
   runRailwayMutationBoundaryCheck,
 } from "../scripts/check-railway-mutation-boundary.js";
 import {
@@ -147,6 +149,44 @@ async function runWith(input: {
   };
 }
 
+async function runExactStagedWith(input: {
+  expectedPatch: Record<string, unknown>;
+  stagingPatch: Record<string, unknown>;
+  productionPatch?: Record<string, unknown>;
+}) {
+  const output: string[] = [];
+  const code = await runRailwayExactStagedPatchBoundaryCheck(
+    path.resolve("fixture-policy.json"),
+    input.expectedPatch,
+    {
+      readPolicy: () => JSON.stringify(policyFixture()),
+      queryEnvironment: async (variables) =>
+        variables.environmentId === PRODUCTION_ENVIRONMENT_ID
+          ? environmentBoundary(
+              PRODUCTION_ENVIRONMENT_ID,
+              input.productionPatch ?? {},
+            )
+          : environmentBoundary(STAGING_ENVIRONMENT_ID, input.stagingPatch),
+      queryPostgres: async () => postgresBoundary(),
+      queryTokenScope: async (tokenName) => tokenName ===
+        "PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN"
+        ? { projectId: PROJECT_ID, environmentId: PRODUCTION_ENVIRONMENT_ID }
+        : { projectId: PROJECT_ID, environmentId: STAGING_ENVIRONMENT_ID },
+      writeOutput: (line) => output.push(line),
+    },
+  );
+  expect(output).toHaveLength(1);
+  return {
+    code,
+    receipt: JSON.parse(output[0]!) as {
+      schemaVersion: string;
+      outcome: string;
+      ordinaryChecks: Record<string, boolean>;
+      checks: Record<string, boolean>;
+    },
+  };
+}
+
 function environmentResponse(environmentId: string, patch: Record<string, unknown> = {}): string {
   return JSON.stringify({
     data: {
@@ -214,6 +254,52 @@ describe("Railway mutation boundary guard", () => {
     expect(result.queryEnvironment).toHaveBeenCalledTimes(2);
     expect(result.queryPostgres).toHaveBeenCalledTimes(1);
     expect(result.queryTokenScope).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts only the exact reviewed staging patch while every other boundary stays clean", async () => {
+    const expectedPatch = {
+      services: {
+        "6816c4a2-e392-4ee5-826f-2584cb599ec0": {
+          variables: {
+            OFFSITE_BACKUP_BUCKET: null,
+            OFFSITE_BACKUP_SERVICE_ROLE_KEY: null,
+            OFFSITE_BACKUP_SUPABASE_URL: null,
+          },
+        },
+      },
+    };
+    const passed = await runExactStagedWith({
+      expectedPatch,
+      stagingPatch: expectedPatch,
+    });
+    expect(passed.code).toBe(0);
+    expect(passed.receipt).toMatchObject({
+      schemaVersion: RAILWAY_EXACT_STAGED_PATCH_BOUNDARY_RECEIPT_SCHEMA,
+      outcome: "passed",
+      ordinaryChecks: { stagingPatchEmpty: false },
+      checks: {
+        ordinaryBoundaryFailedOnlyForExpectedStagingPatch: true,
+        stagingPatchExact: true,
+      },
+    });
+
+    const wrongPatch = await runExactStagedWith({
+      expectedPatch,
+      stagingPatch: { services: { other: { variables: {} } } },
+    });
+    expect(wrongPatch.code).toBe(1);
+    expect(wrongPatch.receipt.checks.stagingPatchExact).toBe(false);
+
+    const productionDrift = await runExactStagedWith({
+      expectedPatch,
+      stagingPatch: expectedPatch,
+      productionPatch: { services: { drift: {} } },
+    });
+    expect(productionDrift.code).toBe(1);
+    expect(productionDrift.receipt.checks).toMatchObject({
+      ordinaryBoundaryFailedOnlyForExpectedStagingPatch: false,
+      stagingPatchExact: true,
+    });
   });
 
   it.each([

@@ -114,7 +114,7 @@ The prerequisite policy SHA is
 Its producer hashes are:
 
 - worker prepare/activate policy:
-  `260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb`;
+  `03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461`;
 - scale policy:
   `164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608`;
 - fenced zero-replica deployment policy:

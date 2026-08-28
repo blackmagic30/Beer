@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       operation:
-        description: One reviewed provider-variable operation
+        description: One reviewed permanent-staging variable operation
         required: true
         type: choice
         options:
@@ -18,8 +18,19 @@ on:
           - provider-google-places-api-key
           - provider-openai-api-key
           - supabase-key-replacement
+          - remove-forbidden-offsite-backup-variables
+          - resume-forbidden-offsite-backup-deletion-patch
+          - cancel-forbidden-offsite-backup-deletion-patch
+      prior_cleanup_run_id:
+        description: Exact failed same-candidate cleanup run with an ambiguous reviewed deletion; recovery operations only
+        required: false
+        type: string
       confirmation:
         description: MUTATE_<UPPERCASE_OPERATION>_IN_PERMANENT_STAGING
+        required: true
+        type: string
+      external_mutation_freeze_attestation:
+        description: Type I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN after operationally freezing every external Railway writer
         required: true
         type: string
 
@@ -35,7 +46,7 @@ concurrency:
 
 jobs:
   mutate:
-    name: One atomic variable mutation
+    name: One protected variable mutation plan
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     environment: permanent-staging-provider-mutation
@@ -55,7 +66,9 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           OPERATION: ${{ inputs.operation }}
+          PRIOR_CLEANUP_RUN_ID: ${{ inputs.prior_cleanup_run_id }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
         shell: bash
         run: |
           set -euo pipefail
@@ -69,6 +82,14 @@ jobs:
           expected="MUTATE_${OPERATION^^}_IN_PERMANENT_STAGING"
           expected="${expected//-/_}"
           test "$CONFIRMATION" = "$expected"
+          test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
+            'I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN'
+          case "$OPERATION" in
+            resume-forbidden-offsite-backup-deletion-patch|cancel-forbidden-offsite-backup-deletion-patch)
+              [[ "$PRIOR_CLEANUP_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              ;;
+            *) test -z "$PRIOR_CLEANUP_RUN_ID" ;;
+          esac
 
       - name: Setup the repository Node runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -81,20 +102,6 @@ jobs:
 
       - name: Verify the repository before exposing protected credentials
         run: npm run check
-
-      - name: Authenticate the reviewed candidate and fresh operation dispatch
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          OPERATION: ${{ inputs.operation }}
-        run: |
-          npm run --silent github:reviewed-candidate-authority:verify -- \
-            --candidate-sha "$CANDIDATE_SHA" \
-            --operation "$OPERATION"
-
-      - name: Verify replacement-key consumer compatibility
-        if: inputs.operation == 'supabase-key-replacement'
-        run: npm run supabase:keys:consumer-compatibility:check
 
       - name: Create private input and evidence custody directories
         env:
@@ -109,6 +116,53 @@ jobs:
             '{schemaVersion:"pintpath-provider-mutation-dispatch/v1",candidateSha:$candidateSha,operation:$operation,secretMaterialIncluded:false}' \
             > "$RUNNER_TEMP/pintpath-provider-evidence/dispatch.json"
           chmod 600 "$RUNNER_TEMP/pintpath-provider-evidence/dispatch.json"
+
+      - name: Authenticate the reviewed candidate and fresh operation dispatch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.operation }}
+          PRIOR_CLEANUP_RUN_ID: ${{ inputs.prior_cleanup_run_id }}
+        run: |
+          authority_args=(
+            --candidate-sha "$CANDIDATE_SHA"
+            --operation "$OPERATION"
+          )
+          if [[ "$OPERATION" =~ ^(resume|cancel)-forbidden-offsite-backup-deletion-patch$ ]]; then
+            authority_args+=(--prior-run-id "$PRIOR_CLEANUP_RUN_ID")
+          fi
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            "${authority_args[@]}" \
+            > "$RUNNER_TEMP/pintpath-provider-input/reviewed-authority.json"
+          chmod 600 "$RUNNER_TEMP/pintpath-provider-input/reviewed-authority.json"
+
+      - name: Attempt to download retained prior cleanup evidence
+        id: prior_cleanup_evidence
+        if: inputs.operation == 'resume-forbidden-offsite-backup-deletion-patch' || inputs.operation == 'cancel-forbidden-offsite-backup-deletion-patch'
+        continue-on-error: true
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.prior_cleanup_run_id }}
+          name: pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-provider-input/prior-offsite-cleanup-evidence
+
+      - name: Seal the downloaded prior cleanup evidence as read-only input
+        if: steps.prior_cleanup_evidence.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/pintpath-provider-input/prior-offsite-cleanup-evidence"
+          test -d "$evidence"
+          test ! -L "$evidence"
+          find "$evidence" -mindepth 1 -maxdepth 1 -type f | grep -q .
+          test -z "$(find "$evidence" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          chmod 700 "$evidence"
+          find "$evidence" -type f -exec chmod 600 -- {} +
+
+      - name: Verify replacement-key consumer compatibility
+        if: inputs.operation == 'supabase-key-replacement'
+        run: npm run supabase:keys:consumer-compatibility:check
 
       - name: Stage Google Maps API key in private custody
         if: inputs.operation == 'provider-google-maps-api-key'
@@ -169,7 +223,7 @@ jobs:
           printf '%s' "$PUBLISHABLE_KEY" > "$RUNNER_TEMP/pintpath-provider-input/publishable"
           printf '%s' "$SECRET_KEY" > "$RUNNER_TEMP/pintpath-provider-input/secret"
 
-      - name: Reassert exact current main immediately before the provider write
+      - name: Reassert exact current main immediately before the variable mutation
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         shell: bash
@@ -180,12 +234,17 @@ jobs:
           test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain=v2 --untracked-files=all)"
 
-      - name: Execute exactly one reviewed atomic Railway mutation
+      - name: Execute one reviewed protected Railway mutation plan
         env:
           GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           PINTPATH_MUTATION_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          PINTPATH_PRIOR_CLEANUP_RUN_ID: ${{ inputs.prior_cleanup_run_id }}
+          PINTPATH_PRIOR_CLEANUP_EVIDENCE_OUTCOME: ${{ steps.prior_cleanup_evidence.outcome }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
@@ -202,6 +261,22 @@ jobs:
               "${common[@]}" \
               --publishable-key-file "$RUNNER_TEMP/pintpath-provider-input/publishable" \
               --secret-key-file "$RUNNER_TEMP/pintpath-provider-input/secret"
+          elif test "$OPERATION" = 'remove-forbidden-offsite-backup-variables'; then
+            ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-variable-mutation.ts \
+              "${common[@]}"
+          elif [[ "$OPERATION" =~ ^(resume|cancel)-forbidden-offsite-backup-deletion-patch$ ]]; then
+            recovery=(
+              --prior-cleanup-run-id "$PINTPATH_PRIOR_CLEANUP_RUN_ID"
+              --reviewed-authority-file "$RUNNER_TEMP/pintpath-provider-input/reviewed-authority.json"
+            )
+            if test "$PINTPATH_PRIOR_CLEANUP_EVIDENCE_OUTCOME" = 'success'; then
+              recovery+=(
+                --prior-cleanup-evidence-dir "$RUNNER_TEMP/pintpath-provider-input/prior-offsite-cleanup-evidence"
+              )
+            fi
+            ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-variable-mutation.ts \
+              "${common[@]}" \
+              "${recovery[@]}"
           else
             ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-variable-mutation.ts \
               "${common[@]}" \

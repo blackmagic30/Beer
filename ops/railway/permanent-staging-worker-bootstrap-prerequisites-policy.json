@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites-policy/v1",
+  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites-policy/v2",
   "policyId": "pintpath-permanent-staging-worker-bootstrap-prerequisites",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "repository": "blackmagic30/Beer",
@@ -18,7 +18,7 @@
   "producerPolicies": {
     "workerFence": {
       "path": "ops/railway/protected-automatic-maintenance-worker-fence-policy.json",
-      "sha256": "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb"
+      "sha256": "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461"
     },
     "scale": {
       "path": "ops/railway/permanent-staging-scale-evidence-policy.json",
@@ -31,6 +31,10 @@
     "activeDeployment": {
       "path": "ops/railway/permanent-staging-app-deployment-policy.json",
       "sha256": "7d4f899e5ee17ee3a7b4d86183aedf7f7f0f86b7e24ed0f2afc50a2df9e8f2e6"
+    },
+    "coldRecovery": {
+      "path": "ops/railway/permanent-staging-cold-recovery-policy.json",
+      "sha256": "1df2038eee8e785f49d35057a701f94a4b7ec41d38987938d658fb1a9744746c"
     }
   },
   "producers": {
@@ -42,6 +46,19 @@
       "receiptFilename": "automatic-maintenance-worker-fence-terminal.json",
       "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1"
     },
+    "cold-prepare": {
+      "workflowPath": ".github/workflows/recover-permanent-staging-cold-zero.yml",
+      "workflowName": "Recover dead permanent staging to explicit zero",
+      "runNameTemplate": "Permanent staging cold recovery | prepare | <candidate-sha>",
+      "alternateReadOnlyRunNameTemplate": "Permanent staging cold recovery | reconcile-prepare | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-permanent-staging-cold-prepare-<candidate-sha>",
+      "receiptFilename": "cold-prepare-terminal.json",
+      "receiptSchema": "pintpath-permanent-staging-cold-prepare/v1",
+      "alternateReadOnlyReceiptSchema": "pintpath-permanent-staging-cold-prepare-reconciliation/v1",
+      "replicasBefore": null,
+      "replicasAfter": null,
+      "normalOneToZeroReceipt": false
+    },
     "quiesce": {
       "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
       "workflowName": "Bootstrap permanent-staging automatic-maintenance worker fence",
@@ -50,6 +67,19 @@
       "receiptFilename": "quiesce-staging-zero-receipt.json",
       "receiptSchema": "pintpath-permanent-staging-scale-operation/v2",
       "prerequisitesFilename": "prerequisites-verification.json"
+    },
+    "cold-quiesce": {
+      "workflowPath": ".github/workflows/recover-permanent-staging-cold-zero.yml",
+      "workflowName": "Recover dead permanent staging to explicit zero",
+      "runNameTemplate": "Permanent staging cold recovery | quiesce | <candidate-sha>",
+      "alternateReadOnlyRunNameTemplate": "Permanent staging cold recovery | reconcile-quiesce | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-permanent-staging-cold-quiesce-<candidate-sha>",
+      "receiptFilename": "cold-quiesce-receipt.json",
+      "receiptSchema": "pintpath-permanent-staging-cold-quiesce/v2",
+      "prerequisitesFilename": "prerequisites-verification.json",
+      "replicasBefore": null,
+      "replicasAfter": 0,
+      "normalOneToZeroReceipt": false
     },
     "fenced-deployment": {
       "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
@@ -63,18 +93,22 @@
       "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
       "workflowName": "Bootstrap permanent-staging automatic-maintenance worker fence",
       "runNameTemplate": "Permanent staging worker bootstrap | restore | <candidate-sha>",
+      "alternateReadOnlyRunNameTemplate": "Permanent staging worker bootstrap | reconcile-restore | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-worker-bootstrap-restore-<candidate-sha>",
       "receiptFilename": "bootstrap-staging-one-receipt.json",
       "receiptSchema": "pintpath-permanent-staging-scale-operation/v2",
+      "alternateReadOnlyReceiptSchema": "pintpath-permanent-staging-bootstrap-restore-reconciliation/v1",
       "prerequisitesFilename": "prerequisites-verification.json"
     },
     "activate": {
       "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
       "workflowName": "Configure candidate-bound automatic-maintenance worker fence",
       "runNameTemplate": "Automatic maintenance worker fence | permanent-staging | activate | <candidate-sha>",
+      "alternateReadOnlyRunNameTemplate": "Automatic maintenance worker fence | permanent-staging | reconcile-activate | <candidate-sha>",
       "artifactNameTemplate": "pintpath-automatic-maintenance-worker-fence-permanent-staging-activate-<candidate-sha>",
       "receiptFilename": "automatic-maintenance-worker-fence-terminal.json",
       "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+      "alternateReadOnlyReceiptSchema": "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v1",
       "prerequisitesFilename": "prerequisites-verification.json"
     },
     "active-deployment": {
@@ -92,20 +126,81 @@
       "githubEnvironment": "permanent-staging-scale-evidence",
       "requires": ["prepare"]
     },
+    "cold-quiesce": {
+      "workflowPath": ".github/workflows/recover-permanent-staging-cold-zero.yml",
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "bootstrapPath": "cold-dead",
+      "requires": ["cold-prepare"]
+    },
+    "cold-reconcile-quiesce": {
+      "workflowPath": ".github/workflows/recover-permanent-staging-cold-zero.yml",
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "bootstrapPath": "cold-dead",
+      "requires": ["cold-prepare"],
+      "readOnly": true,
+      "scaleCredentialAllowed": false
+    },
     "fenced-deploy": {
       "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
       "githubEnvironment": "permanent-staging-deployment",
-      "requires": ["prepare", "quiesce"]
+      "requiresAny": [
+        ["prepare", "quiesce"],
+        ["cold-prepare", "cold-quiesce"]
+      ]
     },
     "restore": {
       "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
       "githubEnvironment": "permanent-staging-scale-evidence",
-      "requires": ["prepare", "quiesce", "fenced-deployment"]
+      "requiresAny": [
+        ["prepare", "quiesce", "fenced-deployment"],
+        ["cold-prepare", "cold-quiesce", "fenced-deployment"]
+      ]
+    },
+    "reconcile-restore": {
+      "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "readOnly": true,
+      "scaleCredentialAllowed": false,
+      "requiresAny": [
+        [
+          "prepare",
+          "quiesce",
+          "fenced-deployment"
+        ],
+        [
+          "cold-prepare",
+          "cold-quiesce",
+          "fenced-deployment"
+        ]
+      ]
     },
     "activate": {
       "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
       "githubEnvironment": "permanent-staging-provider-mutation",
-      "requires": ["prepare", "quiesce", "fenced-deployment", "restore"]
+      "requiresAny": [
+        ["prepare", "quiesce", "fenced-deployment", "restore"],
+        ["cold-prepare", "cold-quiesce", "fenced-deployment", "restore"]
+      ]
+    },
+    "reconcile-activate": {
+      "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+      "githubEnvironment": "permanent-staging-provider-mutation",
+      "readOnly": true,
+      "variableMutationCredentialAllowed": false,
+      "requiresAny": [
+        [
+          "prepare",
+          "quiesce",
+          "fenced-deployment",
+          "restore"
+        ],
+        [
+          "cold-prepare",
+          "cold-quiesce",
+          "fenced-deployment",
+          "restore"
+        ]
+      ]
     },
     "active-deploy": {
       "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
@@ -125,10 +220,15 @@
     "sameMainRefRequired": true
   },
   "evidence": {
-    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v1",
+    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2",
     "filename": "prerequisites-verification.json",
     "canonicalJsonRequired": true,
     "artifactDigestRequired": true,
+    "bootstrapPathRequired": true,
+    "truthfulNullableReplicaCountsRequired": true,
+    "coldReceiptsMustNotImpersonateNormalOneToZero": true,
+    "runnerLossReconciliationReceiptMustBindPriorAmbiguousRun": true,
+    "runnerLossReconciliationReceiptsMustNotClaimNormalWrites": true,
     "secretMaterialAllowed": false,
     "secretDerivedCommitmentsAllowed": false
   }

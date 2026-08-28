@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-protected-permanent-staging-supabase-cutover-policy/v1",
+  "schemaVersion": "pintpath-protected-permanent-staging-supabase-cutover-policy/v3",
   "policyId": "pintpath-permanent-staging-supabase-legacy-cutover",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "githubEnvironment": "permanent-staging-supabase-legacy-disable",
@@ -23,6 +23,7 @@
     ]
   },
   "mutation": {
+    "explicitOperation": "disable-enabled-legacy-keys",
     "method": "PUT",
     "path": "/v1/projects/bbfibbadwjxzrcdncavy/api-keys/legacy?enabled=false",
     "operation": "disable-all-legacy-jwt-api-keys",
@@ -31,6 +32,20 @@
     "rerunsAllowed": false,
     "unconditionalPostflightRequired": true,
     "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "reconciliation": {
+    "explicitOperation": "reconcile-already-disabled-legacy-keys",
+    "transport": "protected-runner-direct-provider-read-only",
+    "alreadyDisabledAllowed": true,
+    "managementWriteAttempts": 0,
+    "exactDisabledStateRequired": true,
+    "replacementCanaryRequired": true,
+    "retainedOldKeyDenialRequired": true,
+    "secondObservationRequired": true,
+    "managementWriteCredentialAllowed": false,
+    "allowedAfterOneAmbiguousDisableAttempt": true,
+    "maximumPriorAmbiguousDisableAttempts": 1,
+    "secondManagementWriteAllowed": false
   },
   "postflight": {
     "exactLegacyState": {
@@ -42,8 +57,13 @@
   "authority": {
     "requiredGitRef": "refs/heads/main",
     "requiredRunAttempt": 1,
-    "confirmation": "DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS",
-    "separateReadAndWriteTokensRequired": true
+    "confirmations": {
+      "disable": "DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS",
+      "reconcile": "RECONCILE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS"
+    },
+    "separateReadAndWriteTokensRequired": true,
+    "runNameIncludesSelectedOperation": true,
+    "completeCandidateCutoverHistoryRequired": true
   },
   "evidence": {
     "durableIntentRequiredBeforeAttempt": true,
