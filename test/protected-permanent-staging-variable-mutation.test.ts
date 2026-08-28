@@ -1594,6 +1594,32 @@ describe("protected permanent-staging variable mutation", () => {
     }
   });
 
+  it("normalizes omitted optional cold deployment metadata to null", async () => {
+    const liveShape = await coldDeployment().json() as {
+      data: { deployment: { meta: Record<string, unknown> } };
+    };
+    delete liveShape.data.deployment.meta.imageDigest;
+    delete liveShape.data.deployment.meta.patchId;
+
+    expect(protectedPermanentStagingVariableMutationInternals
+      .parseDeployment(liveShape, COLD_DEPLOYMENT_ID)).toMatchObject({
+        imageDigest: null,
+        patchId: null,
+      });
+
+    for (const [field, invalid] of [
+      ["imageDigest", 7],
+      ["imageDigest", "sha256:not-a-digest"],
+      ["patchId", 7],
+      ["patchId", "not-a-uuid"],
+    ] as const) {
+      const malformed = structuredClone(liveShape);
+      malformed.data.deployment.meta[field] = invalid;
+      expect(protectedPermanentStagingVariableMutationInternals
+        .parseDeployment(malformed, COLD_DEPLOYMENT_ID), field).toBeNull();
+    }
+  });
+
   it("accepts only the exact current-run reviewed cleanup recovery authority", () => {
     const authority = {
       command: "verify-github-reviewed-candidate-authority",
