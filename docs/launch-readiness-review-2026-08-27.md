@@ -172,6 +172,11 @@ review findings:
   original write must begin inside the normal merge-plus-168-hour window; the
   matching recovery has one fixed 24-hour grace measured from that original
   run's completion, never from a later retry;
+- the live Railway empty staged-patch sentinel uses ID `<empty>` rather than a
+  UUID. The provider parser now accepts that exact ID only for an empty
+  `STAGED` patch; every non-empty deletion patch still requires a UUID. A
+  live-shape regression prevents the protected provider workflow from failing
+  closed before its first write on the canonical empty provider response;
 - receipt, policy-hash, artifact-name, workflow-consumer, and downstream
   bootstrap relations are covered by the complete repository gate.
 
@@ -205,6 +210,21 @@ before a production cutover:
   protected variable runs were stopped after the first failed before any write
   on the production source-boundary mismatch; the three redundant queued runs
   were cancelled rather than consuming more CI time;
+- a fresh metadata-only preflight found 128 staging variable rows, which was
+  above the protected executors' complete-inventory limit of 100. Three exact
+  stopped staging-only probe/canary services with no production instance or
+  volume were removed, reducing the inventory to 99 rows with no next page.
+  The disposable PostgreSQL source-proof service had also left one unattached
+  empty volume; that exact volume is now marked deleted/pending provider
+  cleanup. No application or database volume was removed;
+- the Beer `SUPABASE_SERVICE_ROLE_KEY` row is currently unsealed. The protected
+  atomic replacement correctly fails closed until the separately controlled
+  Railway owner action seals that existing row without changing its value;
+- staging PostgreSQL's running deployment remains on the original proved
+  `17.10` digest, but its service source still advertises mutable `:17`. Pin the
+  source to that exact running digest with deploys skipped and unchanged
+  deployment, instance, snapshot, volume, region, backup schedule, and replica
+  count before staging closeout;
 - no current Auth, contributor, venue-Free manager, admin, private Storage, and
   Free-only core-journey evidence;
 - the staging Supabase venue-directory migration and REST authorization are
@@ -509,6 +529,13 @@ blockers.
   unresolved.
 - A fresh complete staging inventory has not proved prohibited production
   operational-copy variables absent.
+- The staging Beer service-role variable is not sealed, so the protected atomic
+  Supabase replacement is intentionally blocked pending the separate owner
+  action.
+- The staging PostgreSQL deployment is digest-bound, but its configured service
+  source is still the mutable `:17` label. Reconcile that source-only metadata
+  with deploys skipped before staging closeout; do not repeat the unsafe image
+  label or placement experiment.
 - Any retained disposable restore environment and its current cost must be
   re-inventoried before staging closeout; the repository review did not treat a
   historical provider-cost estimate as current evidence.

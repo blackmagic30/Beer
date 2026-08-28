@@ -1018,7 +1018,12 @@ function parseMetadata(
     || !(environment.variables.pageInfo.endCursor === null
       || typeof environment.variables.pageInfo.endCursor === "string")
     || !exactKeys(staged, ["id", "environmentId", "status", "patch"])
-    || typeof staged.id !== "string" || !UUID_PATTERN.test(staged.id)
+    || typeof staged.id !== "string"
+    || !(UUID_PATTERN.test(staged.id)
+      || staged.id === "<empty>"
+        && staged.status === "STAGED"
+        && plainRecord(staged.patch)
+        && Object.keys(staged.patch).length === 0)
     || staged.environmentId !== STAGING_ENVIRONMENT_ID
     || !["APPLYING", "COMMITTED", "STAGED"].includes(
       staged.status as string,

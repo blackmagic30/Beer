@@ -36,7 +36,7 @@ const CANDIDATE_SHA = "a".repeat(40);
 const LEGACY_SHA = "c".repeat(40);
 const IMAGE_DIGEST = `sha256:${"b".repeat(64)}`;
 const STAGED_PATCH_ID = "77777777-7777-4777-8777-777777777777";
-const EMPTY_STAGED_PATCH_ID = "88888888-8888-4888-8888-888888888888";
+const EMPTY_STAGED_PATCH_ID = "<empty>";
 const FREEZE_ATTESTATION =
   "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN";
 
@@ -1450,6 +1450,22 @@ describe("protected permanent-staging variable mutation", () => {
         variables: [...exactRows, variable("SUPABASE_ANON_KEY", null, false)],
       })).toBe(false);
     expect(parse).toBeTypeOf("function");
+  });
+
+  it("accepts Railway's exact empty staged-patch sentinel only for an empty STAGED patch", async () => {
+    const parse = protectedPermanentStagingVariableMutationInternals.parseMetadata;
+    const cleanupPatch = protectedPermanentStagingVariableMutationInternals
+      .cleanupDeletionPatch();
+
+    expect(parse(await metadata([]).json())).not.toBeNull();
+    expect(parse(await metadata([], {
+      stagedPatch: cleanupPatch,
+      stagedPatchId: EMPTY_STAGED_PATCH_ID,
+    }).json(), "cleanup-deletion")).toBeNull();
+    expect(parse(await metadata([], {
+      stagedPatchId: EMPTY_STAGED_PATCH_ID,
+      stagedPatchStatus: "COMMITTED",
+    }).json())).toBeNull();
   });
 
   it("accepts only exact Beer rows for in-place reconciliation and cleanup", () => {
