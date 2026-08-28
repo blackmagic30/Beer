@@ -6,7 +6,7 @@
     "candidateBinding": "exact-current-main-head",
     "githubRepository": "blackmagic30/Beer",
     "workflowPath": ".github/workflows/transition-production-postgres-maintenance-role-limit.yml",
-    "workflowSha256": "e83a5d13c78e4e08eb499df1e69e40786483cfeb059332da22bdc04b5b815133",
+    "workflowSha256": "7eebf2f9f22e7a450918f548c355db5e9a8bda08073aecf23af17acdf6390684",
     "githubEnvironment": "production-postgres-maintenance-role-limit",
     "runnerLabels": [
       "self-hosted",
@@ -54,7 +54,7 @@
     "requiredRunAttempt": 1,
     "artifactDownloadContract": {
       "action": "actions/download-artifact",
-      "actionCommit": "b7c52a5f7a25fce4c22e476a93420dd79a061a70",
+      "actionCommit": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       "actionVersion": "v8.0.1",
       "downloadActionDigestMismatchBehavior": "WARNING_ONLY_NOT_SECURITY_BOUNDARY",
       "independentArchiveSha256VerificationRequired": true,
@@ -72,7 +72,7 @@
     },
     "workerFence": {
       "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
-      "workflowSha256": "983a7a507587babbaac6490e1b21a5877f1f0839e9a96aa076e5e94c39501df5",
+      "workflowSha256": "c7cb09c187a92693141db89eb0b3313d4ca8c0d1bc85179a2cf1d39ffc5f17f8",
       "workflowId": "configure-automatic-maintenance-worker-fence.yml",
       "workflowName": "Configure candidate-bound automatic-maintenance worker fence",
       "runNameTemplate": "Automatic maintenance worker fence | production | fence | <candidate-sha>",
@@ -95,7 +95,7 @@
     },
     "productionDeployment": {
       "workflowPath": ".github/workflows/deploy-production.yml",
-      "workflowSha256": "517158926950ff623482a84fb3516c4218858f7f59fc9a7552c930eaa156768f",
+      "workflowSha256": "414163692a141fc581498e8faf9d810f441710c0312df4a814ceabd36f03b511",
       "workflowId": "deploy-production.yml",
       "workflowName": "Deploy Pint Path protected production",
       "artifactNameTemplate": "pintpath-production-deployment-<candidate-sha>",
@@ -179,7 +179,7 @@
       },
       "productionScale": {
         "workflowPath": ".github/workflows/production-converge-two-replicas.yml",
-        "workflowSha256": "c0bf28692aa1f84a6b6bbf87372bb68e62b0087eb222003bf6634b10fb2333a2",
+        "workflowSha256": "3ceabb61fa568f8703104cbff66b84c9081d50ccc6bc3e877f9d61a6aff93917",
         "workflowName": "Converge Pint Path production to two replicas",
         "policyPath": "ops/railway/permanent-staging-scale-evidence-policy.json",
         "policySha256": "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608",

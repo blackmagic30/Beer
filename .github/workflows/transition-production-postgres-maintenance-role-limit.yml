@@ -131,7 +131,7 @@ jobs:
 
       - name: Retrieve the exact successful production worker-fence artifact
         if: inputs.operation_mode == 'apply'
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -141,7 +141,7 @@ jobs:
 
       - name: Retrieve the exact successful production deployment artifact
         if: inputs.operation_mode == 'apply'
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -242,7 +242,7 @@ jobs:
 
       - name: Retrieve the prior immutable exact-candidate intent and prerequisite binding for read-only reconciliation
         if: inputs.operation_mode == 'reconcile'
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.prior_run_id }}

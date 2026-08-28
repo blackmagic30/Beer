@@ -605,7 +605,7 @@ jobs:
           printf 'PINTPATH_RETRIEVED_RECOVERY_SET=%s\n' "$work_root/retrieved-recovery-set" >> "$GITHUB_ENV"
 
       - name: Download only capture receipts and immutable content addresses
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pintpath-production-promotion-recovery-capture-${{ inputs.candidate_sha }}
           path: /run/pintpath-production-backup/pintpath-production-recovery-${{ github.run_id }}-${{ github.run_attempt }}/capture-evidence
@@ -1081,7 +1081,7 @@ jobs:
         if: ${{ always() }}
         id: precleanup
         continue-on-error: true
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pintpath-production-promotion-recovery-precleanup-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-production-promotion-recovery-cleanup-${{ github.run_id }}/precleanup
@@ -1422,13 +1422,13 @@ jobs:
           printf 'PINTPATH_FINAL_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
 
       - name: Download the exact precleanup receipt set
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pintpath-production-promotion-recovery-precleanup-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-production-promotion-recovery-final-${{ github.run_id }}/precleanup
 
       - name: Download the exact independent cleanup terminals
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pintpath-production-promotion-recovery-cleanup-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-production-promotion-recovery-final-${{ github.run_id }}/cleanup
