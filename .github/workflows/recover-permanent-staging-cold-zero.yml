@@ -1,0 +1,817 @@
+name: Recover dead permanent staging to explicit zero
+run-name: Permanent staging cold recovery | ${{ inputs.operation }} | ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Prepare, quiesce, or read-only reconcile the exact dead baseline
+        required: true
+        type: choice
+        options:
+          - prepare
+          - reconcile-prepare
+          - quiesce
+          - reconcile-quiesce
+      candidate_sha:
+        description: Exact reviewed 40-character SHA currently at main
+        required: true
+        type: string
+      expected_deployment_sha:
+        description: Exact policy-pinned failed source SHA (12c0d24...)
+        required: true
+        type: string
+      replacement_run_id:
+        description: Prepare only; successful same-candidate Supabase key-replacement run
+        required: false
+        type: string
+      prepare_run_id:
+        description: Quiesce/reconcile only; successful same-candidate cold prepare run
+        required: false
+        type: string
+      ambiguous_quiesce_run_id:
+        description: Reconcile only; exact prior quiesce whose write step may have run
+        required: false
+        type: string
+      ambiguous_prepare_run_id:
+        description: Prepare reconciliation only; exact prior prepare whose write step may have run
+        required: false
+        type: string
+      confirmation:
+        description: Exact operation, candidate, and dead-source confirmation
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: inputs.operation == 'prepare'
+    name: Bind the exact replacement and prepare the dead baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: permanent-staging-provider-mutation
+    env:
+      PINTPATH_PROTECTED_ENVIRONMENT: permanent-staging-provider-mutation
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact cold prepare authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$EXPECTED_DEPLOYMENT_SHA" = 12c0d24f6619a0286e16b8daf56fc27aaa1e3aba
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          test -z "$PREPARE_RUN_ID"
+          test -z "$AMBIGUOUS_PREPARE_RUN_ID"
+          test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
+          [[ "$REPLACEMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$CONFIRMATION" = \
+            "PREPARE_PERMANENT_STAGING_COLD_RECOVERY_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before secret custody
+        env:
+          NODE_ENV: test
+          PUBLIC_BASE_URL: http://localhost:3000
+          DATABASE_PATH: ./data/ci-permanent-staging-cold-recovery.sqlite
+          OUTBOUND_CALLS_ENABLED: false
+        run: npm run check
+
+      - name: Create private cold recovery evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence" \
+            "$RUNNER_TEMP/pintpath-cold-github-candidate" \
+            "$RUNNER_TEMP/pintpath-cold-replacement-prerequisite" \
+            "$RUNNER_TEMP/pintpath-cold-replacement-prerequisite/sealed"
+
+      - name: Authenticate the reviewed candidate and fresh cold prepare dispatch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --operation cold-recovery-prepare \
+            --replacement-run-id "$REPLACEMENT_RUN_ID" \
+            > "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+
+      - name: Retrieve the exact successful Supabase replacement artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.replacement_run_id }}
+          name: pintpath-permanent-staging-provider-mutation-supabase-key-replacement-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-cold-replacement-prerequisite/downloaded
+
+      - name: Seal the exact canaried Supabase replacement receipt
+        env:
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-cold-replacement-prerequisite"
+          mapfile -d '' receipts < <(find "$root/downloaded" -type f -name terminal.json -print0)
+          test "${#receipts[@]}" = 1
+          test ! -L "${receipts[0]}"
+          test -z "$(find "$root/downloaded" -type l -print -quit)"
+          cp --no-dereference -- "${receipts[0]}" "$root/sealed/terminal.json"
+          chmod 600 "$root/sealed/terminal.json"
+          test "$REPLACEMENT_RUN_ID" != "$RUN_ID"
+
+      - name: Reassert exact current main immediately before Railway token custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Prepare the exact dead staging baseline once
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_COLD_RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/execute-protected-permanent-staging-cold-prepare.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
+            --replacement-run-id "$REPLACEMENT_RUN_ID" \
+            --replacement-terminal-file "$RUNNER_TEMP/pintpath-cold-replacement-prerequisite/sealed/terminal.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
+
+      - name: Remove downloaded Supabase replacement custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-cold-replacement-prerequisite"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+      - name: Reconcile the Railway production-staging mutation boundary
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload bounded cold prepare evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-cold-prepare-${{ inputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/pintpath-cold-github-candidate/reviewed-authority.json
+            ${{ runner.temp }}/pintpath-permanent-staging-cold-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  reconcile-prepare:
+    if: inputs.operation == 'reconcile-prepare'
+    name: Reconcile an ambiguous cold prepare at the exact dead baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: permanent-staging-provider-mutation
+    env:
+      PINTPATH_PROTECTED_ENVIRONMENT: permanent-staging-provider-mutation
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact read-only cold prepare reconciliation authority
+        env:
+          AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$EXPECTED_DEPLOYMENT_SHA" = 12c0d24f6619a0286e16b8daf56fc27aaa1e3aba
+          [[ "$AMBIGUOUS_PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$REPLACEMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$AMBIGUOUS_PREPARE_RUN_ID" != "$REPLACEMENT_RUN_ID"
+          test "$AMBIGUOUS_PREPARE_RUN_ID" != "$RUN_ID"
+          test "$REPLACEMENT_RUN_ID" != "$RUN_ID"
+          test -z "$PREPARE_RUN_ID"
+          test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          test "$CONFIRMATION" = \
+            "RECONCILE_PERMANENT_STAGING_COLD_PREPARE_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before metadata-token custody
+        env:
+          NODE_ENV: test
+          PUBLIC_BASE_URL: http://localhost:3000
+          DATABASE_PATH: ./data/ci-permanent-staging-cold-prepare-reconciliation.sqlite
+          OUTBOUND_CALLS_ENABLED: false
+        run: npm run check
+
+      - name: Create private reconciliation evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence" \
+            "$RUNNER_TEMP/pintpath-cold-github-candidate" \
+            "$RUNNER_TEMP/pintpath-cold-replacement-prerequisite" \
+            "$RUNNER_TEMP/pintpath-cold-replacement-prerequisite/sealed"
+
+      - name: Authenticate the prior ambiguous prepare and current read-only dispatch
+        env:
+          AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --operation cold-recovery-reconcile-prepare \
+            --prior-run-id "$AMBIGUOUS_PREPARE_RUN_ID" \
+            --replacement-run-id "$REPLACEMENT_RUN_ID" \
+            > "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+
+      - name: Retrieve the exact successful Supabase replacement artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.replacement_run_id }}
+          name: pintpath-permanent-staging-provider-mutation-supabase-key-replacement-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-cold-replacement-prerequisite/downloaded
+
+      - name: Seal the exact canaried Supabase replacement receipt
+        env:
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-cold-replacement-prerequisite"
+          mapfile -d '' receipts < <(find "$root/downloaded" -type f -name terminal.json -print0)
+          test "${#receipts[@]}" = 1
+          test ! -L "${receipts[0]}"
+          test -z "$(find "$root/downloaded" -type l -print -quit)"
+          cp --no-dereference -- "${receipts[0]}" "$root/sealed/terminal.json"
+          chmod 600 "$root/sealed/terminal.json"
+          test "$REPLACEMENT_RUN_ID" != "$RUN_ID"
+
+      - name: Reassert exact current main before read-only provider observation
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Prove the lost prepare acknowledgement without another write
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_COLD_RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/probe-permanent-staging-cold-prepare-reconciliation.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
+            --replacement-run-id "$REPLACEMENT_RUN_ID" \
+            --replacement-terminal-file "$RUNNER_TEMP/pintpath-cold-replacement-prerequisite/sealed/terminal.json" \
+            --prior-prepare-run-id "$AMBIGUOUS_PREPARE_RUN_ID" \
+            --reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
+
+      - name: Remove downloaded Supabase replacement custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-cold-replacement-prerequisite"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+      - name: Reconcile the Railway production-staging mutation boundary
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload bounded reconciled cold prepare evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-cold-prepare-${{ inputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/pintpath-cold-github-candidate/reviewed-authority.json
+            ${{ runner.temp }}/pintpath-permanent-staging-cold-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  quiesce:
+    if: inputs.operation == 'quiesce'
+    name: Initialize the exact dead baseline at explicit zero
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: permanent-staging-scale-evidence
+    env:
+      PINTPATH_PROTECTED_ENVIRONMENT: permanent-staging-scale-evidence
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact cold quiesce authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$EXPECTED_DEPLOYMENT_SHA" = 12c0d24f6619a0286e16b8daf56fc27aaa1e3aba
+          [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$PREPARE_RUN_ID" != "$RUN_ID"
+          test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          test -z "$REPLACEMENT_RUN_ID"
+          test "$CONFIRMATION" = \
+            "QUIESCE_PERMANENT_STAGING_COLD_RECOVERY_TO_ZERO_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before provider-token custody
+        env:
+          NODE_ENV: test
+          PUBLIC_BASE_URL: http://localhost:3000
+          DATABASE_PATH: ./data/ci-permanent-staging-cold-quiesce.sqlite
+          OUTBOUND_CALLS_ENABLED: false
+        run: npm run check
+
+      - name: Create private prerequisite and evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite" \
+            "$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite/sealed" \
+            "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence" \
+            "$RUNNER_TEMP/pintpath-cold-github-candidate"
+
+      - name: Authenticate the reviewed candidate and fresh cold quiesce dispatch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --operation cold-recovery-quiesce \
+            > "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+
+      - name: Retrieve the exact cold prepare artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepare_run_id }}
+          name: pintpath-permanent-staging-cold-prepare-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-cold-quiesce-prerequisite/downloaded
+
+      - name: Seal and authenticate the exact cold prepare receipt
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-scale-evidence
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: cold-quiesce
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite"
+          mapfile -d '' receipts < <(find "$root/downloaded" -type f -name cold-prepare-terminal.json -print0)
+          test "${#receipts[@]}" = 1
+          test ! -L "${receipts[0]}"
+          cp --no-dereference -- "${receipts[0]}" "$root/sealed/cold-prepare-terminal.json"
+          chmod 600 "$root/sealed/cold-prepare-terminal.json"
+          ./node_modules/.bin/tsx \
+            scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts \
+            --operation cold-quiesce \
+            --bootstrap-path cold-dead \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
+            --cold-prepare-run-id "$PREPARE_RUN_ID" \
+            --cold-prepare-terminal-file "$root/sealed/cold-prepare-terminal.json" \
+            --output "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/prerequisites-verification.json"
+
+      - name: Remove downloaded prerequisite custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+      - name: Install the exact reviewed Railway CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="$RUNNER_TEMP/pintpath-cold-railway-cli"
+          cli_archive="$cli_root/railway-5.32.0-x86_64-linux.tar.gz"
+          mkdir -m 700 "$cli_root"
+          curl --fail --silent --show-error --location \
+            'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' \
+            --output "$cli_archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$cli_archive" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$cli_archive" --directory "$cli_root" \
+            --no-same-owner --no-same-permissions
+          cli_path="$cli_root/railway"
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$cli_path" \
+            | sha256sum --check --strict
+          chmod 500 "$cli_path"
+          test "$("$cli_path" --version)" = 'railway 5.32.0'
+          echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path" >> "$GITHUB_ENV"
+
+      - name: Initialize the dead baseline from null to explicit zero once
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_COLD_RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/execute-protected-permanent-staging-cold-quiesce.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
+            --prepare-run-id "$PREPARE_RUN_ID" \
+            --prepare-verification-file "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/prerequisites-verification.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
+
+      - name: Reconcile the Railway production-staging mutation boundary
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload bounded cold quiesce evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-cold-quiesce-${{ inputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/pintpath-cold-github-candidate/reviewed-authority.json
+            ${{ runner.temp }}/pintpath-permanent-staging-cold-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  reconcile-quiesce:
+    if: inputs.operation == 'reconcile-quiesce'
+    name: Reconcile an ambiguous cold quiesce at exact zero
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: permanent-staging-scale-evidence
+    env:
+      PINTPATH_PROTECTED_ENVIRONMENT: permanent-staging-scale-evidence
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact read-only cold reconciliation authority
+        env:
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$EXPECTED_DEPLOYMENT_SHA" = 12c0d24f6619a0286e16b8daf56fc27aaa1e3aba
+          [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$AMBIGUOUS_QUIESCE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$PREPARE_RUN_ID" != "$AMBIGUOUS_QUIESCE_RUN_ID"
+          test "$PREPARE_RUN_ID" != "$RUN_ID"
+          test "$AMBIGUOUS_QUIESCE_RUN_ID" != "$RUN_ID"
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          test -z "$REPLACEMENT_RUN_ID"
+          test "$CONFIRMATION" = \
+            "RECONCILE_PERMANENT_STAGING_COLD_RECOVERY_AT_ZERO_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before metadata-token custody
+        env:
+          NODE_ENV: test
+          PUBLIC_BASE_URL: http://localhost:3000
+          DATABASE_PATH: ./data/ci-permanent-staging-cold-reconcile.sqlite
+          OUTBOUND_CALLS_ENABLED: false
+        run: npm run check
+
+      - name: Create private prerequisite and evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-cold-reconcile-prerequisite" \
+            "$RUNNER_TEMP/pintpath-cold-reconcile-prerequisite/sealed" \
+            "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence" \
+            "$RUNNER_TEMP/pintpath-cold-github-candidate"
+
+      - name: Authenticate the prior ambiguous quiesce and read-only dispatch
+        env:
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --operation cold-recovery-reconcile-quiesce \
+            --prior-run-id "$AMBIGUOUS_QUIESCE_RUN_ID" \
+            --prepare-run-id "$PREPARE_RUN_ID" \
+            > "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+          chmod 600 "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+
+      - name: Retrieve the exact cold prepare artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepare_run_id }}
+          name: pintpath-permanent-staging-cold-prepare-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-cold-reconcile-prerequisite/downloaded
+
+      - name: Seal and authenticate the exact cold prepare receipt
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-scale-evidence
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: cold-reconcile-quiesce
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-cold-reconcile-prerequisite"
+          mapfile -d '' receipts < <(find "$root/downloaded" -type f -name cold-prepare-terminal.json -print0)
+          test "${#receipts[@]}" = 1
+          test ! -L "${receipts[0]}"
+          test -z "$(find "$root/downloaded" -type l -print -quit)"
+          cp --no-dereference -- "${receipts[0]}" "$root/sealed/cold-prepare-terminal.json"
+          chmod 600 "$root/sealed/cold-prepare-terminal.json"
+          ./node_modules/.bin/tsx \
+            scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts \
+            --operation cold-reconcile-quiesce \
+            --bootstrap-path cold-dead \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
+            --cold-prepare-run-id "$PREPARE_RUN_ID" \
+            --cold-prepare-terminal-file "$root/sealed/cold-prepare-terminal.json" \
+            --output "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/prerequisites-verification.json"
+
+      - name: Remove downloaded prerequisite custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-cold-reconcile-prerequisite"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+      - name: Reassert exact current main before read-only metadata custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Prove the ambiguous cold quiesce reached exact zero without a second write
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_COLD_RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/probe-permanent-staging-cold-quiesce-reconciliation.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
+            --prepare-run-id "$PREPARE_RUN_ID" \
+            --prepare-verification-file "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/prerequisites-verification.json" \
+            --prior-quiesce-run-id "$AMBIGUOUS_QUIESCE_RUN_ID" \
+            --reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
+
+      - name: Reconcile the Railway production-staging mutation boundary
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload bounded cold quiesce reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-cold-quiesce-${{ inputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/pintpath-cold-github-candidate/reviewed-authority.json
+            ${{ runner.temp }}/pintpath-permanent-staging-cold-evidence/
+          if-no-files-found: error
+          retention-days: 30

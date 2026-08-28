@@ -32,7 +32,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "5060f451ec73c6978a1514531d1d7b33eeb591b2169812fbddcf898e69db7e4e" as const;
+  "967fd10441249cacf9af90b6c65532f1bdbde0e384020cb5ebf362902fd2ad7e" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -54,15 +54,15 @@ const FENCE_WORKFLOW_ID =
 const FENCE_WORKFLOW_NAME =
   "Configure candidate-bound automatic-maintenance worker fence" as const;
 const FENCE_WORKFLOW_SHA256 =
-  "8b0cc5a0c972da5c176b895e9a0105b3062466f45e3d797fc55fcbf4bffcdc86" as const;
+  "983a7a507587babbaac6490e1b21a5877f1f0839e9a96aa076e5e94c39501df5" as const;
 const FENCE_POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json" as const;
 const FENCE_POLICY_SHA256 =
-  "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb" as const;
+  "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461" as const;
 const FENCE_PRODUCER_PATH =
   "scripts/execute-protected-automatic-maintenance-worker-fence.ts" as const;
 const FENCE_PRODUCER_SHA256 =
-  "50a1e90da8f5d814c34d184f12c754d89d247ab2a19cd20ee87fe2119feb3693" as const;
+  "ae45432738c30b21217619946664dbf4726736371743e78279ff47d1463ca660" as const;
 const FENCE_TERMINAL_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-terminal/v1" as const;
 const DEPLOYMENT_WORKFLOW = ".github/workflows/deploy-production.yml" as const;

@@ -10,7 +10,7 @@ import {
 } from "./lib/trusted-filesystem.js";
 
 export const PROTECTED_SUPABASE_CUTOVER_SCHEMA =
-  "pintpath-protected-permanent-staging-supabase-cutover/v1" as const;
+  "pintpath-protected-permanent-staging-supabase-cutover/v2" as const;
 export const PROTECTED_SUPABASE_CUTOVER_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 
@@ -20,14 +20,18 @@ const MANAGEMENT_ORIGIN = "https://api.supabase.com";
 const BUCKET = "beermap-source-evidence";
 const POLICY_PATH =
   "ops/supabase/protected-permanent-staging-supabase-cutover-policy.json";
-const CONFIRMATION = "DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS";
+const DISABLE_OPERATION = "disable-enabled-legacy-keys" as const;
+const RECONCILE_OPERATION = "reconcile-already-disabled-legacy-keys" as const;
+const DISABLE_CONFIRMATION = "DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS";
+const RECONCILE_CONFIRMATION =
+  "RECONCILE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS";
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const PUBLISHABLE_PATTERN = /^sb_publishable_[A-Za-z0-9_-]{20,220}$/;
 const SECRET_PATTERN = /^sb_secret_[A-Za-z0-9_-]{20,220}$/;
 const MAX_BODY_BYTES = 64 * 1024;
 
 const POLICY = Object.freeze({
-  schemaVersion: "pintpath-protected-permanent-staging-supabase-cutover-policy/v1",
+  schemaVersion: "pintpath-protected-permanent-staging-supabase-cutover-policy/v3",
   policyId: "pintpath-permanent-staging-supabase-legacy-cutover",
   activationState: PROTECTED_SUPABASE_CUTOVER_STATE,
   githubEnvironment: "permanent-staging-supabase-legacy-disable",
@@ -48,6 +52,7 @@ const POLICY = Object.freeze({
     ],
   },
   mutation: {
+    explicitOperation: DISABLE_OPERATION,
     method: "PUT",
     path: `/v1/projects/${PROJECT_REF}/api-keys/legacy?enabled=false`,
     operation: "disable-all-legacy-jwt-api-keys",
@@ -57,6 +62,20 @@ const POLICY = Object.freeze({
     unconditionalPostflightRequired: true,
     ambiguousOutcomeAction: "READ_ONLY_RECONCILIATION_STOP_NO_RETRY",
   },
+  reconciliation: {
+    explicitOperation: RECONCILE_OPERATION,
+    transport: "protected-runner-direct-provider-read-only",
+    alreadyDisabledAllowed: true,
+    managementWriteAttempts: 0,
+    exactDisabledStateRequired: true,
+    replacementCanaryRequired: true,
+    retainedOldKeyDenialRequired: true,
+    secondObservationRequired: true,
+    managementWriteCredentialAllowed: false,
+    allowedAfterOneAmbiguousDisableAttempt: true,
+    maximumPriorAmbiguousDisableAttempts: 1,
+    secondManagementWriteAllowed: false,
+  },
   postflight: {
     exactLegacyState: { enabled: false },
     oldAnonStatus: 401,
@@ -65,8 +84,13 @@ const POLICY = Object.freeze({
   authority: {
     requiredGitRef: "refs/heads/main",
     requiredRunAttempt: 1,
-    confirmation: CONFIRMATION,
+    confirmations: {
+      disable: DISABLE_CONFIRMATION,
+      reconcile: RECONCILE_CONFIRMATION,
+    },
     separateReadAndWriteTokensRequired: true,
+    runNameIncludesSelectedOperation: true,
+    completeCandidateCutoverHistoryRequired: true,
   },
   evidence: {
     durableIntentRequiredBeforeAttempt: true,
@@ -77,8 +101,9 @@ const POLICY = Object.freeze({
 
 interface Arguments {
   readonly candidateSha: string;
+  readonly operation: typeof DISABLE_OPERATION | typeof RECONCILE_OPERATION;
   readonly managementReadTokenFile: string;
-  readonly managementWriteTokenFile: string;
+  readonly managementWriteTokenFile: string | null;
   readonly newPublishableKeyFile: string;
   readonly newSecretKeyFile: string;
   readonly oldAnonKeyFile: string;
@@ -99,13 +124,20 @@ interface Dependencies {
 interface Checks {
   policyExact: boolean;
   githubAuthorityExact: boolean;
+  operationExact: boolean;
   inputShapesExact: boolean;
+  managementWriteCredentialAbsentExact: boolean;
+  managementWriteCredentialSeparateExact: boolean;
   canaryBBeforeExact: boolean;
   legacyPreflightEnabledExact: boolean;
+  legacyPreflightDisabledExact: boolean;
   oldAnonAcceptedBeforeExact: boolean;
   oldServiceRoleAcceptedBeforeExact: boolean;
+  oldAnonDeniedBeforeExact: boolean;
+  oldServiceRoleDeniedBeforeExact: boolean;
   durableIntentExact: boolean;
   writeAttemptedAtMostOnce: boolean;
+  managementWriteSkippedExact: boolean;
   disableAcknowledgementExact: boolean;
   postflightAttempted: boolean;
   legacyPostflightDisabledExact: boolean;
@@ -153,13 +185,20 @@ function emptyChecks(): Checks {
   return {
     policyExact: false,
     githubAuthorityExact: false,
+    operationExact: false,
     inputShapesExact: false,
+    managementWriteCredentialAbsentExact: false,
+    managementWriteCredentialSeparateExact: false,
     canaryBBeforeExact: false,
     legacyPreflightEnabledExact: false,
+    legacyPreflightDisabledExact: false,
     oldAnonAcceptedBeforeExact: false,
     oldServiceRoleAcceptedBeforeExact: false,
+    oldAnonDeniedBeforeExact: false,
+    oldServiceRoleDeniedBeforeExact: false,
     durableIntentExact: false,
     writeAttemptedAtMostOnce: true,
+    managementWriteSkippedExact: false,
     disableAcknowledgementExact: false,
     postflightAttempted: false,
     legacyPostflightDisabledExact: false,
@@ -172,7 +211,7 @@ function emptyChecks(): Checks {
 }
 
 function parseArguments(argv: readonly string[]): Arguments | null {
-  if (argv.length !== 16) return null;
+  if (argv.length !== 16 && argv.length !== 18) return null;
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
@@ -181,22 +220,32 @@ function parseArguments(argv: readonly string[]): Arguments | null {
     values.set(flag, value);
   }
   const candidateSha = values.get("--candidate-sha") ?? "";
+  const operation = values.get("--operation") ?? "";
   const managementReadTokenFile = values.get("--management-read-token-file") ?? "";
-  const managementWriteTokenFile = values.get("--management-write-token-file") ?? "";
+  const managementWriteTokenFile = values.get("--management-write-token-file") ?? null;
   const newPublishableKeyFile = values.get("--new-publishable-key-file") ?? "";
   const newSecretKeyFile = values.get("--new-secret-key-file") ?? "";
   const oldAnonKeyFile = values.get("--old-anon-key-file") ?? "";
   const oldServiceRoleKeyFile = values.get("--old-service-role-key-file") ?? "";
   const evidenceDirectory = values.get("--evidence-dir") ?? "";
-  const files = [managementReadTokenFile, managementWriteTokenFile,
-    newPublishableKeyFile, newSecretKeyFile, oldAnonKeyFile, oldServiceRoleKeyFile];
+  const commonFiles = [managementReadTokenFile, newPublishableKeyFile,
+    newSecretKeyFile, oldAnonKeyFile, oldServiceRoleKeyFile];
+  const files = managementWriteTokenFile === null
+    ? commonFiles : [...commonFiles, managementWriteTokenFile];
+  const operationExact = operation === DISABLE_OPERATION
+    || operation === RECONCILE_OPERATION;
+  const writeCredentialShapeExact = operation === DISABLE_OPERATION
+    ? managementWriteTokenFile !== null
+    : operation === RECONCILE_OPERATION && managementWriteTokenFile === null;
   return SHA_PATTERN.test(candidateSha)
+    && operationExact
+    && writeCredentialShapeExact
     && files.every(path.isAbsolute)
     && new Set(files).size === files.length
     && path.isAbsolute(evidenceDirectory)
-    ? { candidateSha, managementReadTokenFile, managementWriteTokenFile,
+    ? { candidateSha, operation, managementReadTokenFile, managementWriteTokenFile,
       newPublishableKeyFile, newSecretKeyFile, oldAnonKeyFile,
-      oldServiceRoleKeyFile, evidenceDirectory }
+      oldServiceRoleKeyFile, evidenceDirectory } as Arguments
     : null;
 }
 
@@ -413,7 +462,7 @@ async function oldKeyDenied(
 }
 
 function receipt(
-  outcome: "disabled" | "failed_before_attempt" | "mutation_uncertain",
+  outcome: "disabled" | "already_disabled" | "failed_before_attempt" | "mutation_uncertain",
   attempts: 0 | 1,
   candidateSha: string | null,
   intentSha256: string | null,
@@ -448,8 +497,11 @@ export async function runProtectedPermanentStagingSupabaseCutover(
   const checks = emptyChecks();
   const buffers: Buffer[] = [];
   let attempts: 0 | 1 = 0;
-  let outcome: "disabled" | "failed_before_attempt" | "mutation_uncertain" =
-    "failed_before_attempt";
+  let outcome:
+    | "disabled"
+    | "already_disabled"
+    | "failed_before_attempt"
+    | "mutation_uncertain" = "failed_before_attempt";
   let intentSha: string | null = null;
   let terminalSha: string | null = null;
   let readToken = "";
@@ -462,26 +514,46 @@ export async function runProtectedPermanentStagingSupabaseCutover(
   let oldServiceRoleProbe: LegacyKeyProbe | null = null;
   try {
     checks.policyExact = policyExact(dependencies.cwd);
+    checks.operationExact = args !== null
+      && dependencies.env.PINTPATH_SUPABASE_CUTOVER_OPERATION === args.operation;
+    const expectedConfirmation = args?.operation === RECONCILE_OPERATION
+      ? RECONCILE_CONFIRMATION : DISABLE_CONFIRMATION;
     checks.githubAuthorityExact = args !== null
+      && checks.operationExact
       && dependencies.env.GITHUB_REF === "refs/heads/main"
       && dependencies.env.GITHUB_SHA === args.candidateSha
       && dependencies.env.GITHUB_RUN_ATTEMPT === "1"
-      && dependencies.env.PINTPATH_SUPABASE_CUTOVER_CONFIRMATION === CONFIRMATION;
+      && dependencies.env.PINTPATH_SUPABASE_CUTOVER_CONFIRMATION === expectedConfirmation;
     if (!args || !checks.policyExact || !checks.githubAuthorityExact) throw new Error("authority_invalid");
-    const names = [args.managementReadTokenFile, args.managementWriteTokenFile,
-      args.newPublishableKeyFile, args.newSecretKeyFile, args.oldAnonKeyFile,
-      args.oldServiceRoleKeyFile];
+    const names = [args.managementReadTokenFile, args.newPublishableKeyFile,
+      args.newSecretKeyFile, args.oldAnonKeyFile, args.oldServiceRoleKeyFile];
     buffers.push(...names.map(dependencies.readSecret));
+    if (args.managementWriteTokenFile !== null) {
+      buffers.push(dependencies.readSecret(args.managementWriteTokenFile));
+    }
     const decoded = buffers.map(decode);
     readToken = decoded[0]!;
-    writeToken = decoded[1]!;
-    newPublishable = decoded[2]!;
-    newSecret = decoded[3]!;
-    oldAnon = decoded[4]!;
-    oldServiceRole = decoded[5]!;
+    newPublishable = decoded[1]!;
+    newSecret = decoded[2]!;
+    oldAnon = decoded[3]!;
+    oldServiceRole = decoded[4]!;
+    writeToken = decoded[5] ?? "";
+    checks.managementWriteCredentialAbsentExact =
+      args.operation === RECONCILE_OPERATION
+      && args.managementWriteTokenFile === null
+      && buffers.length === 5
+      && writeToken === "";
+    checks.managementWriteCredentialSeparateExact =
+      args.operation === DISABLE_OPERATION
+      && args.managementWriteTokenFile !== null
+      && writeToken.length >= 16
+      && writeToken.length <= 4096
+      && readToken !== writeToken
+      && !/[\u0000\r\n]/.test(writeToken);
     checks.inputShapesExact = readToken.length >= 16 && readToken.length <= 4096
-      && writeToken.length >= 16 && writeToken.length <= 4096
-      && readToken !== writeToken && !/[\u0000\r\n]/.test(readToken + writeToken)
+      && !/[\u0000\r\n]/.test(readToken)
+      && (checks.managementWriteCredentialAbsentExact
+        || checks.managementWriteCredentialSeparateExact)
       && PUBLISHABLE_PATTERN.test(newPublishable) && SECRET_PATTERN.test(newSecret)
       && newPublishable !== newSecret && legacyJwtRole(oldAnon, "anon")
       && legacyJwtRole(oldServiceRole, "service_role") && oldAnon !== oldServiceRole;
@@ -499,42 +571,84 @@ export async function runProtectedPermanentStagingSupabaseCutover(
       ]);
     checks.canaryBBeforeExact = canaryBefore;
     checks.legacyPreflightEnabledExact = legacyStateExact(legacyPreflight, true);
+    checks.legacyPreflightDisabledExact = legacyStateExact(legacyPreflight, false);
     checks.oldAnonAcceptedBeforeExact = legacyKeyAcceptedExact(oldAnonBefore, "anon");
     checks.oldServiceRoleAcceptedBeforeExact = legacyKeyAcceptedExact(
       oldServiceRoleBefore,
       "service_role",
     );
-    if (!checks.canaryBBeforeExact || !checks.legacyPreflightEnabledExact
-      || !checks.oldAnonAcceptedBeforeExact
-      || !checks.oldServiceRoleAcceptedBeforeExact) {
+    checks.oldAnonDeniedBeforeExact = rejectionExact(oldAnonBefore);
+    checks.oldServiceRoleDeniedBeforeExact = rejectionExact(oldServiceRoleBefore);
+    const enabledCutoverExact = checks.legacyPreflightEnabledExact
+      && checks.oldAnonAcceptedBeforeExact
+      && checks.oldServiceRoleAcceptedBeforeExact;
+    const alreadyDisabledExact = checks.legacyPreflightDisabledExact
+      && checks.oldAnonDeniedBeforeExact
+      && checks.oldServiceRoleDeniedBeforeExact;
+    const requestedStateExact = args.operation === DISABLE_OPERATION
+      ? enabledCutoverExact : alreadyDisabledExact;
+    if (!checks.canaryBBeforeExact || !requestedStateExact) {
       throw new Error("preflight_invalid");
     }
     const intent = canonical({
-      schemaVersion: "pintpath-protected-permanent-staging-supabase-cutover-intent/v1",
+      schemaVersion: "pintpath-protected-permanent-staging-supabase-cutover-intent/v2",
       candidateSha: args.candidateSha,
       projectRef: PROJECT_REF,
       legacyKeyFamilies: ["anon", "service_role"],
-      operation: "disable-all-legacy-jwt-api-keys",
-      maximumAttempts: 1,
+      requestedOperation: args.operation,
+      operation: args.operation === RECONCILE_OPERATION
+        ? "reconcile-already-disabled-legacy-jwt-api-keys"
+        : "disable-all-legacy-jwt-api-keys",
+      maximumAttempts: args.operation === RECONCILE_OPERATION ? 0 : 1,
       retryAllowed: false,
       replacementCanaryBeforePassed: true,
-      legacyPreflightEnabled: true,
-      oldAnonAcceptedBeforeDisable: true,
-      oldServiceRoleAcceptedBeforeDisable: true,
+      legacyPreflightEnabled: enabledCutoverExact,
+      legacyPreflightDisabled: alreadyDisabledExact,
+      oldAnonAcceptedBeforeDisable: checks.oldAnonAcceptedBeforeExact,
+      oldServiceRoleAcceptedBeforeDisable: checks.oldServiceRoleAcceptedBeforeExact,
+      oldAnonDeniedBeforeReconciliation: checks.oldAnonDeniedBeforeExact,
+      oldServiceRoleDeniedBeforeReconciliation:
+        checks.oldServiceRoleDeniedBeforeExact,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
     });
     intentSha = dependencies.writeDurable(args.evidenceDirectory, "intent.json", intent);
     checks.durableIntentExact = intentSha === sha256(intent);
     if (!checks.durableIntentExact) throw new Error("intent_invalid");
-    attempts = 1;
-    const acknowledgement = await disableLegacy(dependencies.fetchImpl, writeToken);
-    checks.disableAcknowledgementExact = legacyStateExact(acknowledgement, false);
+    if (args.operation === RECONCILE_OPERATION) {
+      checks.managementWriteSkippedExact = true;
+      checks.postflightAttempted = true;
+      const [legacyReconciliation, canaryReconciliation, anonDenied, serviceRoleDenied] =
+        await Promise.all([
+          legacyState(dependencies.fetchImpl, readToken),
+          replacementCanary(dependencies.fetchImpl, newPublishable, newSecret),
+          oldKeyDenied(dependencies.fetchImpl, oldAnonProbe),
+          oldKeyDenied(dependencies.fetchImpl, oldServiceRoleProbe),
+        ]);
+      checks.legacyPostflightDisabledExact = legacyStateExact(
+        legacyReconciliation,
+        false,
+      );
+      checks.canaryBAfterExact = canaryReconciliation;
+      checks.oldAnonDeniedExact = anonDenied;
+      checks.oldServiceRoleDeniedExact = serviceRoleDenied;
+      outcome = checks.legacyPostflightDisabledExact
+        && checks.canaryBAfterExact
+        && checks.oldAnonDeniedExact
+        && checks.oldServiceRoleDeniedExact
+        ? "already_disabled" : "failed_before_attempt";
+      if (outcome !== "already_disabled") throw new Error("reconciliation_invalid");
+    } else {
+      attempts = 1;
+      const acknowledgement = await disableLegacy(dependencies.fetchImpl, writeToken);
+      checks.disableAcknowledgementExact = legacyStateExact(acknowledgement, false);
+    }
   } catch {
     outcome = attempts === 1 ? "mutation_uncertain" : "failed_before_attempt";
   } finally {
     for (const buffer of buffers) buffer.fill(0);
-    checks.inputZeroized = buffers.length === 6
+    const expectedBufferCount = args?.operation === DISABLE_OPERATION ? 6 : 5;
+    checks.inputZeroized = buffers.length === expectedBufferCount
       && buffers.every((buffer) => buffer.every((byte) => byte === 0));
     if (attempts === 1) {
       checks.postflightAttempted = true;
@@ -556,25 +670,31 @@ export async function runProtectedPermanentStagingSupabaseCutover(
         ? "disabled" : "mutation_uncertain";
     }
   }
-  const provisional = receipt(outcome, attempts, args?.candidateSha ?? null,
-    intentSha, null, checks);
-  if (args && checks.durableIntentExact) {
-    try {
-      const terminal = canonical({
-        schemaVersion: "pintpath-protected-permanent-staging-supabase-cutover-terminal/v1",
-        receipt: provisional,
-      });
-      terminalSha = dependencies.writeDurable(args.evidenceDirectory, "terminal.json", terminal);
-      checks.terminalEvidenceExact = terminalSha === sha256(terminal);
-    } catch {
-      checks.terminalEvidenceExact = false;
-      if (attempts === 1) outcome = "mutation_uncertain";
+  return await finalize();
+
+  async function finalize(): Promise<0 | 1> {
+    const provisional = receipt(outcome, attempts, args?.candidateSha ?? null,
+      intentSha, null, checks);
+    if (args && checks.durableIntentExact) {
+      try {
+        const terminal = canonical({
+          schemaVersion: "pintpath-protected-permanent-staging-supabase-cutover-terminal/v2",
+          receipt: provisional,
+        });
+        terminalSha = dependencies.writeDurable(args.evidenceDirectory, "terminal.json", terminal);
+        checks.terminalEvidenceExact = terminalSha === sha256(terminal);
+      } catch {
+        checks.terminalEvidenceExact = false;
+        if (attempts === 1) outcome = "mutation_uncertain";
+        if (outcome === "already_disabled") outcome = "failed_before_attempt";
+      }
     }
+    const finalReceipt = receipt(outcome, attempts, args?.candidateSha ?? null,
+      intentSha, terminalSha, checks);
+    dependencies.writeOutput(`${JSON.stringify(finalReceipt)}\n`);
+    return (outcome === "disabled" || outcome === "already_disabled")
+      && checks.terminalEvidenceExact ? 0 : 1;
   }
-  const finalReceipt = receipt(outcome, attempts, args?.candidateSha ?? null,
-    intentSha, terminalSha, checks);
-  dependencies.writeOutput(`${JSON.stringify(finalReceipt)}\n`);
-  return outcome === "disabled" && checks.terminalEvidenceExact ? 0 : 1;
 }
 
 export const protectedPermanentStagingSupabaseCutoverInternals = {

@@ -78,6 +78,8 @@ export const RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY = `query PintPathRailwayProdu
 
 export const RAILWAY_MUTATION_BOUNDARY_RECEIPT_SCHEMA =
   "pintpath-railway-mutation-boundary-readiness/v1" as const;
+export const RAILWAY_EXACT_STAGED_PATCH_BOUNDARY_RECEIPT_SCHEMA =
+  "pintpath-railway-exact-staged-patch-boundary-readiness/v1" as const;
 
 const PRODUCTION_TOKEN_NAME =
   "PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN" as const;
@@ -708,6 +710,124 @@ export async function runRailwayMutationBoundaryCheck(
   }
 }
 
+function stableJson(value: unknown): string | null {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? JSON.stringify(value) : null;
+  }
+  if (Array.isArray(value)) {
+    const entries = value.map(stableJson);
+    return entries.some((entry) => entry === null)
+      ? null
+      : `[${entries.join(",")}]`;
+  }
+  if (!plainObject(value)) return null;
+  const entries = Object.keys(value).sort().map((key) => {
+    const encoded = stableJson(value[key]);
+    return encoded === null ? null : `${JSON.stringify(key)}:${encoded}`;
+  });
+  return entries.some((entry) => entry === null)
+    ? null
+    : `{${entries.join(",")}}`;
+}
+
+/**
+ * Reuses the production/staging boundary query while permitting one exact,
+ * caller-pinned staging patch. Every ordinary boundary invariant must pass;
+ * the sole expected ordinary failure is `stagingPatchEmpty`.
+ */
+export async function runRailwayExactStagedPatchBoundaryCheck(
+  policyPath: string,
+  expectedStagingPatch: Readonly<Record<string, unknown>>,
+  overrides: Partial<BoundaryDependencies> = {},
+): Promise<0 | 1> {
+  const observation: { staging: RailwayEnvironmentBoundary | null } = {
+    staging: null,
+  };
+  let ordinaryOutput = "";
+  const expected = stableJson(expectedStagingPatch);
+  const writeOutput = overrides.writeOutput ?? ((output: string) =>
+    process.stdout.write(output));
+  const failed = (ordinaryChecks: Record<string, boolean> = {}) => {
+    writeOutput(`${JSON.stringify({
+      schemaVersion: RAILWAY_EXACT_STAGED_PATCH_BOUNDARY_RECEIPT_SCHEMA,
+      policy: RAILWAY_MUTATION_POLICY_ID,
+      mode: "read-only-exact-staged-patch-boundary",
+      outcome: "failed",
+      ordinaryChecks,
+      checks: {
+        ordinaryBoundaryFailedOnlyForExpectedStagingPatch: false,
+        stagingPatchExact: false,
+      },
+    })}\n`);
+    return 1 as const;
+  };
+  if (expected === null || expected === "{}" || !path.isAbsolute(policyPath)) {
+    return failed();
+  }
+  const environmentQuery = overrides.queryEnvironment ??
+    ((variables: EnvironmentVariables, tokenName: typeof PRODUCTION_TOKEN_NAME |
+      typeof STAGING_TOKEN_NAME) => defaultQueryEnvironment(
+      variables,
+      tokenName,
+      overrides.env ?? process.env,
+      overrides.fetchImpl ?? fetch,
+    ));
+  const env = overrides.env ?? process.env;
+  if (!overrides.queryEnvironment) {
+    const productionToken = env[PRODUCTION_TOKEN_NAME];
+    const stagingToken = env[STAGING_TOKEN_NAME];
+    if (!validToken(productionToken) || !validToken(stagingToken)
+      || productionToken === stagingToken) return failed();
+  }
+  const code = await runRailwayMutationBoundaryCheck({
+    ...overrides,
+    argv: ["--policy", policyPath],
+    env,
+    queryEnvironment: async (variables, tokenName) => {
+      const result = await environmentQuery(variables, tokenName);
+      if (tokenName === STAGING_TOKEN_NAME) observation.staging = result;
+      return result;
+    },
+    writeOutput: (output) => { ordinaryOutput = output; },
+  });
+  let ordinaryChecks: Record<string, boolean> = {};
+  try {
+    const parsed = JSON.parse(ordinaryOutput) as unknown;
+    if (!exactKeys(parsed, ["schemaVersion", "policy", "mode", "outcome", "checks"])
+      || parsed.schemaVersion !== RAILWAY_MUTATION_BOUNDARY_RECEIPT_SCHEMA
+      || !plainObject(parsed.checks)
+      || !Object.values(parsed.checks).every((value) => typeof value === "boolean")) {
+      return failed();
+    }
+    ordinaryChecks = parsed.checks as Record<string, boolean>;
+  } catch {
+    return failed();
+  }
+  const onlyExpectedOrdinaryFailure = code === 1
+    && ordinaryChecks.stagingPatchEmpty === false
+    && Object.entries(ordinaryChecks).every(([name, value]) =>
+      name === "stagingPatchEmpty" || value === true);
+  const stagingPatchExact = observation.staging !== null
+    && stableJson(observation.staging.patch) === expected;
+  const passed = onlyExpectedOrdinaryFailure && stagingPatchExact;
+  writeOutput(`${JSON.stringify({
+    schemaVersion: RAILWAY_EXACT_STAGED_PATCH_BOUNDARY_RECEIPT_SCHEMA,
+    policy: RAILWAY_MUTATION_POLICY_ID,
+    mode: "read-only-exact-staged-patch-boundary",
+    outcome: passed ? "passed" : "failed",
+    ordinaryChecks,
+    checks: {
+      ordinaryBoundaryFailedOnlyForExpectedStagingPatch:
+        onlyExpectedOrdinaryFailure,
+      stagingPatchExact,
+    },
+  })}\n`);
+  return passed ? 0 : 1;
+}
+
 export const railwayMutationBoundaryInternals = {
   defaultQueryEnvironment,
   defaultQueryPostgres,
@@ -717,6 +837,7 @@ export const railwayMutationBoundaryInternals = {
   parseProjectTokenScopeResponse,
   readBoundedResponseBody,
   railwayMutationQueriesAreMetadataOnly,
+  stableJson,
 };
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";

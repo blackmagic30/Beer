@@ -66,11 +66,11 @@ function prerequisitesVerification(candidateSha = CANDIDATE): string {
       artifactDigest: `sha256:${hash}`,
       artifactSizeBytes: 4096,
       policySha256:
-        "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb",
+        "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461",
       producerSha256:
-        "50a1e90da8f5d814c34d184f12c754d89d247ab2a19cd20ee87fe2119feb3693",
+        "ae45432738c30b21217619946664dbf4726736371743e78279ff47d1463ca660",
       producerWorkflowSha256:
-        "8b0cc5a0c972da5c176b895e9a0105b3062466f45e3d797fc55fcbf4bffcdc86",
+        "983a7a507587babbaac6490e1b21a5877f1f0839e9a96aa076e5e94c39501df5",
       terminalSha256: hash,
       bindingSha256: hash,
       intentSha256: hash,

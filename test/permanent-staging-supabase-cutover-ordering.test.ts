@@ -87,12 +87,12 @@ describe("permanent-staging Supabase cutover ordering", () => {
       "docs/launch-readiness-review-2026-08-27.md",
       "## Exact next staging chain",
       [
-        "While the legacy staging deployment is still the sole healthy one-replica deployment",
-        "skipDeploys=true",
-        "configure-automatic-maintenance-worker-fence.yml",
-        "bootstrap-permanent-staging-worker-fence.yml",
+        "If the three forbidden OFFSITE rows remain",
+        "All changes must keep deploys skipped",
+        "cold prepare",
+        "cold quiesce",
         "phase fenced",
-        "Link only the exact permanent-staging Supabase project",
+        "staging Supabase venue-directory migration is already applied",
         "worker bootstrap restore operation",
         "phase active",
       ],
@@ -111,7 +111,7 @@ describe("permanent-staging Supabase cutover ordering", () => {
         "dispatch staging activate",
       ],
     ],
-  ])("keeps provider writes in the healthy pre-fence phase in %s", (
+  ])("keeps provider writes before the fenced candidate deployment in %s", (
     filename,
     sectionMarker,
     markers,
@@ -128,7 +128,10 @@ describe("permanent-staging Supabase cutover ordering", () => {
     );
     expectInOrder(workflow, [
       "replacement_run_id:",
+      "fenced_deployment_run_id:",
       "deployment_run_id:",
+      "Download the exact fenced zero-replica deployment evidence",
+      "Download the exact active closeout deployment evidence",
       "scripts/verify-github-permanent-staging-deployment.mjs",
       "PINTPATH_SUPABASE_STAGING_SECRETS_READ_TOKEN",
       "execute-protected-permanent-staging-supabase-cutover.ts",

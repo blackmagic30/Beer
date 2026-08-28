@@ -1575,6 +1575,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(workflow).toContain("quiesce_run_id:");
     expect(workflow).toContain("fenced_deployment_run_id:");
     expect(workflow).toContain("restore_run_id:");
+    expect(workflow).toContain("ambiguous_activate_run_id:");
     expect(workflow).toContain("role_limit_run_id:");
     expect(workflow).toContain('if test "$OPERATION" = prepare; then');
     expect(workflow).toContain('if test "$OPERATION" = fence; then');
@@ -1605,7 +1606,17 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(workflow).toContain("--mode production-activate");
     expect(workflow).toContain("--role-intent-file \"$sealed/intent.json\"");
     expect(workflow.match(/actions\/download-artifact@b7c52a5f7a25/g))
-      .toHaveLength(5);
+      .toHaveLength(13);
+    const reconcileJob = workflow.split("\n  reconcile-activate:")[1];
+    expect(reconcileJob).toContain(
+      "Reconcile an ambiguous staging automatic-maintenance activation",
+    );
+    expect(reconcileJob).not.toContain(
+      "PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN",
+    );
+    expect(reconcileJob).not.toContain(
+      "PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN",
+    );
     expect(workflow).toContain("PINTPATH_RAILWAY_TARGET_METADATA_TOKEN");
     expect(workflow).toContain("PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN");
     expect(workflow).toContain("if: always()");

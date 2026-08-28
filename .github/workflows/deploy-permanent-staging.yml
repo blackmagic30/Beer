@@ -15,6 +15,14 @@ on:
         options:
           - fenced
           - active
+      bootstrap_path:
+        description: Proven staging predecessor chain
+        required: true
+        type: choice
+        default: healthy-legacy
+        options:
+          - healthy-legacy
+          - cold-dead
       prepare_run_id:
         description: Fenced only; successful same-candidate permanent-staging prepare run
         required: false
@@ -66,6 +74,7 @@ jobs:
           DISPATCH_SHA: ${{ github.sha }}
           DISPATCH_REF: ${{ github.ref }}
           PHASE: ${{ inputs.phase }}
+          BOOTSTRAP_PATH: ${{ inputs.bootstrap_path }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
           ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
@@ -79,6 +88,7 @@ jobs:
           test "$DISPATCH_REF" = "refs/heads/main"
           test "$RUN_ATTEMPT" = "1"
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          case "$BOOTSTRAP_PATH" in healthy-legacy|cold-dead) ;; *) exit 1 ;; esac
           case "$PHASE" in
             fenced)
               [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
@@ -159,7 +169,7 @@ jobs:
             --output "$RUNNER_TEMP/github-candidate-evidence/required-checks.json"
 
       - name: Retrieve the exact staging worker prepare artifact
-        if: inputs.phase == 'fenced'
+        if: inputs.phase == 'fenced' && inputs.bootstrap_path == 'healthy-legacy'
         uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
         with:
           github-token: ${{ github.token }}
@@ -169,13 +179,33 @@ jobs:
           path: ${{ runner.temp }}/pintpath-staging-deployment-prerequisites/prepare
 
       - name: Retrieve the exact staging quiescence artifact
-        if: inputs.phase == 'fenced'
+        if: inputs.phase == 'fenced' && inputs.bootstrap_path == 'healthy-legacy'
         uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.quiesce_run_id }}
           name: pintpath-permanent-staging-worker-bootstrap-quiesce-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-deployment-prerequisites/quiesce
+
+      - name: Retrieve the exact cold staging prepare artifact
+        if: inputs.phase == 'fenced' && inputs.bootstrap_path == 'cold-dead'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepare_run_id }}
+          name: pintpath-permanent-staging-cold-prepare-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-deployment-prerequisites/prepare
+
+      - name: Retrieve the exact cold staging quiescence artifact
+        if: inputs.phase == 'fenced' && inputs.bootstrap_path == 'cold-dead'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.quiesce_run_id }}
+          name: pintpath-permanent-staging-cold-quiesce-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-staging-deployment-prerequisites/quiesce
 
       - name: Retrieve the exact staging worker activation artifact
@@ -191,6 +221,7 @@ jobs:
       - name: Seal unique staging deployment prerequisite receipts
         env:
           PHASE: ${{ inputs.phase }}
+          BOOTSTRAP_PATH: ${{ inputs.bootstrap_path }}
         shell: bash
         run: |
           set -euo pipefail
@@ -208,10 +239,18 @@ jobs:
           }
           if test "$PHASE" = fenced; then
             install -d -m 700 "$root/sealed/prepare" "$root/sealed/quiesce"
-            seal_one "$root/prepare" automatic-maintenance-worker-fence-terminal.json \
-              "$root/sealed/prepare/automatic-maintenance-worker-fence-terminal.json"
-            seal_one "$root/quiesce" quiesce-staging-zero-receipt.json \
-              "$root/sealed/quiesce/quiesce-staging-zero-receipt.json"
+            if test "$BOOTSTRAP_PATH" = cold-dead; then
+              seal_one "$root/prepare" cold-prepare-terminal.json \
+                "$root/sealed/prepare/cold-prepare-terminal.json"
+              seal_one "$root/quiesce" cold-quiesce-receipt.json \
+                "$root/sealed/quiesce/cold-quiesce-receipt.json"
+            else
+              test "$BOOTSTRAP_PATH" = healthy-legacy
+              seal_one "$root/prepare" automatic-maintenance-worker-fence-terminal.json \
+                "$root/sealed/prepare/automatic-maintenance-worker-fence-terminal.json"
+              seal_one "$root/quiesce" quiesce-staging-zero-receipt.json \
+                "$root/sealed/quiesce/quiesce-staging-zero-receipt.json"
+            fi
             seal_one "$root/quiesce" prerequisites-verification.json \
               "$root/sealed/quiesce/prerequisites-verification.json"
           else
@@ -229,6 +268,7 @@ jobs:
           GITHUB_API_URL: ${{ github.api_url }}
           GITHUB_TOKEN: ${{ github.token }}
           PHASE: ${{ inputs.phase }}
+          BOOTSTRAP_PATH: ${{ inputs.bootstrap_path }}
           PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-deployment
           PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: ${{ inputs.phase == 'fenced' && 'fenced-deploy' || 'active-deploy' }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
@@ -239,19 +279,30 @@ jobs:
           root="$RUNNER_TEMP/pintpath-staging-deployment-prerequisites/sealed"
           output="$RUNNER_TEMP/pintpath-staging-deployment-evidence/prerequisites-verification.json"
           if test "$PHASE" = fenced; then
-            args=(
-              --operation fenced-deploy
-              --candidate-sha "$CANDIDATE_SHA"
-              --prepare-run-id "$PREPARE_RUN_ID"
-              --prepare-terminal-file "$root/prepare/automatic-maintenance-worker-fence-terminal.json"
-              --quiesce-run-id "$QUIESCE_RUN_ID"
-              --quiesce-receipt-file "$root/quiesce/quiesce-staging-zero-receipt.json"
-              --quiesce-verification-file "$root/quiesce/prerequisites-verification.json"
-              --output "$output"
-            )
+            args=(--operation fenced-deploy --bootstrap-path "$BOOTSTRAP_PATH" --candidate-sha "$CANDIDATE_SHA")
+            if test "$BOOTSTRAP_PATH" = cold-dead; then
+              args+=(
+                --cold-prepare-run-id "$PREPARE_RUN_ID"
+                --cold-prepare-terminal-file "$root/prepare/cold-prepare-terminal.json"
+                --cold-quiesce-run-id "$QUIESCE_RUN_ID"
+                --cold-quiesce-receipt-file "$root/quiesce/cold-quiesce-receipt.json"
+                --cold-quiesce-verification-file "$root/quiesce/prerequisites-verification.json"
+              )
+            else
+              test "$BOOTSTRAP_PATH" = healthy-legacy
+              args+=(
+                --prepare-run-id "$PREPARE_RUN_ID"
+                --prepare-terminal-file "$root/prepare/automatic-maintenance-worker-fence-terminal.json"
+                --quiesce-run-id "$QUIESCE_RUN_ID"
+                --quiesce-receipt-file "$root/quiesce/quiesce-staging-zero-receipt.json"
+                --quiesce-verification-file "$root/quiesce/prerequisites-verification.json"
+              )
+            fi
+            args+=(--output "$output")
           else
             args=(
               --operation active-deploy
+              --bootstrap-path "$BOOTSTRAP_PATH"
               --candidate-sha "$CANDIDATE_SHA"
               --activate-run-id "$ACTIVATION_RUN_ID"
               --activate-terminal-file "$root/activate/automatic-maintenance-worker-fence-terminal.json"

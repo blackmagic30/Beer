@@ -11,11 +11,11 @@ import {
 } from "./lib/trusted-filesystem.js";
 
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
-  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v1" as const;
+  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "f97f246b71bf5beebb439572a891e6ce07c738859ebc7d3a1bf5626ae442ec73" as const;
+  "09521fb1359d3c47a3e00ffea4d998c5d04296f11726d75fdf364addb50c2230" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -25,7 +25,7 @@ const POLICY_PATH =
 const WORKER_POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json";
 const WORKER_POLICY_SHA256 =
-  "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb";
+  "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461";
 const SCALE_POLICY_PATH =
   "ops/railway/permanent-staging-scale-evidence-policy.json";
 const SCALE_POLICY_SHA256 =
@@ -38,15 +38,30 @@ const ACTIVE_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-app-deployment-policy.json";
 const ACTIVE_DEPLOYMENT_POLICY_SHA256 =
   "7d4f899e5ee17ee3a7b4d86183aedf7f7f0f86b7e24ed0f2afc50a2df9e8f2e6";
+const COLD_RECOVERY_POLICY_PATH =
+  "ops/railway/permanent-staging-cold-recovery-policy.json";
+const COLD_RECOVERY_POLICY_SHA256 =
+  "1df2038eee8e785f49d35057a701f94a4b7ec41d38987938d658fb1a9744746c";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
+const COLD_SOURCE_SHA = "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba";
 const WORKER_RECEIPT_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-terminal/v1";
 const SCALE_RECEIPT_SCHEMA =
   "pintpath-permanent-staging-scale-operation/v2";
 const DEPLOYMENT_RECEIPT_SCHEMA =
   "pintpath-railway-application-deployment-executor/v5";
+const COLD_PREPARE_RECEIPT_SCHEMA =
+  "pintpath-permanent-staging-cold-prepare/v1";
+const COLD_PREPARE_RECONCILIATION_RECEIPT_SCHEMA =
+  "pintpath-permanent-staging-cold-prepare-reconciliation/v1";
+const RESTORE_RECONCILIATION_RECEIPT_SCHEMA =
+  "pintpath-permanent-staging-bootstrap-restore-reconciliation/v1";
+const ACTIVATE_RECONCILIATION_RECEIPT_SCHEMA =
+  "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v1";
+const COLD_QUIESCE_RECEIPT_SCHEMA =
+  "pintpath-permanent-staging-cold-quiesce/v2";
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -62,18 +77,25 @@ const REQUEST_TIMEOUT_MS = 20_000;
 type JsonRecord = Record<string, unknown>;
 export type BootstrapConsumerOperation =
   | "quiesce"
+  | "cold-quiesce"
+  | "cold-reconcile-quiesce"
   | "fenced-deploy"
   | "restore"
+  | "reconcile-restore"
   | "activate"
+  | "reconcile-activate"
   | "active-deploy"
   | "scale-evidence";
 type ProducerKind =
   | "prepare"
+  | "cold-prepare"
   | "quiesce"
+  | "cold-quiesce"
   | "fenced-deployment"
   | "restore"
   | "activate"
   | "active-deployment";
+export type BootstrapPath = "healthy-legacy" | "cold-dead";
 
 type FailureCode =
   | "arguments_invalid"
@@ -124,6 +146,14 @@ const PRODUCERS: Readonly<Record<ProducerKind, ProducerSpec>> = Object.freeze({
     receiptFilename: "automatic-maintenance-worker-fence-terminal.json",
     receiptSchema: WORKER_RECEIPT_SCHEMA,
   },
+  "cold-prepare": {
+    workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    workflowName: "Recover dead permanent staging to explicit zero",
+    title: (sha) => `Permanent staging cold recovery | prepare | ${sha}`,
+    artifact: (sha) => `pintpath-permanent-staging-cold-prepare-${sha}`,
+    receiptFilename: "cold-prepare-terminal.json",
+    receiptSchema: COLD_PREPARE_RECEIPT_SCHEMA,
+  },
   quiesce: {
     workflowPath:
       ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
@@ -135,6 +165,16 @@ const PRODUCERS: Readonly<Record<ProducerKind, ProducerSpec>> = Object.freeze({
     receiptFilename: "quiesce-staging-zero-receipt.json",
     receiptSchema: SCALE_RECEIPT_SCHEMA,
     verificationFlag: "--quiesce-verification-file",
+    verificationFilename: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME,
+  },
+  "cold-quiesce": {
+    workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    workflowName: "Recover dead permanent staging to explicit zero",
+    title: (sha) => `Permanent staging cold recovery | quiesce | ${sha}`,
+    artifact: (sha) => `pintpath-permanent-staging-cold-quiesce-${sha}`,
+    receiptFilename: "cold-quiesce-receipt.json",
+    receiptSchema: COLD_QUIESCE_RECEIPT_SCHEMA,
+    verificationFlag: "--cold-quiesce-verification-file",
     verificationFilename: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME,
   },
   "fenced-deployment": {
@@ -183,16 +223,69 @@ const PRODUCERS: Readonly<Record<ProducerKind, ProducerSpec>> = Object.freeze({
   },
 });
 
-const REQUIRED_PRODUCERS: Readonly<
+function producerSpecForObservedRun(
+  kind: ProducerKind,
+  candidateSha: string,
+  value: unknown,
+): ProducerSpec {
+  const base = PRODUCERS[kind];
+  if (!record(value)) return base;
+  const alternateTitle = kind === "cold-prepare"
+    ? `Permanent staging cold recovery | reconcile-prepare | ${candidateSha}`
+    : kind === "cold-quiesce"
+    ? `Permanent staging cold recovery | reconcile-quiesce | ${candidateSha}`
+    : kind === "restore"
+    ? `Permanent staging worker bootstrap | reconcile-restore | ${candidateSha}`
+    : kind === "activate"
+    ? `Automatic maintenance worker fence | permanent-staging | reconcile-activate | ${candidateSha}`
+    : null;
+  if (alternateTitle === null || value.display_title !== alternateTitle) return base;
+  return Object.freeze({
+    ...base,
+    title: () => alternateTitle,
+  });
+}
+
+const HEALTHY_REQUIRED_PRODUCERS: Readonly<
   Record<BootstrapConsumerOperation, readonly ProducerKind[]>
 > = Object.freeze({
   quiesce: ["prepare"],
+  "cold-quiesce": [],
+  "cold-reconcile-quiesce": [],
   "fenced-deploy": ["prepare", "quiesce"],
   restore: ["prepare", "quiesce", "fenced-deployment"],
+  "reconcile-restore": ["prepare", "quiesce", "fenced-deployment"],
   activate: ["prepare", "quiesce", "fenced-deployment", "restore"],
+  "reconcile-activate": ["prepare", "quiesce", "fenced-deployment", "restore"],
   "active-deploy": ["activate"],
   "scale-evidence": ["activate", "active-deployment"],
 });
+
+const COLD_REQUIRED_PRODUCERS: Readonly<
+  Record<BootstrapConsumerOperation, readonly ProducerKind[]>
+> = Object.freeze({
+  quiesce: [],
+  "cold-quiesce": ["cold-prepare"],
+  "cold-reconcile-quiesce": ["cold-prepare"],
+  "fenced-deploy": ["cold-prepare", "cold-quiesce"],
+  restore: ["cold-prepare", "cold-quiesce", "fenced-deployment"],
+  "reconcile-restore": ["cold-prepare", "cold-quiesce", "fenced-deployment"],
+  activate: ["cold-prepare", "cold-quiesce", "fenced-deployment", "restore"],
+  "reconcile-activate": ["cold-prepare", "cold-quiesce", "fenced-deployment", "restore"],
+  "active-deploy": ["activate"],
+  "scale-evidence": ["activate", "active-deployment"],
+});
+
+function requiredProducers(
+  operation: BootstrapConsumerOperation,
+  bootstrapPath: BootstrapPath,
+): readonly ProducerKind[] {
+  const required = bootstrapPath === "cold-dead"
+    ? COLD_REQUIRED_PRODUCERS[operation]
+    : HEALTHY_REQUIRED_PRODUCERS[operation];
+  if (required.length === 0) fail("arguments_invalid");
+  return required;
+}
 
 const CONSUMERS = Object.freeze({
   quiesce: {
@@ -201,6 +294,19 @@ const CONSUMERS = Object.freeze({
     workflowName:
       "Bootstrap permanent-staging automatic-maintenance worker fence",
     title: (sha: string) => `Permanent staging worker bootstrap | quiesce | ${sha}`,
+    environment: "permanent-staging-scale-evidence",
+  },
+  "cold-quiesce": {
+    workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    workflowName: "Recover dead permanent staging to explicit zero",
+    title: (sha: string) => `Permanent staging cold recovery | quiesce | ${sha}`,
+    environment: "permanent-staging-scale-evidence",
+  },
+  "cold-reconcile-quiesce": {
+    workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    workflowName: "Recover dead permanent staging to explicit zero",
+    title: (sha: string) =>
+      `Permanent staging cold recovery | reconcile-quiesce | ${sha}`,
     environment: "permanent-staging-scale-evidence",
   },
   "fenced-deploy": {
@@ -217,6 +323,15 @@ const CONSUMERS = Object.freeze({
     title: (sha: string) => `Permanent staging worker bootstrap | restore | ${sha}`,
     environment: "permanent-staging-scale-evidence",
   },
+  "reconcile-restore": {
+    workflowPath:
+      ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+    workflowName:
+      "Bootstrap permanent-staging automatic-maintenance worker fence",
+    title: (sha: string) =>
+      `Permanent staging worker bootstrap | reconcile-restore | ${sha}`,
+    environment: "permanent-staging-scale-evidence",
+  },
   activate: {
     workflowPath:
       ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
@@ -224,6 +339,15 @@ const CONSUMERS = Object.freeze({
       "Configure candidate-bound automatic-maintenance worker fence",
     title: (sha: string) =>
       `Automatic maintenance worker fence | permanent-staging | activate | ${sha}`,
+    environment: "permanent-staging-provider-mutation",
+  },
+  "reconcile-activate": {
+    workflowPath:
+      ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+    workflowName:
+      "Configure candidate-bound automatic-maintenance worker fence",
+    title: (sha: string) =>
+      `Automatic maintenance worker fence | permanent-staging | reconcile-activate | ${sha}`,
     environment: "permanent-staging-provider-mutation",
   },
   "active-deploy": {
@@ -248,9 +372,17 @@ const ARGUMENT_FLAGS: Readonly<Record<ProducerKind, {
     run: "--prepare-run-id",
     receipt: "--prepare-terminal-file",
   },
+  "cold-prepare": {
+    run: "--cold-prepare-run-id",
+    receipt: "--cold-prepare-terminal-file",
+  },
   quiesce: {
     run: "--quiesce-run-id",
     receipt: "--quiesce-receipt-file",
+  },
+  "cold-quiesce": {
+    run: "--cold-quiesce-run-id",
+    receipt: "--cold-quiesce-receipt-file",
   },
   "fenced-deployment": {
     run: "--fenced-deployment-run-id",
@@ -272,6 +404,7 @@ const ARGUMENT_FLAGS: Readonly<Record<ProducerKind, {
 
 interface Arguments {
   readonly operation: BootstrapConsumerOperation;
+  readonly bootstrapPath: BootstrapPath;
   readonly candidateSha: string;
   readonly expectedDeploymentSha: string | null;
   readonly output: string;
@@ -307,8 +440,8 @@ interface ReceiptSummary {
   readonly candidateSha: string;
   readonly sourceSha: string;
   readonly deploymentIdSha256: string;
-  readonly replicasBefore: number;
-  readonly replicasAfter: number;
+  readonly replicasBefore: number | null;
+  readonly replicasAfter: number | null;
   readonly startedAtMs: number | null;
   readonly completedAtMs: number | null;
 }
@@ -333,6 +466,7 @@ export interface StagingWorkerBootstrapPrerequisitesVerification {
   readonly policySha256:
     typeof STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256;
   readonly operation: BootstrapConsumerOperation;
+  readonly bootstrapPath: BootstrapPath;
   readonly candidateSha: string;
   readonly expectedDeploymentSha: string | null;
   readonly repository: typeof REPOSITORY;
@@ -435,6 +569,7 @@ function parseArguments(argv: readonly string[]): Arguments {
   if (argv.length % 2 !== 0) fail("arguments_invalid");
   const common = new Set([
     "--operation",
+    "--bootstrap-path",
     "--candidate-sha",
     "--expected-deployment-sha",
     "--output",
@@ -457,13 +592,16 @@ function parseArguments(argv: readonly string[]): Arguments {
   }
   const operation = values.get("--operation") as
     BootstrapConsumerOperation | undefined;
+  const bootstrapPath = (values.get("--bootstrap-path") ?? "healthy-legacy") as
+    BootstrapPath;
   const candidateSha = values.get("--candidate-sha") ?? "";
   const expectedDeploymentSha =
     values.get("--expected-deployment-sha") ?? null;
   const output = values.get("--output") ?? "";
   if (
     !operation
-    || !Object.hasOwn(REQUIRED_PRODUCERS, operation)
+    || !Object.hasOwn(HEALTHY_REQUIRED_PRODUCERS, operation)
+    || !["healthy-legacy", "cold-dead"].includes(bootstrapPath)
     || !SHA_PATTERN.test(candidateSha)
     || !exactAbsoluteFile(
       output,
@@ -471,16 +609,27 @@ function parseArguments(argv: readonly string[]): Arguments {
     )
   ) fail("arguments_invalid");
   if (
-    operation === "quiesce"
+    ((operation === "cold-quiesce" ||
+      operation === "cold-reconcile-quiesce") &&
+      bootstrapPath !== "cold-dead")
+    || (operation === "quiesce" && bootstrapPath !== "healthy-legacy")
+    || (bootstrapPath === "cold-dead"
+      && (operation === "cold-quiesce" ||
+        operation === "cold-reconcile-quiesce")
+      && expectedDeploymentSha !== COLD_SOURCE_SHA)
+  ) fail("arguments_invalid");
+  if (
+    operation === "quiesce" || operation === "cold-quiesce" ||
+      operation === "cold-reconcile-quiesce"
       ? expectedDeploymentSha === null
         || !SHA_PATTERN.test(expectedDeploymentSha)
         || expectedDeploymentSha === candidateSha
-      : operation === "restore"
+      : operation === "restore" || operation === "reconcile-restore"
         ? expectedDeploymentSha !== candidateSha
         : expectedDeploymentSha !== null
   ) fail("arguments_invalid");
 
-  const required = new Set(REQUIRED_PRODUCERS[operation]);
+  const required = new Set(requiredProducers(operation, bootstrapPath));
   const inputs = new Map<ProducerKind, {
     runId: string;
     receiptFile: string;
@@ -517,7 +666,14 @@ function parseArguments(argv: readonly string[]): Arguments {
   if (new Set([...inputs.values()].map((input) => input.runId)).size !== inputs.size) {
     fail("arguments_invalid");
   }
-  return { operation, candidateSha, expectedDeploymentSha, output, inputs };
+  return {
+    operation,
+    bootstrapPath,
+    candidateSha,
+    expectedDeploymentSha,
+    output,
+    inputs,
+  };
 }
 
 function validatePolicies(cwd: string): void {
@@ -527,6 +683,7 @@ function validatePolicies(cwd: string): void {
     [SCALE_POLICY_PATH, SCALE_POLICY_SHA256],
     [FENCED_DEPLOYMENT_POLICY_PATH, FENCED_DEPLOYMENT_POLICY_SHA256],
     [ACTIVE_DEPLOYMENT_POLICY_PATH, ACTIVE_DEPLOYMENT_POLICY_SHA256],
+    [COLD_RECOVERY_POLICY_PATH, COLD_RECOVERY_POLICY_SHA256],
   ] as const;
   try {
     for (const [relative, expected] of policies) {
@@ -853,12 +1010,165 @@ const WORKER_CHECK_KEYS = [
   "terminalEvidenceExact",
 ] as const;
 
+const ACTIVATE_RECONCILIATION_CHECK_KEYS = [
+  "policyExact",
+  "githubAuthorityExact",
+  "reviewedAuthorityExact",
+  "activationPrerequisitesExact",
+  "tokenScopeExact",
+  "mutationCredentialsAbsent",
+  "boundaryPreflightExact",
+  "exactActivatedStateBefore",
+  "runtimeActivatedBefore",
+  "durableObservationExact",
+  "repositoryReasserted",
+  "providerReasserted",
+  "runtimeReasserted",
+  "noProviderWriteAttempted",
+  "postflightAttempted",
+  "exactActivatedStateAfter",
+  "providerStateUnchanged",
+  "collateralVariablesUnchanged",
+  "runtimeActivatedAfter",
+  "boundaryPostflightExact",
+  "terminalEvidenceExact",
+] as const;
+
 function validateWorkerReceipt(
   source: string,
   value: JsonRecord,
   candidateSha: string,
   operation: "prepare" | "activate",
 ): ReceiptSummary {
+  if (value.schemaVersion === ACTIVATE_RECONCILIATION_RECEIPT_SCHEMA) {
+    if (operation !== "activate" || !exactKeys(value, [
+      "schemaVersion",
+      "executorState",
+      "operation",
+      "target",
+      "outcome",
+      "failureCode",
+      "candidateSha",
+      "startedAt",
+      "completedAt",
+      "attempts",
+      "retryAllowed",
+      "observationSha256",
+      "prerequisitesVerificationSha256",
+      "runnerLossReconciliation",
+      "providerEvidence",
+      "runtimeEvidence",
+      "mutationBoundaryEvidence",
+      "checks",
+      "nextRequiredProof",
+      "normalActivationMutationReceiptClaimed",
+      "secretMaterialIncluded",
+      "secretDerivedCommitmentsIncluded",
+    ])) fail("receipt_invalid");
+    const started = timestamp(value.startedAt, "receipt_invalid");
+    const completed = timestamp(value.completedAt, "receipt_invalid");
+    const runnerLoss = record(value.runnerLossReconciliation)
+      ? value.runnerLossReconciliation
+      : null;
+    const provider = record(value.providerEvidence) ? value.providerEvidence : null;
+    const runtime = record(value.runtimeEvidence) ? value.runtimeEvidence : null;
+    const beforeRuntime = record(runtime?.before) ? runtime.before : null;
+    const afterRuntime = record(runtime?.after) ? runtime.after : null;
+    const boundary = record(value.mutationBoundaryEvidence)
+      ? value.mutationBoundaryEvidence
+      : null;
+    const runtimeExact = (proof: JsonRecord | null): boolean => {
+      const maintenance = record(proof?.expectedAutomaticMaintenance)
+        ? proof.expectedAutomaticMaintenance
+        : null;
+      const responses = record(proof?.responseSha256s)
+        ? proof.responseSha256s
+        : null;
+      return exactKeys(proof, [
+        "required",
+        "observed",
+        "pollRounds",
+        "expectedSourceSha",
+        "expectedAutomaticMaintenance",
+        "deploymentIdSha256",
+        "responseSha256s",
+      ]) && proof.required === true && proof.observed === true &&
+        Number.isSafeInteger(proof.pollRounds) && Number(proof.pollRounds) >= 1 &&
+        proof.expectedSourceSha === candidateSha &&
+        exactKeys(maintenance, ["enabled", "candidateBound"]) &&
+        maintenance.enabled === true && maintenance.candidateBound === true &&
+        SHA256_PATTERN.test(String(proof.deploymentIdSha256)) &&
+        exactKeys(responses, ["/health", "/startup", "/ready"]) &&
+        [responses["/health"], responses["/startup"], responses["/ready"]]
+          .every((item) => SHA256_PATTERN.test(String(item)));
+    };
+    if (value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED" ||
+      value.operation !== "activate" || value.target !== "permanent-staging" ||
+      value.outcome !== "reconciled_activated_after_runner_loss" ||
+      value.failureCode !== null || value.candidateSha !== candidateSha ||
+      completed.milliseconds < started.milliseconds ||
+      value.attempts !== 0 || value.retryAllowed !== false ||
+      !SHA256_PATTERN.test(String(value.observationSha256)) ||
+      !SHA256_PATTERN.test(String(value.prerequisitesVerificationSha256)) ||
+      !exactKeys(runnerLoss, [
+        "priorAmbiguousActivateRunId",
+        "reviewedAuthoritySha256",
+        "variableMutationCredentialPresent",
+        "providerWriteAttempted",
+      ]) ||
+      !RUN_ID_PATTERN.test(String(runnerLoss.priorAmbiguousActivateRunId)) ||
+      !SHA256_PATTERN.test(String(runnerLoss.reviewedAuthoritySha256)) ||
+      runnerLoss.variableMutationCredentialPresent !== false ||
+      runnerLoss.providerWriteAttempted !== false ||
+      !exactKeys(provider, [
+        "providerBeforeSha256",
+        "providerAfterSha256",
+        "deploymentBeforeIdSha256",
+        "deploymentAfterIdSha256",
+        "sourceBeforeSha",
+        "sourceAfterSha",
+        "topologyBeforeSha256",
+        "topologyAfterSha256",
+        "collateralVariablesBeforeSha256",
+        "collateralVariablesAfterSha256",
+      ]) ||
+      !SHA256_PATTERN.test(String(provider.providerBeforeSha256)) ||
+      provider.providerAfterSha256 !== provider.providerBeforeSha256 ||
+      !SHA256_PATTERN.test(String(provider.deploymentBeforeIdSha256)) ||
+      provider.deploymentAfterIdSha256 !== provider.deploymentBeforeIdSha256 ||
+      provider.sourceBeforeSha !== candidateSha ||
+      provider.sourceAfterSha !== candidateSha ||
+      !SHA256_PATTERN.test(String(provider.topologyBeforeSha256)) ||
+      provider.topologyAfterSha256 !== provider.topologyBeforeSha256 ||
+      !SHA256_PATTERN.test(String(provider.collateralVariablesBeforeSha256)) ||
+      provider.collateralVariablesAfterSha256 !==
+        provider.collateralVariablesBeforeSha256 ||
+      !exactKeys(runtime, ["before", "after"]) ||
+      !runtimeExact(beforeRuntime) || !runtimeExact(afterRuntime) ||
+      beforeRuntime?.deploymentIdSha256 !== provider.deploymentBeforeIdSha256 ||
+      afterRuntime?.deploymentIdSha256 !== provider.deploymentAfterIdSha256 ||
+      !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"]) ||
+      !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256)) ||
+      !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256)) ||
+      !exactTrueChecks(value.checks, ACTIVATE_RECONCILIATION_CHECK_KEYS) ||
+      value.nextRequiredProof !== "ACTIVE_DEPLOYMENT_AND_SCALE_EVIDENCE" ||
+      value.normalActivationMutationReceiptClaimed !== false ||
+      value.secretMaterialIncluded !== false ||
+      value.secretDerivedCommitmentsIncluded !== false) fail("receipt_invalid");
+    return {
+      filename: "automatic-maintenance-worker-fence-terminal.json",
+      schemaVersion: ACTIVATE_RECONCILIATION_RECEIPT_SCHEMA,
+      sha256: sha256(source),
+      outcome: "reconciled_activated_after_runner_loss",
+      candidateSha,
+      sourceSha: candidateSha,
+      deploymentIdSha256: String(provider.deploymentAfterIdSha256),
+      replicasBefore: 1,
+      replicasAfter: 1,
+      startedAtMs: started.milliseconds,
+      completedAtMs: completed.milliseconds,
+    };
+  }
   if (!exactKeys(value, [
     "schemaVersion",
     "executorState",
@@ -1060,6 +1370,458 @@ function validateWorkerReceipt(
   };
 }
 
+const COLD_PREPARE_CHECK_KEYS = [
+  "policyExact",
+  "githubAuthorityExact",
+  "replacementPrerequisiteExact",
+  "tokenScopesExact",
+  "boundaryPreflightExact",
+  "exactDeadStateBefore",
+  "requiredVariablesBeforeExact",
+  "serviceRoleSealedBefore",
+  "durableIntentExact",
+  "repositoryPrewriteReasserted",
+  "providerPrewriteReasserted",
+  "writeAttemptedAtMostOnce",
+  "atomicVariablesExact",
+  "acknowledgementExact",
+  "postflightAttempted",
+  "exactDeadStateAfter",
+  "maintenanceRowsAfterExact",
+  "deploymentAndTopologyUnchanged",
+  "collateralVariablesUnchanged",
+  "boundaryPostflightExact",
+  "terminalEvidenceExact",
+] as const;
+
+const COLD_PREPARE_RECONCILIATION_CHECK_KEYS = [
+  "policyExact",
+  "githubAuthorityExact",
+  "reviewedAuthorityExact",
+  "replacementPrerequisiteExact",
+  "tokenScopeExact",
+  "mutationCredentialsAbsent",
+  "boundaryPreflightExact",
+  "exactPreparedDeadStateBefore",
+  "maintenanceRowsBeforeExact",
+  "serviceRoleSealedBefore",
+  "runtimeAbsentBefore",
+  "durableObservationExact",
+  "repositoryReasserted",
+  "providerReasserted",
+  "runtimeReasserted",
+  "noProviderWriteAttempted",
+  "postflightAttempted",
+  "exactPreparedDeadStateAfter",
+  "maintenanceRowsAfterExact",
+  "serviceRoleSealedAfter",
+  "deploymentSourceAndTopologyUnchanged",
+  "collateralVariablesUnchanged",
+  "runtimeAbsentAfter",
+  "boundaryPostflightExact",
+  "terminalEvidenceExact",
+] as const;
+
+const COLD_QUIESCE_CHECK_KEYS = [
+  "policyExact",
+  "githubAuthorityExact",
+  "preparePrerequisiteExact",
+  "tokenScopesExact",
+  "cliExact",
+  "boundaryPreflightExact",
+  "exactDeadStateBefore",
+  "maintenanceRowsBeforeExact",
+  "runtimeAbsentBefore",
+  "durableIntentExact",
+  "repositoryPrewriteReasserted",
+  "providerPrewriteReasserted",
+  "runtimePrewriteReasserted",
+  "writeAttemptedAtMostOnce",
+  "acknowledgementExact",
+  "postflightAttempted",
+  "exactZeroStateAfter",
+  "maintenanceRowsAfterExact",
+  "deploymentSourceAndTopologyUnchanged",
+  "collateralVariablesUnchanged",
+  "runtimeAbsentAfter",
+  "boundaryPostflightExact",
+  "terminalEvidenceExact",
+] as const;
+
+const COLD_RECONCILE_QUIESCE_CHECK_KEYS = [
+  "policyExact",
+  "githubAuthorityExact",
+  "reviewedAuthorityExact",
+  "preparePrerequisiteExact",
+  "tokenScopeExact",
+  "scaleCredentialAbsent",
+  "boundaryPreflightExact",
+  "exactZeroStateBefore",
+  "maintenanceRowsBeforeExact",
+  "runtimeAbsentBefore",
+  "durableObservationExact",
+  "repositoryReasserted",
+  "providerReasserted",
+  "runtimeReasserted",
+  "noProviderWriteAttempted",
+  "postflightAttempted",
+  "exactZeroStateAfter",
+  "maintenanceRowsAfterExact",
+  "deploymentSourceAndTopologyUnchanged",
+  "collateralVariablesUnchanged",
+  "runtimeAbsentAfter",
+  "boundaryPostflightExact",
+  "terminalEvidenceExact",
+] as const;
+
+function validateColdProviderEvidence(
+  value: unknown,
+  prepare: boolean,
+): JsonRecord {
+  const commonKeys = [
+    "deploymentIdSha256",
+    "snapshotIdSha256",
+    "stateBeforeSha256",
+    "stateAfterSha256",
+    "topologyBeforeSha256",
+    "topologyAfterSha256",
+    "collateralVariablesBeforeSha256",
+    "collateralVariablesAfterSha256",
+    "sourceDisconnectedBefore",
+    "sourceDisconnectedAfter",
+    "stagedPatchEmptyBefore",
+    "stagedPatchEmptyAfter",
+  ] as const;
+  const expectedKeys = prepare
+    ? ["graphqlOperation", "acknowledgementExact", ...commonKeys]
+    : commonKeys;
+  if (!exactKeys(value, expectedKeys) ||
+    (prepare && (value.graphqlOperation !== "variableCollectionUpsert" ||
+      value.acknowledgementExact !== true)) || [
+    value.deploymentIdSha256,
+    value.snapshotIdSha256,
+    value.stateBeforeSha256,
+    value.stateAfterSha256,
+    value.topologyBeforeSha256,
+    value.topologyAfterSha256,
+    value.collateralVariablesBeforeSha256,
+    value.collateralVariablesAfterSha256,
+  ].some((item) => !SHA256_PATTERN.test(String(item)))
+    || value.topologyAfterSha256 !== value.topologyBeforeSha256
+    || value.collateralVariablesAfterSha256
+      !== value.collateralVariablesBeforeSha256
+    || value.sourceDisconnectedBefore !== true
+    || value.sourceDisconnectedAfter !== true
+    || value.stagedPatchEmptyBefore !== true
+    || value.stagedPatchEmptyAfter !== true
+  ) fail("receipt_invalid");
+  return value;
+}
+
+function validateColdPrepareReceipt(
+  source: string,
+  value: JsonRecord,
+  candidateSha: string,
+): ReceiptSummary {
+  if (value.schemaVersion === COLD_PREPARE_RECONCILIATION_RECEIPT_SCHEMA) {
+    if (!exactKeys(value, [
+      "schemaVersion",
+      "executorState",
+      "operation",
+      "target",
+      "outcome",
+      "failureCode",
+      "candidateSha",
+      "sourceSha",
+      "startedAt",
+      "completedAt",
+      "replicasBefore",
+      "replicasAfter",
+      "attempts",
+      "retryAllowed",
+      "observationSha256",
+      "replacementPrerequisite",
+      "runnerLossReconciliation",
+      "providerEvidence",
+      "mutationBoundaryEvidence",
+      "checks",
+      "nextRequiredProof",
+      "normalPrepareMutationReceiptClaimed",
+      "secretMaterialIncluded",
+      "secretDerivedCommitmentsIncluded",
+    ])) fail("receipt_invalid");
+    const started = timestamp(value.startedAt, "receipt_invalid");
+    const completed = timestamp(value.completedAt, "receipt_invalid");
+    const replacement = record(value.replacementPrerequisite)
+      ? value.replacementPrerequisite
+      : null;
+    const runnerLoss = record(value.runnerLossReconciliation)
+      ? value.runnerLossReconciliation
+      : null;
+    const provider = validateColdProviderEvidence(value.providerEvidence, false);
+    const boundary = record(value.mutationBoundaryEvidence)
+      ? value.mutationBoundaryEvidence
+      : null;
+    if (value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED" ||
+      value.operation !== "cold-prepare" ||
+      value.target !== "permanent-staging" ||
+      value.outcome !== "reconciled_prepared_after_runner_loss" ||
+      value.failureCode !== null || value.candidateSha !== candidateSha ||
+      value.sourceSha !== COLD_SOURCE_SHA ||
+      completed.milliseconds < started.milliseconds ||
+      value.replicasBefore !== null || value.replicasAfter !== null ||
+      value.attempts !== 0 || value.retryAllowed !== false ||
+      !SHA256_PATTERN.test(String(value.observationSha256)) ||
+      !exactKeys(replacement, ["runId", "terminalSha256"]) ||
+      !RUN_ID_PATTERN.test(String(replacement.runId)) ||
+      !SHA256_PATTERN.test(String(replacement.terminalSha256)) ||
+      !exactKeys(runnerLoss, [
+        "priorAmbiguousPrepareRunId",
+        "reviewedAuthoritySha256",
+        "mutationCredentialPresent",
+        "providerWriteAttempted",
+      ]) ||
+      !RUN_ID_PATTERN.test(String(runnerLoss.priorAmbiguousPrepareRunId)) ||
+      !SHA256_PATTERN.test(String(runnerLoss.reviewedAuthoritySha256)) ||
+      runnerLoss.mutationCredentialPresent !== false ||
+      runnerLoss.providerWriteAttempted !== false ||
+      !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"]) ||
+      !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256)) ||
+      !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256)) ||
+      !exactTrueChecks(value.checks, COLD_PREPARE_RECONCILIATION_CHECK_KEYS) ||
+      value.nextRequiredProof !== "EXACT_COLD_NULL_TO_ZERO_QUIESCENCE_PROOF" ||
+      value.normalPrepareMutationReceiptClaimed !== false ||
+      value.secretMaterialIncluded !== false ||
+      value.secretDerivedCommitmentsIncluded !== false) fail("receipt_invalid");
+    return {
+      filename: "cold-prepare-terminal.json",
+      schemaVersion: COLD_PREPARE_RECONCILIATION_RECEIPT_SCHEMA,
+      sha256: sha256(source),
+      outcome: "reconciled_prepared_after_runner_loss",
+      candidateSha,
+      sourceSha: COLD_SOURCE_SHA,
+      deploymentIdSha256: String(provider.deploymentIdSha256),
+      replicasBefore: null,
+      replicasAfter: null,
+      startedAtMs: started.milliseconds,
+      completedAtMs: completed.milliseconds,
+    };
+  }
+  if (!exactKeys(value, [
+    "schemaVersion",
+    "executorState",
+    "operation",
+    "target",
+    "outcome",
+    "failureCode",
+    "candidateSha",
+    "sourceSha",
+    "startedAt",
+    "completedAt",
+    "replicasBefore",
+    "replicasAfter",
+    "attempts",
+    "retryAllowed",
+    "intentSha256",
+    "replacementPrerequisite",
+    "providerEvidence",
+    "mutationBoundaryEvidence",
+    "checks",
+    "nextRequiredProof",
+    "normalOneToZeroReceiptClaimed",
+    "secretMaterialIncluded",
+    "secretDerivedCommitmentsIncluded",
+  ])) fail("receipt_invalid");
+  const started = timestamp(value.startedAt, "receipt_invalid");
+  const completed = timestamp(value.completedAt, "receipt_invalid");
+  const provider = validateColdProviderEvidence(value.providerEvidence, true);
+  const replacement = record(value.replacementPrerequisite)
+    ? value.replacementPrerequisite
+    : null;
+  const boundary = record(value.mutationBoundaryEvidence)
+    ? value.mutationBoundaryEvidence
+    : null;
+  if (
+    value.schemaVersion !== COLD_PREPARE_RECEIPT_SCHEMA
+    || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
+    || value.operation !== "cold-prepare"
+    || value.target !== "permanent-staging"
+    || value.outcome !== "prepared_cold"
+    || value.failureCode !== null
+    || value.candidateSha !== candidateSha
+    || value.sourceSha !== COLD_SOURCE_SHA
+    || completed.milliseconds < started.milliseconds
+    || value.replicasBefore !== null
+    || value.replicasAfter !== null
+    || value.attempts !== 1
+    || value.retryAllowed !== false
+    || !SHA256_PATTERN.test(String(value.intentSha256))
+    || !exactKeys(replacement, ["runId", "terminalSha256"])
+    || !RUN_ID_PATTERN.test(String(replacement.runId))
+    || !SHA256_PATTERN.test(String(replacement.terminalSha256))
+    || !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"])
+    || !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256))
+    || !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256))
+    || !exactTrueChecks(value.checks, COLD_PREPARE_CHECK_KEYS)
+    || value.nextRequiredProof !== "EXACT_COLD_NULL_TO_ZERO_QUIESCENCE_PROOF"
+    || value.normalOneToZeroReceiptClaimed !== false
+    || value.secretMaterialIncluded !== false
+    || value.secretDerivedCommitmentsIncluded !== false
+  ) fail("receipt_invalid");
+  return {
+    filename: "cold-prepare-terminal.json",
+    schemaVersion: COLD_PREPARE_RECEIPT_SCHEMA,
+    sha256: sha256(source),
+    outcome: "prepared_cold",
+    candidateSha,
+    sourceSha: COLD_SOURCE_SHA,
+    deploymentIdSha256: String(provider.deploymentIdSha256),
+    replicasBefore: null,
+    replicasAfter: null,
+    startedAtMs: started.milliseconds,
+    completedAtMs: completed.milliseconds,
+  };
+}
+
+function validateColdQuiesceReceipt(
+  source: string,
+  value: JsonRecord,
+  candidateSha: string,
+): ReceiptSummary {
+  if (!exactKeys(value, [
+    "schemaVersion",
+    "executorState",
+    "operation",
+    "target",
+    "outcome",
+    "failureCode",
+    "candidateSha",
+    "sourceSha",
+    "startedAt",
+    "completedAt",
+    "replicasBefore",
+    "replicasAfter",
+    "attempts",
+    "retryAllowed",
+    "intentSha256",
+    "preparePrerequisite",
+    "runnerLossReconciliation",
+    "commandEvidence",
+    "providerEvidence",
+    "mutationBoundaryEvidence",
+    "checks",
+    "nextRequiredProof",
+    "normalOneToZeroReceiptClaimed",
+    "secretMaterialIncluded",
+    "secretDerivedCommitmentsIncluded",
+  ])) fail("receipt_invalid");
+  const started = timestamp(value.startedAt, "receipt_invalid");
+  const completed = timestamp(value.completedAt, "receipt_invalid");
+  const prerequisite = record(value.preparePrerequisite)
+    ? value.preparePrerequisite
+    : null;
+  const command = record(value.commandEvidence) ? value.commandEvidence : null;
+  const runnerLoss = record(value.runnerLossReconciliation)
+    ? value.runnerLossReconciliation
+    : null;
+  const provider = validateColdProviderEvidence(value.providerEvidence, false);
+  const boundary = record(value.mutationBoundaryEvidence)
+    ? value.mutationBoundaryEvidence
+    : null;
+  const reconciled = value.outcome === "reconciled_success";
+  const initialized = value.outcome === "initialized_zero";
+  const runnerLossReconciled =
+    value.outcome === "reconciled_zero_after_runner_loss";
+  const checks = record(value.checks) ? value.checks : null;
+  const commonChecks = COLD_QUIESCE_CHECK_KEYS.filter(
+    (key) => key !== "acknowledgementExact",
+  );
+  const checkRelationExact = exactKeys(checks, COLD_QUIESCE_CHECK_KEYS) &&
+    commonChecks.every((key) => checks[key] === true) &&
+    checks.acknowledgementExact === initialized;
+  const runnerLossChecksExact = exactTrueChecks(
+    checks,
+    COLD_RECONCILE_QUIESCE_CHECK_KEYS,
+  );
+  const commandHashesExact =
+    (SHA256_PATTERN.test(String(command?.stdoutSha256)) &&
+      SHA256_PATTERN.test(String(command?.stderrSha256))) ||
+    (command?.stdoutSha256 === null && command?.stderrSha256 === null);
+  const commandRelationExact = initialized
+    ? command?.exitCode === 0 && command?.timedOut === false && commandHashesExact &&
+      command?.stdoutSha256 !== null && command?.stderrSha256 !== null
+    : reconciled &&
+      (command?.exitCode === null ||
+        (typeof command?.exitCode === "number" &&
+          Number.isSafeInteger(command?.exitCode))) &&
+      typeof command?.timedOut === "boolean" &&
+      !(command?.exitCode === 0 && command?.timedOut === false) &&
+      commandHashesExact;
+  const runnerLossRelationExact = runnerLossReconciled &&
+    value.replicasBefore === 0 && value.replicasAfter === 0 &&
+    value.attempts === 0 &&
+    exactKeys(runnerLoss, [
+      "priorAmbiguousQuiesceRunId",
+      "reviewedAuthoritySha256",
+      "scaleCredentialPresent",
+      "providerWriteAttempted",
+    ]) &&
+    RUN_ID_PATTERN.test(String(runnerLoss.priorAmbiguousQuiesceRunId)) &&
+    SHA256_PATTERN.test(String(runnerLoss.reviewedAuthoritySha256)) &&
+    runnerLoss.scaleCredentialPresent === false &&
+    runnerLoss.providerWriteAttempted === false &&
+    command?.exitCode === null && command?.timedOut === false &&
+    command?.stdoutSha256 === null && command?.stderrSha256 === null &&
+    runnerLossChecksExact;
+  if (
+    value.schemaVersion !== COLD_QUIESCE_RECEIPT_SCHEMA
+    || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
+    || value.operation !== "cold-quiesce"
+    || value.target !== "permanent-staging"
+    || (!initialized && !reconciled && !runnerLossReconciled)
+    || value.failureCode !== null
+    || value.candidateSha !== candidateSha
+    || value.sourceSha !== COLD_SOURCE_SHA
+    || completed.milliseconds < started.milliseconds
+    || (!runnerLossReconciled && value.replicasBefore !== null)
+    || value.replicasAfter !== 0
+    || (!runnerLossReconciled && value.attempts !== 1)
+    || value.retryAllowed !== false
+    || !SHA256_PATTERN.test(String(value.intentSha256))
+    || !exactKeys(prerequisite, ["runId", "verificationSha256"])
+    || !RUN_ID_PATTERN.test(String(prerequisite.runId))
+    || !SHA256_PATTERN.test(String(prerequisite.verificationSha256))
+    || !exactKeys(command, ["exitCode", "timedOut", "stdoutSha256", "stderrSha256"])
+    || (runnerLossReconciled
+      ? !runnerLossRelationExact
+      : runnerLoss !== null || !commandRelationExact || !checkRelationExact)
+    || !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"])
+    || !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256))
+    || !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256))
+    || value.nextRequiredProof !== "EXACT_CANDIDATE_UPLOAD_AT_EXPLICIT_ZERO"
+    || value.normalOneToZeroReceiptClaimed !== false
+    || value.secretMaterialIncluded !== false
+    || value.secretDerivedCommitmentsIncluded !== false
+  ) fail("receipt_invalid");
+  return {
+    filename: "cold-quiesce-receipt.json",
+    schemaVersion: COLD_QUIESCE_RECEIPT_SCHEMA,
+    sha256: sha256(source),
+    outcome: runnerLossReconciled
+      ? "reconciled_zero_after_runner_loss"
+      : initialized
+      ? "initialized_zero"
+      : "reconciled_success",
+    candidateSha,
+    sourceSha: COLD_SOURCE_SHA,
+    deploymentIdSha256: String(provider.deploymentIdSha256),
+    replicasBefore: runnerLossReconciled ? 0 : null,
+    replicasAfter: 0,
+    startedAtMs: started.milliseconds,
+    completedAtMs: completed.milliseconds,
+  };
+}
+
 const SCALE_CHECK_KEYS = [
   "policyExact",
   "githubAuthorityExact",
@@ -1084,6 +1846,32 @@ const SCALE_CHECK_KEYS = [
   "finalReceiptEvidenceExact",
 ] as const;
 
+const RESTORE_RECONCILIATION_CHECK_KEYS = [
+  "policyExact",
+  "githubAuthorityExact",
+  "reviewedAuthorityExact",
+  "prerequisitesExact",
+  "tokenScopeExact",
+  "scaleCredentialAbsent",
+  "boundaryPreflightExact",
+  "exactCandidateOneBefore",
+  "fencedDeploymentIdentityExact",
+  "runtimeBeforeExact",
+  "durableObservationExact",
+  "repositoryBeforeExact",
+  "repositoryAfterExact",
+  "repositoryReasserted",
+  "providerReasserted",
+  "runtimeReasserted",
+  "noProviderWriteAttempted",
+  "postflightAttempted",
+  "exactCandidateOneAfter",
+  "deploymentAndTopologyUnchanged",
+  "runtimeAfterExact",
+  "boundaryPostflightExact",
+  "terminalEvidenceExact",
+] as const;
+
 function validateScaleReceipt(
   source: string,
   value: JsonRecord,
@@ -1091,6 +1879,143 @@ function validateScaleReceipt(
   kind: "quiesce" | "restore",
   sourceSha: string,
 ): ReceiptSummary {
+  if (value.schemaVersion === RESTORE_RECONCILIATION_RECEIPT_SCHEMA) {
+    if (kind !== "restore" || !exactKeys(value, [
+      "schemaVersion",
+      "executorState",
+      "operation",
+      "target",
+      "outcome",
+      "failureCode",
+      "candidateSha",
+      "sourceSha",
+      "bootstrapPath",
+      "startedAt",
+      "completedAt",
+      "replicasBefore",
+      "replicasAfter",
+      "attempts",
+      "retryAllowed",
+      "observationSha256",
+      "prerequisitesVerificationSha256",
+      "runnerLossReconciliation",
+      "commandEvidence",
+      "providerEvidence",
+      "runtimeEvidence",
+      "repositoryEvidence",
+      "mutationBoundaryEvidence",
+      "checks",
+      "nextRequiredProof",
+      "normalZeroToOneReceiptClaimed",
+      "secretMaterialIncluded",
+      "secretDerivedCommitmentsIncluded",
+    ])) fail("receipt_invalid");
+    const started = timestamp(value.startedAt, "receipt_invalid");
+    const completed = timestamp(value.completedAt, "receipt_invalid");
+    const runnerLoss = record(value.runnerLossReconciliation)
+      ? value.runnerLossReconciliation
+      : null;
+    const command = record(value.commandEvidence) ? value.commandEvidence : null;
+    const provider = record(value.providerEvidence) ? value.providerEvidence : null;
+    const runtime = record(value.runtimeEvidence) ? value.runtimeEvidence : null;
+    const maintenance = record(runtime?.expectedAutomaticMaintenance)
+      ? runtime.expectedAutomaticMaintenance
+      : null;
+    const repository = record(value.repositoryEvidence)
+      ? value.repositoryEvidence
+      : null;
+    const boundary = record(value.mutationBoundaryEvidence)
+      ? value.mutationBoundaryEvidence
+      : null;
+    const responseHashesExact = (responses: unknown): boolean =>
+      record(responses) && exactKeys(responses, ["/health", "/startup", "/ready"]) &&
+      [responses["/health"], responses["/startup"], responses["/ready"]]
+        .every((item) => SHA256_PATTERN.test(String(item)));
+    if (value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED" ||
+      value.operation !== "restore" || value.target !== "permanent-staging" ||
+      value.outcome !== "reconciled_one_after_runner_loss" ||
+      value.failureCode !== null || value.candidateSha !== candidateSha ||
+      value.sourceSha !== candidateSha ||
+      !["healthy-legacy", "cold-dead"].includes(String(value.bootstrapPath)) ||
+      completed.milliseconds < started.milliseconds ||
+      value.replicasBefore !== 1 || value.replicasAfter !== 1 ||
+      value.attempts !== 0 || value.retryAllowed !== false ||
+      !SHA256_PATTERN.test(String(value.observationSha256)) ||
+      !SHA256_PATTERN.test(String(value.prerequisitesVerificationSha256)) ||
+      !exactKeys(runnerLoss, [
+        "priorAmbiguousRestoreRunId",
+        "reviewedAuthoritySha256",
+        "scaleCredentialPresent",
+        "providerWriteAttempted",
+      ]) ||
+      !RUN_ID_PATTERN.test(String(runnerLoss.priorAmbiguousRestoreRunId)) ||
+      !SHA256_PATTERN.test(String(runnerLoss.reviewedAuthoritySha256)) ||
+      runnerLoss.scaleCredentialPresent !== false ||
+      runnerLoss.providerWriteAttempted !== false ||
+      !exactKeys(command, ["exitCode", "timedOut", "stdoutSha256", "stderrSha256"]) ||
+      command.exitCode !== null || command.timedOut !== false ||
+      command.stdoutSha256 !== null || command.stderrSha256 !== null ||
+      !exactKeys(provider, [
+        "deploymentIdSha256",
+        "snapshotIdSha256",
+        "stateBeforeSha256",
+        "stateAfterSha256",
+        "topologyBeforeSha256",
+        "topologyAfterSha256",
+        "stagedPatchEmptyBefore",
+        "stagedPatchEmptyAfter",
+      ]) ||
+      [provider.deploymentIdSha256, provider.snapshotIdSha256,
+        provider.stateBeforeSha256, provider.stateAfterSha256,
+        provider.topologyBeforeSha256, provider.topologyAfterSha256]
+        .some((item) => !SHA256_PATTERN.test(String(item))) ||
+      provider.stateAfterSha256 !== provider.stateBeforeSha256 ||
+      provider.topologyAfterSha256 !== provider.topologyBeforeSha256 ||
+      provider.stagedPatchEmptyBefore !== true ||
+      provider.stagedPatchEmptyAfter !== true ||
+      !exactKeys(runtime, [
+        "required",
+        "expectedSourceSha",
+        "expectedAutomaticMaintenance",
+        "deploymentIdSha256",
+        "beforePollRounds",
+        "afterPollRounds",
+        "beforeResponseSha256s",
+        "afterResponseSha256s",
+      ]) || runtime.required !== true || runtime.expectedSourceSha !== candidateSha ||
+      !exactKeys(maintenance, ["enabled", "candidateBound"]) ||
+      maintenance.enabled !== false || maintenance.candidateBound !== true ||
+      runtime.deploymentIdSha256 !== provider.deploymentIdSha256 ||
+      !Number.isSafeInteger(runtime.beforePollRounds) ||
+      Number(runtime.beforePollRounds) < 1 ||
+      !Number.isSafeInteger(runtime.afterPollRounds) ||
+      Number(runtime.afterPollRounds) < 1 ||
+      !responseHashesExact(runtime.beforeResponseSha256s) ||
+      !responseHashesExact(runtime.afterResponseSha256s) ||
+      !exactKeys(repository, ["beforeExact", "afterExact"]) ||
+      repository.beforeExact !== true || repository.afterExact !== true ||
+      !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"]) ||
+      !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256)) ||
+      !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256)) ||
+      !exactTrueChecks(value.checks, RESTORE_RECONCILIATION_CHECK_KEYS) ||
+      value.nextRequiredProof !== "ACTIVATE_AUTOMATIC_MAINTENANCE" ||
+      value.normalZeroToOneReceiptClaimed !== false ||
+      value.secretMaterialIncluded !== false ||
+      value.secretDerivedCommitmentsIncluded !== false) fail("receipt_invalid");
+    return {
+      filename: "bootstrap-staging-one-receipt.json",
+      schemaVersion: RESTORE_RECONCILIATION_RECEIPT_SCHEMA,
+      sha256: sha256(source),
+      outcome: "reconciled_one_after_runner_loss",
+      candidateSha,
+      sourceSha: candidateSha,
+      deploymentIdSha256: String(provider.deploymentIdSha256),
+      replicasBefore: 1,
+      replicasAfter: 1,
+      startedAtMs: started.milliseconds,
+      completedAtMs: completed.milliseconds,
+    };
+  }
   if (!exactKeys(value, [
     "schemaVersion",
     "executorState",
@@ -1294,11 +2219,31 @@ const VERIFICATION_CHECK_KEYS = [
   "evidenceSecretFreeExact",
 ] as const;
 
+function producerReceiptSchemaAllowed(
+  kind: ProducerKind,
+  schemaVersion: unknown,
+): boolean {
+  return schemaVersion === PRODUCERS[kind].receiptSchema ||
+    (kind === "cold-prepare" &&
+      schemaVersion === COLD_PREPARE_RECONCILIATION_RECEIPT_SCHEMA) ||
+    (kind === "restore" &&
+      schemaVersion === RESTORE_RECONCILIATION_RECEIPT_SCHEMA) ||
+    (kind === "activate" &&
+      schemaVersion === ACTIVATE_RECONCILIATION_RECEIPT_SCHEMA);
+}
+
 function validatePriorVerification(
   source: string,
   value: JsonRecord,
   input: {
-    readonly operation: "quiesce" | "restore" | "activate";
+    readonly operation:
+      | "quiesce"
+      | "cold-quiesce"
+      | "cold-reconcile-quiesce"
+      | "restore"
+      | "reconcile-restore"
+      | "activate";
+    readonly bootstrapPath: BootstrapPath;
     readonly candidateSha: string;
     readonly runId: string;
   },
@@ -1309,8 +2254,17 @@ function validatePriorVerification(
   let parsed: StagingWorkerBootstrapPrerequisitesVerification;
   try {
     const verifiedAt = timestamp(value.verifiedAt, "receipt_invalid");
+    const evidenceOperation = input.operation === "cold-quiesce" &&
+        value.operation === "cold-reconcile-quiesce"
+      ? "cold-reconcile-quiesce"
+      : input.operation === "restore" && value.operation === "reconcile-restore"
+      ? "reconcile-restore"
+      : input.operation === "activate" && value.operation === "reconcile-activate"
+      ? "reconcile-activate"
+      : input.operation;
     parsed = parseVerificationObject(source, {
-      operation: input.operation,
+      operation: evidenceOperation,
+      bootstrapPath: input.bootstrapPath,
       candidateSha: input.candidateSha,
       currentRunId: input.runId,
       now: new Date(verifiedAt.milliseconds),
@@ -1319,10 +2273,11 @@ function validatePriorVerification(
     fail("receipt_invalid");
   }
   if (
-    input.operation === "quiesce"
+    input.operation === "quiesce" || input.operation === "cold-quiesce" ||
+      input.operation === "cold-reconcile-quiesce"
       ? !SHA_PATTERN.test(String(parsed.expectedDeploymentSha))
         || parsed.expectedDeploymentSha === input.candidateSha
-      : input.operation === "restore"
+      : input.operation === "restore" || input.operation === "reconcile-restore"
         ? parsed.expectedDeploymentSha !== input.candidateSha
         : parsed.expectedDeploymentSha !== null
   ) fail("receipt_invalid");
@@ -1339,6 +2294,12 @@ function validateReceipt(
   candidateSha: string,
   sourceSha: string,
 ): ReceiptSummary {
+  if (kind === "cold-prepare") {
+    return validateColdPrepareReceipt(source, value, candidateSha);
+  }
+  if (kind === "cold-quiesce") {
+    return validateColdQuiesceReceipt(source, value, candidateSha);
+  }
   if (kind === "prepare" || kind === "activate") {
     return validateWorkerReceipt(source, value, candidateSha, kind);
   }
@@ -1359,6 +2320,7 @@ function parseVerificationObject(
   source: string,
   expected: {
     readonly operation: BootstrapConsumerOperation;
+    readonly bootstrapPath?: BootstrapPath;
     readonly candidateSha: string;
     readonly currentRunId: string;
     readonly now: Date;
@@ -1374,6 +2336,7 @@ function parseVerificationObject(
     "schemaVersion",
     "policySha256",
     "operation",
+    "bootstrapPath",
     "candidateSha",
     "expectedDeploymentSha",
     "repository",
@@ -1395,12 +2358,16 @@ function parseVerificationObject(
     : [];
   const verifiedAt = timestamp(value.verifiedAt, "evidence_invalid");
   const expiresAt = timestamp(value.expiresAt, "evidence_invalid");
-  const requiredKinds = REQUIRED_PRODUCERS[expected.operation];
+  const bootstrapPath = value.bootstrapPath as BootstrapPath;
+  const requiredKinds = requiredProducers(expected.operation, bootstrapPath);
   if (
     value.schemaVersion !== STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA
     || value.policySha256
       !== STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256
     || value.operation !== expected.operation
+    || !["healthy-legacy", "cold-dead"].includes(bootstrapPath)
+    || (expected.bootstrapPath !== undefined
+      && bootstrapPath !== expected.bootstrapPath)
     || value.candidateSha !== expected.candidateSha
     || value.repository !== REPOSITORY
     || !exactKeys(reviewed, [
@@ -1443,8 +2410,10 @@ function parseVerificationObject(
       || !record(item.receipt)
       || item.receipt.filename
         !== PRODUCERS[requiredKinds[index]!].receiptFilename
-      || item.receipt.schemaVersion
-        !== PRODUCERS[requiredKinds[index]!].receiptSchema
+      || !producerReceiptSchemaAllowed(
+        requiredKinds[index]!,
+        item.receipt.schemaVersion,
+      )
       || item.receipt.candidateSha !== expected.candidateSha
       || !SHA256_PATTERN.test(String(item.receipt.sha256))
       || !SHA_PATTERN.test(String(item.receipt.sourceSha))
@@ -1464,6 +2433,7 @@ export function parseStagingWorkerBootstrapPrerequisitesVerification(
   source: string,
   expected: {
     readonly operation: BootstrapConsumerOperation;
+    readonly bootstrapPath?: BootstrapPath;
     readonly candidateSha: string;
     readonly currentRunId: string;
     readonly now: Date;
@@ -1506,13 +2476,17 @@ async function verify(
   let previousCompletedAtMs = Number.NEGATIVE_INFINITY;
   let preparedSourceSha: string | null = null;
   let quiescedSourceSha: string | null = null;
-  for (const kind of REQUIRED_PRODUCERS[args.operation]) {
+  for (const kind of requiredProducers(args.operation, args.bootstrapPath)) {
     const input = args.inputs.get(kind);
     if (!input) fail("arguments_invalid");
-    const spec = PRODUCERS[kind];
     const runValue = await githubJson(
       dependencies,
       `/actions/runs/${input.runId}`,
+    );
+    const spec = producerSpecForObservedRun(
+      kind,
+      args.candidateSha,
+      runValue,
     );
     const run = validateRun(runValue, {
       runId: input.runId,
@@ -1552,7 +2526,10 @@ async function verify(
     validateHistory(historyValue, spec, args.candidateSha, input.runId);
 
     let priorVerificationSha: string | null = null;
-    if (kind === "quiesce" || kind === "restore" || kind === "activate") {
+    if (
+      kind === "quiesce" || kind === "cold-quiesce" ||
+      kind === "restore" || kind === "activate"
+    ) {
       if (!input.verificationFile) fail("arguments_invalid");
       const verificationInput = parseCanonicalPrivateJson(
         input.verificationFile,
@@ -1561,18 +2538,25 @@ async function verify(
       const prior = validatePriorVerification(
         verificationInput.source,
         verificationInput.value,
-        { operation: kind, candidateSha: args.candidateSha, runId: input.runId },
+        {
+          operation: kind,
+          bootstrapPath: args.bootstrapPath,
+          candidateSha: args.candidateSha,
+          runId: input.runId,
+        },
       );
       priorVerificationSha = prior.sha256;
-      if (kind === "quiesce") quiescedSourceSha = prior.expectedDeploymentSha;
+      if (kind === "quiesce" || kind === "cold-quiesce") {
+        quiescedSourceSha = prior.expectedDeploymentSha;
+      }
     }
     const receiptInput = parseCanonicalPrivateJson(
       input.receiptFile,
       dependencies.readPrivateFile,
     );
-    const sourceSha = kind === "prepare"
+    const sourceSha = kind === "prepare" || kind === "cold-prepare"
       ? args.expectedDeploymentSha ?? "0".repeat(40)
-      : kind === "quiesce"
+      : kind === "quiesce" || kind === "cold-quiesce"
         ? quiescedSourceSha ?? "0".repeat(40)
         : args.candidateSha;
     const receipt = validateReceipt(
@@ -1582,10 +2566,21 @@ async function verify(
       args.candidateSha,
       sourceSha,
     );
+    if (kind === "cold-quiesce") {
+      const coldPrepare = args.inputs.get("cold-prepare");
+      const boundPrepare = record(receiptInput.value.preparePrerequisite)
+        ? receiptInput.value.preparePrerequisite
+        : null;
+      if (!coldPrepare || boundPrepare?.runId !== coldPrepare.runId) {
+        fail("receipt_invalid");
+      }
+    }
     if (!receiptWithinRun(receipt, run)) fail("chronology_invalid");
-    if (kind === "prepare") preparedSourceSha = receipt.sourceSha;
+    if (kind === "prepare" || kind === "cold-prepare") {
+      preparedSourceSha = receipt.sourceSha;
+    }
     if (
-      kind === "quiesce"
+      (kind === "quiesce" || kind === "cold-quiesce")
       && (preparedSourceSha !== quiescedSourceSha
         || quiescedSourceSha === args.candidateSha)
     ) fail("receipt_invalid");
@@ -1622,7 +2617,8 @@ async function verify(
     });
   }
   if (
-    args.operation === "quiesce"
+    (args.operation === "quiesce" || args.operation === "cold-quiesce" ||
+      args.operation === "cold-reconcile-quiesce")
     && preparedSourceSha !== args.expectedDeploymentSha
   ) fail("receipt_invalid");
 
@@ -1631,6 +2627,7 @@ async function verify(
     schemaVersion: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA,
     policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
     operation: args.operation,
+    bootstrapPath: args.bootstrapPath,
     candidateSha: args.candidateSha,
     expectedDeploymentSha: args.expectedDeploymentSha,
     repository: REPOSITORY,
@@ -1664,6 +2661,7 @@ async function verify(
   };
   parseVerificationObject(canonical(verification), {
     operation: args.operation,
+    bootstrapPath: args.bootstrapPath,
     candidateSha: args.candidateSha,
     currentRunId,
     now: verifiedAt,
@@ -1728,6 +2726,7 @@ export async function runStagingWorkerBootstrapPrerequisiteVerifier(
     dependencies.writeOutput(`${JSON.stringify({
       ok: true,
       operation: args.operation,
+      bootstrapPath: args.bootstrapPath,
       candidateSha: args.candidateSha,
       policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
       prerequisiteRunIds: [...args.inputs.values()].map((input) => input.runId),
@@ -1752,12 +2751,15 @@ export async function runStagingWorkerBootstrapPrerequisiteVerifier(
 
 export const stagingWorkerBootstrapPrerequisiteInternals = {
   parseArguments,
+  producerSpecForObservedRun,
   validatePolicies,
   validateEnvironment,
   validateRun,
   validateArtifact,
   validateHistory,
   validateWorkerReceipt,
+  validateColdPrepareReceipt,
+  validateColdQuiesceReceipt,
   validateScaleReceipt,
   validateDeploymentReceipt,
   validatePriorVerification,

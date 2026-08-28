@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   holdPrivateDirectoryIdentity,
+  readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
 import { fetchBoundedResponseText } from "./lib/bounded-http-response.js";
@@ -17,24 +18,63 @@ const REPOSITORY = "blackmagic30/Beer";
 const REPLACEMENT_WORKFLOW_PATH =
   ".github/workflows/permanent-staging-provider-mutation.yml";
 const REPLACEMENT_WORKFLOW_ID = "permanent-staging-provider-mutation.yml";
+const REPLACEMENT_WORKFLOW_NAME =
+  "Mutate Pint Path permanent-staging provider variables";
 const DEPLOYMENT_WORKFLOW_PATH =
   ".github/workflows/deploy-permanent-staging.yml";
 const DEPLOYMENT_WORKFLOW_ID = "deploy-permanent-staging.yml";
 const DEPLOYMENT_JOB_NAME = "Deploy permanent staging";
+const DEPLOYMENT_WORKFLOW_NAME = "Deploy Pint Path permanent staging";
 const DEPLOYMENT_MUTATION_STEP =
   "Execute one permanent-staging source upload and reconcile it";
 const CUTOVER_WORKFLOW_PATH =
   ".github/workflows/permanent-staging-supabase-legacy-cutover.yml";
+const CUTOVER_WORKFLOW_NAME = "Permanent staging Supabase legacy-key cutover";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
+const MAX_RECEIPT_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 20_000;
+const DEPLOYMENT_RECEIPT_SCHEMA =
+  "pintpath-railway-application-deployment-executor/v5";
+const DEPLOYMENT_RECEIPT_OPERATION =
+  "pintpath-railway-application-source-upload";
+const DEPLOYMENT_RECEIPT_STATE = "GITHUB_ENVIRONMENT_PROTECTED";
+const DEPLOYMENT_CHECK_KEYS = Object.freeze([
+  "boundaryPostflightExact",
+  "boundaryPreflightExact",
+  "cliExact",
+  "collateralInventoryExact",
+  "collateralStateUnchanged",
+  "costPolicyExact",
+  "deploymentExact",
+  "durableIntentExact",
+  "gitAutodeployAbsent",
+  "githubMainExact",
+  "policyExact",
+  "prerequisiteExact",
+  "reconciliationCompleted",
+  "runtimeHealthExact",
+  "runtimeReadinessExact",
+  "runtimeStartupExact",
+  "sourceAuthorityExact",
+  "sourceReasserted",
+  "targetPostflightAttempted",
+  "targetPostflightExact",
+  "targetPreflightExact",
+  "terminalEvidenceExact",
+  "topologyPreserved",
+  "workerFenceDeploymentContinuityExact",
+  "workerFencePrerequisiteExact",
+  "writeAttemptedAtMostOnce",
+  "writeTokenScopeExact",
+]);
 
 function fail(code) {
   throw new Error(`github_permanent_staging_deployment_${code}`);
 }
 
 function parseArgs(argv) {
-  if (argv.length !== 8) fail("arguments_invalid");
+  if (argv.length !== 14) fail("arguments_invalid");
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -43,7 +83,10 @@ function parseArgs(argv) {
       ![
         "--candidate-sha",
         "--replacement-run-id",
+        "--fenced-deployment-run-id",
         "--deployment-run-id",
+        "--fenced-deployment-receipt",
+        "--deployment-receipt",
         "--output",
       ].includes(key) ||
       !value ||
@@ -54,26 +97,55 @@ function parseArgs(argv) {
   }
   const candidateSha = values.get("--candidate-sha") ?? "";
   const replacementRunId = values.get("--replacement-run-id") ?? "";
+  const fencedDeploymentRunId =
+    values.get("--fenced-deployment-run-id") ?? "";
   const deploymentRunId = values.get("--deployment-run-id") ?? "";
+  const fencedDeploymentReceipt =
+    values.get("--fenced-deployment-receipt") ?? "";
+  const deploymentReceipt = values.get("--deployment-receipt") ?? "";
   const output = values.get("--output") ?? "";
   if (
     !SHA.test(candidateSha) ||
     !RUN_ID.test(replacementRunId) ||
+    !RUN_ID.test(fencedDeploymentRunId) ||
     !RUN_ID.test(deploymentRunId) ||
     replacementRunId === deploymentRunId ||
+    replacementRunId === fencedDeploymentRunId ||
+    fencedDeploymentRunId === deploymentRunId ||
+    !safeReceiptPath(fencedDeploymentReceipt) ||
+    !safeReceiptPath(deploymentReceipt) ||
+    fencedDeploymentReceipt === deploymentReceipt ||
     !path.isAbsolute(output) ||
     path.resolve(output) !== output ||
     output.includes("\0") ||
     path.basename(output) !== "deployment-github-authority.json"
   )
     fail("arguments_invalid");
-  return { candidateSha, replacementRunId, deploymentRunId, output };
+  return {
+    candidateSha,
+    replacementRunId,
+    fencedDeploymentRunId,
+    deploymentRunId,
+    fencedDeploymentReceipt,
+    deploymentReceipt,
+    output,
+  };
+}
+
+function safeReceiptPath(value) {
+  return path.isAbsolute(value) && path.resolve(value) === value &&
+    !value.includes("\0") && path.basename(value) === "deployment-receipt.json";
 }
 
 function exactObject(value) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value
     : null;
+}
+
+function exactKeys(value, keys) {
+  return exactObject(value) !== null &&
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
 }
 
 function githubTimestamp(value, failureCode) {
@@ -139,10 +211,36 @@ function validateWorkflowRun(value, expected) {
     run.event !== "workflow_dispatch" ||
     run.run_attempt !== 1 ||
     run.status !== expected.status ||
-    run.conclusion !== expected.conclusion
+    run.conclusion !== expected.conclusion ||
+    (expected.workflowName !== undefined && run.name !== expected.workflowName) ||
+    (expected.displayTitle !== undefined &&
+      run.display_title !== expected.displayTitle)
   )
     fail(expected.failureCode);
   return run;
+}
+
+function deploymentTitle(phase, candidateSha) {
+  return `Deploy permanent staging | ${phase} | ${candidateSha}`;
+}
+
+function deploymentPhase(value, candidateSha) {
+  for (const phase of ["fenced", "active"]) {
+    if (value === deploymentTitle(phase, candidateSha)) return phase;
+  }
+  return null;
+}
+
+function replacementTitle(candidateSha) {
+  return `Permanent staging provider mutation | supabase-key-replacement | ${candidateSha}`;
+}
+
+function cutoverTitleExact(value, candidateSha) {
+  return [
+    "reconcile-already-disabled-legacy-keys",
+    "disable-enabled-legacy-keys",
+  ].some((operation) => value ===
+    `Permanent staging Supabase legacy cutover | ${operation} | ${candidateSha}`);
 }
 
 function validateArtifact(value, expected) {
@@ -183,25 +281,145 @@ function validateWorkflowRunListing(value, failureCode = "deployment_window_inva
   return runs;
 }
 
-function failedBeforeWriteExact(value, runId) {
+function deploymentWriteDisposition(value, run) {
   const listing = exactObject(value);
   const jobs = Array.isArray(listing?.jobs) ? listing.jobs : [];
-  if (listing?.total_count !== 1 || jobs.length !== 1) return false;
+  if (listing?.total_count !== 1 || jobs.length !== 1) return "invalid";
   const job = exactObject(jobs[0]);
   if (
     !job ||
-    String(job.run_id) !== runId ||
+    String(job.run_id) !== String(run.id) ||
     job.run_attempt !== 1 ||
     job.name !== DEPLOYMENT_JOB_NAME ||
     job.status !== "completed" ||
-    job.conclusion !== "failure" ||
+    job.conclusion !== run.conclusion ||
     !Array.isArray(job.steps)
-  ) return false;
+  ) return "invalid";
   const mutationSteps = job.steps.filter((candidate) =>
     exactObject(candidate)?.name === DEPLOYMENT_MUTATION_STEP);
-  if (mutationSteps.length !== 1) return false;
+  if (mutationSteps.length !== 1) return "invalid";
   const mutation = exactObject(mutationSteps[0]);
-  return mutation?.status === "completed" && mutation.conclusion === "skipped";
+  if (mutation?.status !== "completed") return "invalid";
+  if (mutation.conclusion === "skipped") return "skipped";
+  return ["success", "failure", "cancelled", "timed_out"].includes(
+    mutation.conclusion,
+  ) ? "may-have-written" : "invalid";
+}
+
+function validateDeploymentReceipt(value, expected) {
+  const receipt = exactObject(value);
+  const checks = exactObject(receipt?.checks);
+  const replicaCounts = exactObject(receipt?.replicaCounts);
+  const runtimeResponseSha256s = exactObject(receipt?.runtimeResponseSha256s);
+  const collateralSnapshotSha256s = exactObject(
+    receipt?.collateralSnapshotSha256s,
+  );
+  const workerFencePrerequisite = exactObject(receipt?.workerFencePrerequisite);
+  const outcome = receipt?.outcome;
+  const startedAt = githubTimestamp(receipt?.startedAt, "receipt_invalid");
+  const completedAt = githubTimestamp(receipt?.completedAt, "receipt_invalid");
+  const hashes = [
+    receipt?.previousDeploymentIdSha256,
+    receipt?.deploymentIdSha256,
+    receipt?.intentSha256,
+    receipt?.boundaryPreflightSha256,
+    receipt?.boundaryPostflightSha256,
+    collateralSnapshotSha256s?.before,
+    collateralSnapshotSha256s?.after,
+  ];
+  const phaseRuntimeExact = expected.phase === "fenced"
+    ? exactKeys(runtimeResponseSha256s, ["health", "startup", "ready"]) &&
+      Object.values(runtimeResponseSha256s).every((item) => item === null)
+    : exactKeys(runtimeResponseSha256s, ["health", "startup", "ready"]) &&
+      Object.values(runtimeResponseSha256s).every((item) =>
+        typeof item === "string" && /^[a-f0-9]{64}$/.test(item));
+  const outcomeExact = expected.phase === "active"
+    ? outcome === "already_deployed" && receipt?.writeAttempts === 0 &&
+      receipt?.acknowledgement === "not_attempted" &&
+      receipt?.cliOutputSha256 === null
+    : ["deployed", "reconciled_success", "already_deployed"].includes(outcome) &&
+      (outcome === "already_deployed"
+        ? receipt?.writeAttempts === 0 &&
+          receipt?.acknowledgement === "not_attempted" &&
+          receipt?.cliOutputSha256 === null
+        : receipt?.writeAttempts === 1 &&
+          (outcome === "deployed"
+            ? receipt?.acknowledgement === "received"
+            : receipt?.acknowledgement === "missing_or_failed") &&
+          typeof receipt?.cliOutputSha256 === "string" &&
+          /^[a-f0-9]{64}$/.test(receipt.cliOutputSha256));
+  const workerFenceExact = receipt?.workerFencePrerequisite === null || (
+    exactKeys(workerFencePrerequisite, [
+      "runId",
+      "verificationSha256",
+      "bindingSha256",
+      "terminalSha256",
+      "deploymentIdSha256",
+    ]) &&
+    RUN_ID.test(String(workerFencePrerequisite.runId)) &&
+    [
+      workerFencePrerequisite.verificationSha256,
+      workerFencePrerequisite.bindingSha256,
+      workerFencePrerequisite.terminalSha256,
+      workerFencePrerequisite.deploymentIdSha256,
+    ].every((item) => typeof item === "string" && /^[a-f0-9]{64}$/.test(item))
+  );
+  if (
+    !exactKeys(receipt, [
+      "schemaVersion",
+      "operation",
+      "executorState",
+      "target",
+      "outcome",
+      "failureCode",
+      "candidateSha",
+      "startedAt",
+      "completedAt",
+      "writeAttempts",
+      "acknowledgement",
+      "previousDeploymentIdSha256",
+      "deploymentIdSha256",
+      "intentSha256",
+      "cliOutputSha256",
+      "boundaryPreflightSha256",
+      "boundaryPostflightSha256",
+      "collateralSnapshotSha256s",
+      "replicaCounts",
+      "runtimeResponseSha256s",
+      "workerFencePrerequisite",
+      "checks",
+    ]) ||
+    receipt.schemaVersion !== DEPLOYMENT_RECEIPT_SCHEMA ||
+    receipt.operation !== DEPLOYMENT_RECEIPT_OPERATION ||
+    receipt.executorState !== DEPLOYMENT_RECEIPT_STATE ||
+    receipt.target !== "permanent-staging" ||
+    receipt.failureCode !== null ||
+    receipt.candidateSha !== expected.candidateSha ||
+    !outcomeExact ||
+    startedAt.milliseconds < expected.runStartedAtMs ||
+    completedAt.milliseconds < startedAt.milliseconds ||
+    completedAt.milliseconds > expected.runUpdatedAtMs ||
+    !exactKeys(replicaCounts, ["before", "after"]) ||
+    replicaCounts.before !== (expected.phase === "fenced" ? 0 : 1) ||
+    replicaCounts.after !== (expected.phase === "fenced" ? 0 : 1) ||
+    !phaseRuntimeExact ||
+    !exactKeys(collateralSnapshotSha256s, ["before", "after"]) ||
+    hashes.some((item) =>
+      typeof item !== "string" || !/^[a-f0-9]{64}$/.test(item)) ||
+    collateralSnapshotSha256s.before !== collateralSnapshotSha256s.after ||
+    (outcome === "already_deployed"
+      ? receipt.previousDeploymentIdSha256 !== receipt.deploymentIdSha256
+      : receipt.previousDeploymentIdSha256 === receipt.deploymentIdSha256) ||
+    !workerFenceExact ||
+    !exactKeys(checks, DEPLOYMENT_CHECK_KEYS) ||
+    Object.values(checks).some((item) => item !== true)
+  ) fail("receipt_invalid");
+  return Object.freeze({
+    outcome,
+    writeAttempts: receipt.writeAttempts,
+    startedAt: startedAt.canonical,
+    completedAt: completedAt.canonical,
+  });
 }
 
 export async function verifyGithubPermanentStagingDeployment(input) {
@@ -218,6 +436,7 @@ export async function verifyGithubPermanentStagingDeployment(input) {
     api !== "https://api.github.com" ||
     !RUN_ID.test(currentRunId) ||
     currentRunId === input.replacementRunId ||
+    currentRunId === input.fencedDeploymentRunId ||
     currentRunId === input.deploymentRunId ||
     token.length < 16 ||
     /[\r\n\0]/.test(token)
@@ -236,11 +455,15 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       runId: currentRunId,
       candidateSha: input.candidateSha,
       workflowPath: CUTOVER_WORKFLOW_PATH,
+      workflowName: CUTOVER_WORKFLOW_NAME,
       status: "in_progress",
       conclusion: null,
       failureCode: "consumer_run_invalid",
     },
   );
+  if (!cutoverTitleExact(currentRun.display_title, input.candidateSha)) {
+    fail("consumer_run_invalid");
+  }
   const replacementRun = validateWorkflowRun(
     await githubJson(
       input.fetchImpl,
@@ -252,6 +475,8 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       runId: input.replacementRunId,
       candidateSha: input.candidateSha,
       workflowPath: REPLACEMENT_WORKFLOW_PATH,
+      workflowName: REPLACEMENT_WORKFLOW_NAME,
+      displayTitle: replacementTitle(input.candidateSha),
       status: "completed",
       conclusion: "success",
       failureCode: "replacement_run_invalid",
@@ -268,9 +493,29 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       runId: input.deploymentRunId,
       candidateSha: input.candidateSha,
       workflowPath: DEPLOYMENT_WORKFLOW_PATH,
+      workflowName: DEPLOYMENT_WORKFLOW_NAME,
+      displayTitle: deploymentTitle("active", input.candidateSha),
       status: "completed",
       conclusion: "success",
       failureCode: "deployment_run_invalid",
+    },
+  );
+  const fencedDeploymentRun = validateWorkflowRun(
+    await githubJson(
+      input.fetchImpl,
+      `${base}/actions/runs/${input.fencedDeploymentRunId}`,
+      token,
+      input.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
+    ),
+    {
+      runId: input.fencedDeploymentRunId,
+      candidateSha: input.candidateSha,
+      workflowPath: DEPLOYMENT_WORKFLOW_PATH,
+      workflowName: DEPLOYMENT_WORKFLOW_NAME,
+      displayTitle: deploymentTitle("fenced", input.candidateSha),
+      status: "completed",
+      conclusion: "success",
+      failureCode: "fenced_deployment_run_invalid",
     },
   );
   const currentStartedAt = githubTimestamp(
@@ -297,10 +542,22 @@ export async function verifyGithubPermanentStagingDeployment(input) {
     deploymentRun.updated_at,
     "deployment_run_invalid",
   );
+  const fencedDeploymentStartedAt = githubTimestamp(
+    fencedDeploymentRun.run_started_at,
+    "fenced_deployment_run_invalid",
+  );
+  const fencedDeploymentUpdatedAt = githubTimestamp(
+    fencedDeploymentRun.updated_at,
+    "fenced_deployment_run_invalid",
+  );
   if (
     replacementCreatedAt.milliseconds > replacementStartedAt.milliseconds ||
     replacementUpdatedAt.milliseconds <= replacementStartedAt.milliseconds ||
-    replacementUpdatedAt.milliseconds >= deploymentStartedAt.milliseconds ||
+    replacementUpdatedAt.milliseconds >=
+      fencedDeploymentStartedAt.milliseconds ||
+    fencedDeploymentUpdatedAt.milliseconds <=
+      fencedDeploymentStartedAt.milliseconds ||
+    fencedDeploymentUpdatedAt.milliseconds >= deploymentStartedAt.milliseconds ||
     deploymentUpdatedAt.milliseconds <= deploymentStartedAt.milliseconds ||
     deploymentUpdatedAt.milliseconds >= currentStartedAt.milliseconds
   )
@@ -328,12 +585,15 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       runId: input.replacementRunId,
       candidateSha: input.candidateSha,
       workflowPath: REPLACEMENT_WORKFLOW_PATH,
+      workflowName: REPLACEMENT_WORKFLOW_NAME,
+      displayTitle: replacementTitle(input.candidateSha),
       status: "completed",
       conclusion: "success",
       failureCode: "replacement_window_invalid",
     },
   );
   if (
+    selectedReplacementWindowRun.created_at !== replacementRun.created_at ||
     selectedReplacementWindowRun.run_started_at !== replacementRun.run_started_at ||
     selectedReplacementWindowRun.updated_at !== replacementRun.updated_at
   ) fail("replacement_window_invalid");
@@ -356,19 +616,30 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       !== candidateRuns.length
   ) fail("deployment_window_invalid");
   const safeFailedRunIds = [];
-  let selectedWindowRun = null;
+  const ambiguousRunIds = { fenced: [], active: [] };
+  const failedRuns = { fenced: [], active: [] };
+  const successful = { fenced: null, active: null };
   for (const candidate of candidateRuns) {
     const observed = exactObject(candidate);
     const runId = String(observed?.id ?? "");
     if (!RUN_ID.test(runId)) fail("deployment_window_invalid");
     const conclusion = observed?.conclusion;
-    if (conclusion !== "success" && conclusion !== "failure") {
+    if (![
+      "success",
+      "failure",
+      "cancelled",
+      "timed_out",
+    ].includes(conclusion)) {
       fail("deployment_window_invalid");
     }
+    const phase = deploymentPhase(observed?.display_title, input.candidateSha);
+    if (phase === null) fail("deployment_window_invalid");
     const validated = validateWorkflowRun(observed, {
       runId,
       candidateSha: input.candidateSha,
       workflowPath: DEPLOYMENT_WORKFLOW_PATH,
+      workflowName: DEPLOYMENT_WORKFLOW_NAME,
+      displayTitle: deploymentTitle(phase, input.candidateSha),
       status: "completed",
       conclusion,
       failureCode: "deployment_window_invalid",
@@ -385,15 +656,17 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       updatedAt.milliseconds <= startedAt.milliseconds ||
       updatedAt.milliseconds >= currentStartedAt.milliseconds
     ) fail("deployment_window_invalid");
+    if (
+      phase === "fenced" &&
+      updatedAt.milliseconds >= deploymentStartedAt.milliseconds
+    ) fail("deployment_window_invalid");
+    if (
+      phase === "active" &&
+      startedAt.milliseconds <= fencedDeploymentUpdatedAt.milliseconds
+    ) fail("deployment_window_invalid");
     if (conclusion === "success") {
-      if (runId !== input.deploymentRunId || selectedWindowRun !== null) {
-        fail("deployment_window_invalid");
-      }
-      selectedWindowRun = validated;
-      if (
-        validated.run_started_at !== deploymentRun.run_started_at ||
-        validated.updated_at !== deploymentRun.updated_at
-      ) fail("deployment_window_invalid");
+      if (successful[phase] !== null) fail("deployment_window_invalid");
+      successful[phase] = validated;
     } else {
       const jobs = await githubJson(
         input.fetchImpl,
@@ -401,11 +674,62 @@ export async function verifyGithubPermanentStagingDeployment(input) {
         token,
         input.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
       );
-      if (!failedBeforeWriteExact(jobs, runId)) fail("deployment_window_invalid");
-      safeFailedRunIds.push(runId);
+      const disposition = deploymentWriteDisposition(jobs, validated);
+      if (disposition === "skipped") safeFailedRunIds.push(runId);
+      else if (disposition === "may-have-written") {
+        ambiguousRunIds[phase].push(runId);
+      } else fail("deployment_window_invalid");
+      failedRuns[phase].push(Object.freeze({
+        id: runId,
+        startedAtMs: startedAt.milliseconds,
+        updatedAtMs: updatedAt.milliseconds,
+      }));
     }
   }
-  if (selectedWindowRun === null) fail("deployment_window_invalid");
+  if (
+    successful.fenced === null ||
+    successful.active === null ||
+    String(successful.fenced.id) !== input.fencedDeploymentRunId ||
+    String(successful.active.id) !== input.deploymentRunId ||
+    successful.fenced.created_at !== fencedDeploymentRun.created_at ||
+    successful.fenced.run_started_at !==
+      fencedDeploymentRun.run_started_at ||
+    successful.fenced.updated_at !== fencedDeploymentRun.updated_at ||
+    successful.active.created_at !== deploymentRun.created_at ||
+    successful.active.run_started_at !== deploymentRun.run_started_at ||
+    successful.active.updated_at !== deploymentRun.updated_at ||
+    ambiguousRunIds.fenced.length > 1 ||
+    ambiguousRunIds.active.length > 1
+  ) fail("deployment_window_invalid");
+  if (
+    failedRuns.fenced.some((run) =>
+      run.updatedAtMs >= fencedDeploymentStartedAt.milliseconds) ||
+    failedRuns.active.some((run) =>
+      run.startedAtMs <= fencedDeploymentUpdatedAt.milliseconds ||
+      run.updatedAtMs >= deploymentStartedAt.milliseconds)
+  ) fail("deployment_window_invalid");
+
+  const fencedReceipt = validateDeploymentReceipt(
+    input.fencedDeploymentReceipt,
+    {
+      phase: "fenced",
+      candidateSha: input.candidateSha,
+      runStartedAtMs: fencedDeploymentStartedAt.milliseconds,
+      runUpdatedAtMs: fencedDeploymentUpdatedAt.milliseconds,
+    },
+  );
+  const activeReceipt = validateDeploymentReceipt(input.deploymentReceipt, {
+    phase: "active",
+    candidateSha: input.candidateSha,
+    runStartedAtMs: deploymentStartedAt.milliseconds,
+    runUpdatedAtMs: deploymentUpdatedAt.milliseconds,
+  });
+  if (
+    (fencedReceipt.outcome === "already_deployed") !==
+      (ambiguousRunIds.fenced.length === 1) ||
+    activeReceipt.outcome !== "already_deployed" ||
+    activeReceipt.writeAttempts !== 0
+  ) fail("deployment_window_invalid");
 
   const replacementArtifactName =
     `pintpath-permanent-staging-provider-mutation-supabase-key-replacement-${input.candidateSha}`;
@@ -439,9 +763,25 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       name: deploymentArtifactName,
     },
   );
+  const fencedDeploymentArtifactName =
+    `pintpath-permanent-staging-fenced-deployment-${input.candidateSha}`;
+  const fencedDeploymentArtifact = validateArtifact(
+    await githubJson(
+      input.fetchImpl,
+      `${base}/actions/runs/${input.fencedDeploymentRunId}/artifacts` +
+        `?name=${encodeURIComponent(fencedDeploymentArtifactName)}&per_page=100`,
+      token,
+      input.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
+    ),
+    {
+      candidateSha: input.candidateSha,
+      runId: input.fencedDeploymentRunId,
+      name: fencedDeploymentArtifactName,
+    },
+  );
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "pintpath-github-permanent-staging-deployment-authority",
     repository,
     candidateSha: input.candidateSha,
@@ -461,6 +801,18 @@ export async function verifyGithubPermanentStagingDeployment(input) {
     replacementArtifactDigest: replacementArtifact.digest,
     replacementArtifactSizeBytes: replacementArtifact.size_in_bytes,
     replacementArtifactExpired: false,
+    fencedDeploymentWorkflowRunId: input.fencedDeploymentRunId,
+    fencedDeploymentWorkflowRunAttempt: 1,
+    fencedDeploymentWorkflowRunStartedAt: fencedDeploymentStartedAt.canonical,
+    fencedDeploymentWorkflowRunUpdatedAt: fencedDeploymentUpdatedAt.canonical,
+    fencedDeploymentWorkflowEvent: "workflow_dispatch",
+    fencedDeploymentWorkflowConclusion: "success",
+    fencedDeploymentArtifactName: fencedDeploymentArtifact.name,
+    fencedDeploymentArtifactId: String(fencedDeploymentArtifact.id),
+    fencedDeploymentArtifactDigest: fencedDeploymentArtifact.digest,
+    fencedDeploymentArtifactSizeBytes: fencedDeploymentArtifact.size_in_bytes,
+    fencedDeploymentArtifactExpired: false,
+    fencedDeploymentReceiptOutcome: fencedReceipt.outcome,
     deploymentWorkflowPath: DEPLOYMENT_WORKFLOW_PATH,
     deploymentWorkflowRunId: input.deploymentRunId,
     deploymentWorkflowRunAttempt: 1,
@@ -473,11 +825,20 @@ export async function verifyGithubPermanentStagingDeployment(input) {
     deploymentArtifactDigest: deploymentArtifact.digest,
     deploymentArtifactSizeBytes: deploymentArtifact.size_in_bytes,
     deploymentArtifactExpired: false,
+    deploymentReceiptOutcome: activeReceipt.outcome,
     replacementPrecedesDeployment: true,
+    replacementPrecedesFencedDeployment: true,
+    fencedDeploymentPrecedesActiveDeployment: true,
     deploymentPrecedesCutover: true,
     replacementWindowExact: true,
     deploymentWindowExact: true,
-    failedBeforeWriteDeploymentRunIds: safeFailedRunIds,
+    failedBeforeWriteDeploymentRunIds: safeFailedRunIds.sort(
+      (left, right) => Number(left) - Number(right),
+    ),
+    reconciledAmbiguousFencedDeploymentRunIds:
+      ambiguousRunIds.fenced.sort((left, right) => Number(left) - Number(right)),
+    reconciledAmbiguousActiveDeploymentRunIds:
+      ambiguousRunIds.active.sort((left, right) => Number(left) - Number(right)),
   };
 }
 
@@ -491,6 +852,29 @@ function assertOutputAbsent(filename) {
   fail("output_collision");
 }
 
+function readDeploymentReceipt(filename) {
+  let source;
+  let value;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(
+      readTrustedRegularFile(filename, {
+        minBytes: 2,
+        maxBytes: MAX_RECEIPT_BYTES,
+        requirePrivate: true,
+        requireOwner: true,
+      }),
+    );
+    value = JSON.parse(source);
+  } catch {
+    fail("receipt_invalid");
+  }
+  if (
+    exactObject(value) === null ||
+    source !== `${JSON.stringify(value, null, 2)}\n`
+  ) fail("receipt_invalid");
+  return value;
+}
+
 const DEFAULT_DEPENDENCIES = Object.freeze({
   requestTimeoutMs: REQUEST_TIMEOUT_MS,
   holdDirectory: (directory) =>
@@ -499,6 +883,7 @@ const DEFAULT_DEPENDENCIES = Object.freeze({
       requireOwner: true,
     }),
   assertOutputAbsent,
+  readReceipt: readDeploymentReceipt,
   writeFile: (directory, leaf, source, expectedDirectoryIdentity) =>
     writePrivateExclusiveFile(directory, leaf, source, {
       requireExactDirectoryMode: true,
@@ -522,8 +907,15 @@ export async function main(
     heldDirectory.assertExact();
     dependencies.assertOutputAbsent(args.output);
     heldDirectory.assertExact();
+    const fencedDeploymentReceipt = dependencies.readReceipt(
+      args.fencedDeploymentReceipt,
+    );
+    const deploymentReceipt = dependencies.readReceipt(args.deploymentReceipt);
+    heldDirectory.assertExact();
     const authority = await verifyGithubPermanentStagingDeployment({
       ...args,
+      fencedDeploymentReceipt,
+      deploymentReceipt,
       env,
       fetchImpl,
       requestTimeoutMs: dependencies.requestTimeoutMs,

@@ -1,0 +1,151 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-cold-recovery-policy/v1",
+  "policyId": "pintpath-permanent-staging-one-time-cold-recovery",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "repository": "blackmagic30/Beer",
+  "requiredRef": "refs/heads/main",
+  "requiredRunAttempt": 1,
+  "target": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "forbiddenProductionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "serviceInstanceId": "5a2f3970-2850-44e0-9b6c-f5c7627dde13",
+    "publicOrigin": "https://beer-staging.up.railway.app",
+    "serviceDomainId": "afbb2417-c6df-48e3-9987-271b10ab2962",
+    "targetPort": 8080,
+    "region": "asia-southeast1-eqsg3a"
+  },
+  "deadState": {
+    "replicas": null,
+    "sourceRepo": null,
+    "sourceImage": null,
+    "latestDeploymentId": "c71fdb35-2be0-4031-b952-85595dfb2913",
+    "latestDeploymentStatus": "FAILED",
+    "latestDeploymentStopped": true,
+    "snapshotId": "f1061f4f-e1dd-49f3-b91a-60efbc3d6841",
+    "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+    "deploymentImageDigest": null,
+    "deploymentPatchId": null,
+    "activeDeploymentCount": 0,
+    "stagedPatchEmpty": true
+  },
+  "requiredVariableRows": {
+    "exactReferences": {
+      "DATABASE_URL": [
+        "c454955f-263b-4599-aee0-dc447a4d3d15.PINTPATH_RUNTIME_DATABASE_URL"
+      ],
+      "REDIS_URL": [
+        "d6351cec-fe04-4a6f-8e05-1cc164ea1e73.REDIS_URL"
+      ]
+    },
+    "unreferencedServiceRows": [
+      "ALCOHOL_GAMIFICATION_ENABLED",
+      "CONSUMER_PAID_ENROLLMENT_ENABLED",
+      "GOOGLE_MAPS_API_KEY",
+      "GOOGLE_MAPS_MAP_ID",
+      "GOOGLE_PLACES_API_KEY",
+      "OPENAI_API_KEY",
+      "PINT_POINTS_REWARDS_ENABLED",
+      "PUBLIC_BASE_URL",
+      "REPORT_DELIVERY_SCHEDULE_ENABLED",
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_RESULTS_TABLE",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "SUPABASE_URL"
+    ],
+    "sealedServiceRows": [
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "forbiddenRowsAbsent": [
+      "OFFSITE_BACKUP_BUCKET",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SUPABASE_URL"
+    ],
+    "maintenanceRowsMayBeAbsentBeforePrepare": true
+  },
+  "operations": {
+    "prepare": {
+      "githubEnvironment": "permanent-staging-provider-mutation",
+      "supabaseReplacementPrerequisite": {
+        "workflowPath": ".github/workflows/permanent-staging-provider-mutation.yml",
+        "operation": "supabase-key-replacement",
+        "artifactNameTemplate": "pintpath-permanent-staging-provider-mutation-supabase-key-replacement-{candidateSha}",
+        "receiptSchema": "pintpath-permanent-staging-variable-mutation-terminal/v4",
+        "receiptFilename": "terminal.json",
+        "sameCandidateRequired": true,
+        "successfulAttemptOneRequired": true,
+        "exactInputPairCanaryRequired": true,
+        "mustCompleteBeforeRailwayTokenCustody": true,
+        "secretOrSecretDerivedEvidenceAllowed": false
+      },
+      "graphqlMutation": "variableCollectionUpsert",
+      "variables": [
+        "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED",
+        "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"
+      ],
+      "automaticMaintenanceEnabled": "false",
+      "skipDeploys": true,
+      "maximumAttempts": 1,
+      "automaticRetryAllowed": false,
+      "deploymentAndTopologyMustRemainUnchanged": true
+    },
+    "reconcilePrepare": {
+      "githubEnvironment": "permanent-staging-provider-mutation",
+      "direction": "cold-reconcile-prepare-read-only",
+      "replicasBefore": null,
+      "replicasAfter": null,
+      "priorAmbiguousPrepareRunRequired": true,
+      "sameCandidateAndReplacementChainRequired": true,
+      "providerMutationAllowed": false,
+      "variableMutationCredentialAllowed": false,
+      "deploymentSourceTopologyAndVariablesMustRemainUnchanged": true
+    },
+    "quiesce": {
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "direction": "cold-quiesce-staging-zero",
+      "replicasBefore": null,
+      "replicasAfter": 0,
+      "maximumAttempts": 1,
+      "automaticRetryAllowed": false,
+      "lostAcknowledgementMayReconcileOnlyFromExactNullToZeroPostflight": true,
+      "runtimeMustBeAbsentBeforeAndAfter": true,
+      "deploymentSourceAndTopologyMustRemainUnchangedExceptReplicas": true
+    },
+    "reconcileQuiesce": {
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "direction": "cold-reconcile-staging-zero-read-only",
+      "replicasBefore": 0,
+      "replicasAfter": 0,
+      "priorAmbiguousQuiesceRunRequired": true,
+      "sameCandidateAndPrepareChainRequired": true,
+      "providerMutationAllowed": false,
+      "scaleCredentialAllowed": false,
+      "runtimeMustBeAbsentBeforeAndAfter": true,
+      "deploymentSourceTopologyAndVariablesMustRemainUnchanged": true
+    }
+  },
+  "railwayCli": {
+    "version": "5.32.0",
+    "releaseUrl": "https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
+    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
+    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed",
+    "immediatePreflightRequired": true,
+    "unconditionalPostflightRequired": true
+  },
+  "evidence": {
+    "canonicalJsonRequired": true,
+    "durableIntentRequiredBeforeWrite": true,
+    "terminalReceiptRequired": true,
+    "supabaseReplacementReceiptHashBindingRequired": true,
+    "truthfulNullToZeroReplicaBindingRequired": true,
+    "normalOneToZeroReceiptImpersonationForbidden": true,
+    "readOnlyRunnerLossReconciliationMustBindPriorRun": true,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

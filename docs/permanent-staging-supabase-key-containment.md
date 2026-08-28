@@ -23,8 +23,8 @@ and contain no row with any of the three names above, including a blank or seale
 row, before remediation can pass. No new staging off-site transport is
 authorized.
 
-It does not read a credential, contact Railway or Supabase, provision a
-resource, change a package command, create a deployment, or spend money. The
+This repository change does not itself read a credential, contact Railway or
+Supabase, provision a resource, create a deployment, or spend money. The
 existing permanent-staging recurring-cost estimate is unchanged.
 
 ## Current public Supabase contract
@@ -95,6 +95,10 @@ keys only from a protected GitHub Environment and sends them in one atomic
 workflow attempt, never retries a write, runs unconditional metadata and
 production-boundary postflight, and emits no value or value-derived digest.
 The legacy local CLI and its fixture policy remain hard-disabled and deprecated.
+The protected successor does not depend on the obsolete Railway canary service.
+It requires only the two exact Beer application rows with no references; the
+secret row must already be sealed. The later cutover executor performs the live
+Auth/admin/Storage canary directly from its protected GitHub runner.
 
 Even a successful replacement receipt is only
 `acknowledged_pending_runtime_proof`. After deploying and proving every tracked
@@ -102,15 +106,24 @@ consumer, the protected successor for the remaining ceremony is
 `.github/workflows/permanent-staging-supabase-legacy-cutover.yml`, governed by
 `ops/supabase/protected-permanent-staging-supabase-cutover-policy.json`. It runs
 replacement-key canary-B directly against the exact staging Auth/admin/Storage
-endpoints. Before it persists intent, the retained old `anon` key must return the
-pinned Auth-settings HTTP 200 shape using `apikey`, and the retained old
-`service_role` key must return the pinned admin-list HTTP 200 shape using the
-same key in both `apikey` and `Authorization: Bearer`. It then issues one
-Management API PUT with no retry, unconditionally reconciles with the separately
-held read token, reruns canary-B, and reuses those exact old-key requests to
-require the exact HTTP 401 `{"message":"Invalid API key"}` response. An already
-rejected old input stops before intent and PUT. Neither key material nor
-key-derived commitments enter evidence.
+endpoints. When Management reports legacy keys enabled, the retained old `anon`
+key must return the pinned Auth-settings HTTP 200 shape using `apikey`, and the
+retained old `service_role` key must return the pinned admin-list HTTP 200 shape
+using the same key in both `apikey` and `Authorization: Bearer`. The executor
+then issues one Management API PUT with no retry, unconditionally reconciles
+with the separately held read token, reruns canary-B, and reuses those exact
+old-key requests to require the exact HTTP 401
+`{"message":"Invalid API key"}` response.
+
+If Management already reports `enabled=false`, both retained old-key requests
+must already return that exact 401 shape. The executor persists a distinct
+candidate-bound reconciliation intent, performs a second complete read-only
+Management/canary/old-key observation, records `attempts=0`, and succeeds only
+without issuing a PUT. This operation is selected explicitly and accepts no
+write-token argument or file; the workflow does not materialize the protected
+write secret in its job step. Mixed states, a still-accepted old key, an enabled
+project in reconciliation mode, or any ambiguous response stop without a write.
+Neither key material nor key-derived commitments enter evidence.
 
 ## Locked replacement shape
 
@@ -172,12 +185,13 @@ needed before any real activation.
 
 ## Canary-B gate
 
-The policy reuses the existing dedicated service
+The hard-disabled fixture policy describes the former dedicated service
 `34a312cd-0920-4a7e-90db-8561c1e0746b`, configuration
 `/railway.supabase-key-canary.toml`, and start command
-`node dist/scripts/staging-supabase-key-canary.js`. It requires restart policy
-`NEVER`, no public domain, no TCP proxy, three exact references from the
-application service, and only these read-only checks:
+`node dist/scripts/staging-supabase-key-canary.js`. That service is absent and
+must not be recreated. The fixture required restart policy `NEVER`, no public
+domain, no TCP proxy, three exact references from the application service, and
+only these read-only checks:
 
 - staging Auth settings;
 - staging Auth admin list with limit one;
@@ -205,11 +219,12 @@ PUT /v1/projects/{projectRef}/api-keys/legacy?enabled=false
 The only accepted response body is `{"enabled":false}`. Pure before/after
 fixtures require `enabled=true` before and `enabled=false` afterward for that
 project. The successor does not need individual key IDs because the provider
-operation disables both legacy JWT families project-wide. It instead validates
-the retained inputs' `anon` and `service_role` roles before provider access,
-proves both exact retained inputs are accepted by their pinned target endpoints
-before intent, and binds the post-disable evidence to the same requests returning
-the exact gateway 401 shape. The older ID-bound evaluator remains fixture-only.
+operation disables both legacy JWT families project-wide. It validates the
+retained inputs' `anon` and `service_role` roles before provider access. An
+enabled-state transition requires both inputs to be accepted before intent and
+denied afterward. An already-disabled reconciliation requires both inputs to be
+denied in two read-only observations and proves zero Management write attempts.
+The older ID-bound evaluator remains fixture-only.
 
 Old-key denial is a separate read-only fixture classifier. It accepts no key
 material and has no fetch implementation. Only an exact completed read-only
@@ -226,10 +241,42 @@ reviewed legacy key ID.
    2026 public-doc review above does not authorize a later provider call.
 2. Review the protected replacement and cutover policies, workflows, and
    executors together and configure their non-bypassable GitHub Environments
-   with distinct secrets read/write tokens.
+   with a read token. Configure a separate write token only before selecting the
+   enabled-state disable operation; the already-disabled reconciliation rejects
+   write-token custody.
 3. Prove a complete Railway preflight with no shared shadows or staged patch and
-   establish the external mutation freeze.
-4. Use only the protected replacement workflow and private mode-0600 file
+   establish the external mutation freeze. For the current recovery, require
+   the fully policy-pinned detached dead/null service identity; do not treat a
+   generic failed or zero-active service as equivalent. Complete these
+   non-deploying remediations before cold prepare. If the three inherited
+   `OFFSITE_BACKUP_*` Beer rows are present, first use the protected
+   `remove-forbidden-offsite-backup-variables` operation. Its exact
+   `merge=false` patch may contain only those three null deletions; its commit
+   uses `skipDeploys=true` and must prove the rows absent with every collateral
+   variable, deployment, topology, and production boundary unchanged.
+   If that run ends after staging the exact patch but before commit, do not rerun
+   cleanup or manually commit/discard the patch. Dispatch exactly one
+   `resume-forbidden-offsite-backup-deletion-patch` or
+   `cancel-forbidden-offsite-backup-deletion-patch` operation with the failed
+   cleanup run ID. Reviewed GitHub history binds the candidate/run; a retained
+   artifact is checked as additional evidence when available, while live
+   metadata binds the fixed patch identity. If the commit already completed
+   before runner loss, `resume` closes the exact rows-absent/empty-patch state
+   read-only with zero mutation attempts. If live state proves the cleanup had
+   no effect, `resume` may perform one exact stage and one exact commit, while
+   `cancel` closes an already-empty patch read-only. An ambiguous recovery may
+   be redispatched only in the same mode after re-proving exact state; switching
+   between resume and cancel remains forbidden. The original cleanup must start
+   inside merge plus 168 hours; recovery has one fixed 24-hour grace measured
+   from that original cleanup's completion and retries never extend it. Keep
+   the candidate as exact current protected `main` and freeze merges until the
+   patch is converged and closeout completes. Railway exposes no usable patch
+   ETag/version or lock for these deploy-suppressed calls, so the immediate
+   patch-identity reassertion and external mutation freeze narrow but do not
+   eliminate the out-of-band TOCTOU; this remains a P1/NO-GO trust assumption.
+4. Seal the Beer application `SUPABASE_SERVICE_ROLE_KEY` row through the
+   separately protected owner action. Then use only the protected replacement
+   workflow and private mode-0600 file
    custody. Persist the intent and perform at most one all-or-nothing
    publishable/secret-key `skipDeploys=true` merge; stop without retry on any
    ambiguous outcome. Never pass keys in arguments, generic environment
@@ -240,20 +287,31 @@ reviewed legacy key ID.
    mobile, CI, scheduled, webhook, backup, and archived consumer uses the
    replacement format, and complete the live Auth, admin, role, private-Storage,
    provider, and Free-scope checks.
-6. Only then approve the protected legacy-cutover workflow exactly once. Supply
-   the exact atomic-replacement and later deployment run IDs. Before any
-   provider-secret custody, its GitHub verifier requires the exact successful
-   same-candidate attempt-one artifacts and proves replacement completion
-   precedes deployment start and deployment completion precedes cutover start.
+6. Only then approve the protected legacy-cutover workflow. Supply
+   the exact atomic-replacement, fenced zero-replica deployment, and active
+   closeout run IDs. Before any provider-secret custody, its GitHub verifier
+   requires the exact successful same-candidate attempt-one artifacts and
+   receipts, authenticates the exact fenced and active run titles, requires the
+   active closeout to be a zero-write `already_deployed` reconciliation, and
+   proves replacement completion precedes fenced deployment, fenced completion
+   precedes active closeout, and active completion precedes cutover. A single
+   ambiguous fenced predecessor is accepted only when the selected fenced
+   receipt proves the exact candidate was already present; no deployment run is
+   accepted after the selected active closeout.
    Replacement, permanent-staging deployment, cutover, and every general
    permanent-staging runtime-variable write share one non-cancelling rollout
    concurrency group. The general workflow hard-fails either Supabase key so it
    cannot bypass the paired replacement path; exact-name artifact uniqueness
    rejects a second same-candidate replacement or deployment.
-7. Run the direct replacement-key Auth/admin/Storage canary, the single
-   legacy-disable write, postflight reconciliation, and both old-key 401 denial
-   proofs. Production and its operational-copy project require separate,
-   production-scoped authorities.
+7. Run the direct replacement-key Auth/admin/Storage canary. If legacy keys are
+   enabled, require the single disable write, postflight reconciliation, and
+   both old-key 401 denial proofs. If they are already disabled, require two
+   exact read-only disabled/canary/old-key-denial observations and a receipt
+   proving `attempts=0`, no Management write, and no write credential received
+   by the executor. If the one disable run ends ambiguously, the only permitted
+   follow-up is the mode-bound read-only reconciliation; it can reconcile the
+   disabled state but cannot issue a second write. Production and its operational-copy project require
+   separate, production-scoped authorities.
 
 Until every item is reviewed and evidenced, this work is a launch-safety
 foundation, not permission to mutate a provider.

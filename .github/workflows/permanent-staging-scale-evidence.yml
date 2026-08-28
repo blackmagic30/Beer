@@ -7,6 +7,14 @@ on:
         description: Exact 40-character SHA currently deployed from main
         required: true
         type: string
+      bootstrap_path:
+        description: Proven staging predecessor chain
+        required: true
+        type: choice
+        default: healthy-legacy
+        options:
+          - healthy-legacy
+          - cold-dead
       activation_run_id:
         description: Successful same-candidate permanent-staging worker activation run
         required: true
@@ -47,6 +55,7 @@ jobs:
 
       - name: Require the exact current main candidate and confirmation
         env:
+          BOOTSTRAP_PATH: ${{ inputs.bootstrap_path }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           DISPATCH_SHA: ${{ github.sha }}
           DISPATCH_REF: ${{ github.ref }}
@@ -59,6 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          case "$BOOTSTRAP_PATH" in healthy-legacy|cold-dead) ;; *) exit 1 ;; esac
           test "$DISPATCH_REF" = 'refs/heads/main'
           test "$RUN_ATTEMPT" = '1'
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
@@ -144,6 +154,7 @@ jobs:
         env:
           ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
           ACTIVE_DEPLOYMENT_RUN_ID: ${{ inputs.active_deployment_run_id }}
+          BOOTSTRAP_PATH: ${{ inputs.bootstrap_path }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GITHUB_API_URL: ${{ github.api_url }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -174,6 +185,7 @@ jobs:
           ./node_modules/.bin/tsx \
             scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts \
             --operation scale-evidence \
+            --bootstrap-path "$BOOTSTRAP_PATH" \
             --candidate-sha "$CANDIDATE_SHA" \
             --activate-run-id "$ACTIVATION_RUN_ID" \
             --activate-terminal-file "$root/sealed/activate/automatic-maintenance-worker-fence-terminal.json" \
