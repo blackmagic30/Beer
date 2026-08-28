@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v5",
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v6",
   "policyId": "pintpath-permanent-staging-protected-variable-mutations",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -65,8 +65,10 @@
     "stagingForbiddenVariableDeletionPatchSha256": "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91",
     "stagingForbiddenVariableDeletionRecoveryOperations": [
       "resume-forbidden-offsite-backup-deletion-patch",
-      "cancel-forbidden-offsite-backup-deletion-patch"
-    ]
+      "cancel-forbidden-offsite-backup-deletion-patch",
+      "cancel-masked-forbidden-offsite-backup-deletion-patch"
+    ],
+    "legacyStagedDeletionDispatchState": "DISABLED_PENDING_PROVIDER_VERIFIABLE_DELETION_SEMANTICS"
   },
   "mutationPlans": {
     "variableUpsert": {
@@ -101,7 +103,36 @@
           "ambiguousSameModeRedispatchAllowed": true
         },
         "maximumAttempts": 1,
-        "crossOperationRetryAllowed": false
+        "crossOperationRetryAllowed": false,
+        "incidentBoundMaskedPatchCancellation": {
+          "operation": "cancel-masked-forbidden-offsite-backup-deletion-patch",
+          "originalCandidateSha": "ac7130e0306802825922d21a4c61135b84edd43b",
+          "currentCandidateMustBeDirectChild": true,
+          "priorCleanupRunId": "33164687424",
+          "priorCleanupArtifactId": "9683176636",
+          "priorCleanupArtifactDigest": "sha256:0df300c84d53ece3fca5f7c72007bf5dd4a8ba9d1ea989e5d74bc80904aed98e",
+          "priorCleanupArtifactRequired": true,
+          "stagedPatchId": "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae",
+          "stagedPatchCreatedAt": "2026-08-28T10:51:38.861Z",
+          "maskedPatchShape": "EXACT_THREE_OFFSITE_VARIABLE_WRAPPERS_WITH_FIVE_ASTERISK_VALUES",
+          "deletionSemanticsProven": false,
+          "originalBaselineMetadataSha256": "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd",
+          "recoveryDeadline": "2026-08-29T10:51:43.000Z",
+          "ambiguousSameCandidateRerunsAllowed": true,
+          "priorAmbiguousRunWriteDisposition": "MAY_HAVE_WRITTEN",
+          "priorRunsStrictlyOrderedAndNonOverlapping": true,
+          "emptyActivePatchReadOnlyCloseoutAllowed": true,
+          "emptyActivePatchReadOnlyCloseoutMaximumAttempts": 0,
+          "selectedPatchNonCommittedAndUnappliedProofRequired": true,
+          "operationName": "environmentStageChanges",
+          "replacementPatch": {},
+          "merge": false,
+          "maximumAttempts": 1,
+          "commitAllowed": false,
+          "resumeAllowed": false,
+          "providerCasOrLockVerified": false,
+          "residualRisk": "OUT_OF_BAND_STAGED_PATCH_REPLACEMENT_CAN_BE_DISCARDED_BETWEEN_FINAL_READ_AND_CANCEL"
+        }
       }
     },
     "automaticRetriesAllowed": false,

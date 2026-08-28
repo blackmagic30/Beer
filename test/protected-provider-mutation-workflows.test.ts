@@ -36,12 +36,49 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain(
       "cancel-forbidden-offsite-backup-deletion-patch",
     );
+    expect(workflow).toContain(
+      "cancel-masked-forbidden-offsite-backup-deletion-patch",
+    );
+    expect(workflow).toContain(
+      "test \"$PRIOR_CLEANUP_RUN_ID\" = '33164687424'",
+    );
     expect(workflow).toContain('--prior-run-id "$PRIOR_CLEANUP_RUN_ID"');
     expect(workflow).toContain("run-id: ${{ inputs.prior_cleanup_run_id }}");
     expect(workflow).toContain("id: prior_cleanup_evidence");
     expect(workflow).toContain("continue-on-error: true");
     expect(workflow).toContain(
       "if: steps.prior_cleanup_evidence.outcome == 'success'",
+    );
+    const incidentDownload = workflow.match(
+      /- name: Download the exact retained incident cleanup evidence(?<body>[\s\S]*?)\n      - name:/,
+    )?.groups?.body ?? "";
+    expect(incidentDownload).toContain(
+      "if: inputs.operation == 'cancel-masked-forbidden-offsite-backup-deletion-patch'",
+    );
+    expect(incidentDownload).not.toContain("continue-on-error");
+    expect(incidentDownload).toContain("run-id: 33164687424");
+    expect(incidentDownload).toContain(
+      "name: pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-ac7130e0306802825922d21a4c61135b84edd43b",
+    );
+    expect(incidentDownload).toContain(
+      "path: ${{ runner.temp }}/pintpath-provider-input/incident-prior-offsite-cleanup-evidence",
+    );
+    const incidentSeal = workflow.match(
+      /- name: Seal the exact incident cleanup evidence as read-only input(?<body>[\s\S]*?)\n      - name:/,
+    )?.groups?.body ?? "";
+    expect(incidentSeal).toContain(
+      "if: inputs.operation == 'cancel-masked-forbidden-offsite-backup-deletion-patch'",
+    );
+    expect(incidentSeal).toContain(
+      "for leaf in dispatch.json intent.json terminal.json; do",
+    );
+    expect(incidentSeal).toContain('test -f "$evidence/$leaf"');
+    expect(incidentSeal).toContain('test ! -L "$evidence/$leaf"');
+    expect(incidentSeal).toContain(
+      "! -name dispatch.json ! -name intent.json ! -name terminal.json",
+    );
+    expect(workflow).toContain(
+      "test \"$PINTPATH_INCIDENT_PRIOR_CLEANUP_EVIDENCE_OUTCOME\" = 'success'",
     );
     expect(workflow).toContain(
       '--reviewed-authority-file "$RUNNER_TEMP/pintpath-provider-input/reviewed-authority.json"',
@@ -121,6 +158,33 @@ describe("protected provider mutation workflows", () => {
             },
             maximumAttempts: 1,
             crossOperationRetryAllowed: false,
+            incidentBoundMaskedPatchCancellation: {
+              operation:
+                "cancel-masked-forbidden-offsite-backup-deletion-patch",
+              originalCandidateSha:
+                "ac7130e0306802825922d21a4c61135b84edd43b",
+              currentCandidateMustBeDirectChild: true,
+              priorCleanupRunId: "33164687424",
+              priorCleanupArtifactId: "9683176636",
+              priorCleanupArtifactDigest:
+                "sha256:0df300c84d53ece3fca5f7c72007bf5dd4a8ba9d1ea989e5d74bc80904aed98e",
+              priorCleanupArtifactRequired: true,
+              stagedPatchId: "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae",
+              stagedPatchCreatedAt: "2026-08-28T10:51:38.861Z",
+              maskedPatchShape:
+                "EXACT_THREE_OFFSITE_VARIABLE_WRAPPERS_WITH_FIVE_ASTERISK_VALUES",
+              deletionSemanticsProven: false,
+              originalBaselineMetadataSha256:
+                "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd",
+              recoveryDeadline: "2026-08-29T10:51:43.000Z",
+              operationName: "environmentStageChanges",
+              replacementPatch: {},
+              merge: false,
+              maximumAttempts: 1,
+              commitAllowed: false,
+              resumeAllowed: false,
+              providerCasOrLockVerified: false,
+            },
           },
         },
         automaticRetriesAllowed: false,

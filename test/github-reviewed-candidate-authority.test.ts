@@ -6,10 +6,26 @@ import {
   runGithubReviewedCandidateAuthority,
   verifyGithubReviewedCandidateAuthority,
 } from "../scripts/verify-github-reviewed-candidate-authority.mjs";
+import {
+  protectedPermanentStagingVariableMutationInternals,
+} from "../scripts/execute-protected-permanent-staging-variable-mutation.js";
 
 const CANDIDATE = "a".repeat(40);
 const REVIEWED_HEAD = "b".repeat(40);
 const TREE = "c".repeat(40);
+const INCIDENT_ORIGINAL_CANDIDATE =
+  "ac7130e0306802825922d21a4c61135b84edd43b";
+const INCIDENT_ORIGINAL_REVIEWED_HEAD =
+  "b41c39a601f20a510ccbc09187acdca29abd7a02";
+const INCIDENT_ORIGINAL_TREE = "b111b763883f04d06642f8e01386b0af5a201fa0";
+const INCIDENT_OPERATION =
+  "cancel-masked-forbidden-offsite-backup-deletion-patch";
+const INCIDENT_PRIOR_RUN_ID = 33164687424;
+const INCIDENT_ARTIFACT_ID = 9683176636;
+const INCIDENT_ARTIFACT_NAME =
+  "pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-ac7130e0306802825922d21a4c61135b84edd43b";
+const INCIDENT_ARTIFACT_DIGEST =
+  "sha256:0df300c84d53ece3fca5f7c72007bf5dd4a8ba9d1ea989e5d74bc80904aed98e";
 const REPOSITORY = "blackmagic30/Beer";
 const PROVIDER_PATH =
   ".github/workflows/permanent-staging-provider-mutation.yml";
@@ -32,6 +48,7 @@ const PROVIDER_OPERATIONS = [
   "remove-forbidden-offsite-backup-variables",
   "resume-forbidden-offsite-backup-deletion-patch",
   "cancel-forbidden-offsite-backup-deletion-patch",
+  "cancel-masked-forbidden-offsite-backup-deletion-patch",
 ] as const;
 const DISABLE_CUTOVER_MODE = "disable-enabled-legacy-keys";
 const RECONCILE_CUTOVER_MODE = "reconcile-already-disabled-legacy-keys";
@@ -55,6 +72,7 @@ function workflowRun(input: {
   createdAt?: string;
   updatedAt?: string;
   runAttempt?: number;
+  headSha?: string;
 }) {
   const createdAt = input.createdAt ?? "2026-08-14T01:00:00.000Z";
   const updatedAt = input.updatedAt ?? new Date(
@@ -64,7 +82,7 @@ function workflowRun(input: {
     id: input.id,
     repository: { full_name: REPOSITORY },
     head_repository: { full_name: REPOSITORY },
-    head_sha: CANDIDATE,
+    head_sha: input.headSha ?? CANDIDATE,
     head_branch: "main",
     path: `${input.path}@main`,
     event: "workflow_dispatch",
@@ -268,8 +286,13 @@ function harness(options: {
   prepareRunId?: string | null;
   target?: string;
   variableName?: string;
+  incidentCandidateParent?: string;
+  incidentArtifactDigest?: string;
+  incidentArtifactExpired?: boolean;
+  incidentArtifactExpiresAt?: string;
 } = {}) {
   const operation = options.operation ?? "supabase-key-replacement";
+  const incident = operation === INCIDENT_OPERATION;
   const cutover = operation === "supabase-legacy-key-cutover";
   const cutoverMode = options.cutoverMode ?? DISABLE_CUTOVER_MODE;
   const runtime = operation === "runtime-variable";
@@ -336,7 +359,9 @@ function harness(options: {
         : title(operation),
       status: "in_progress",
       conclusion: null,
-      createdAt: "2026-08-14T02:00:00.000Z",
+      createdAt: incident
+        ? "2026-08-28T11:20:00.000Z"
+        : "2026-08-14T02:00:00.000Z",
     }),
     ...options.current,
   };
@@ -450,7 +475,9 @@ function harness(options: {
         merged: true,
         draft: false,
         merge_commit_sha: CANDIDATE,
-        merged_at: options.mergedAt ?? "2026-08-14T00:30:00.000Z",
+        merged_at: options.mergedAt ?? (incident
+          ? "2026-08-28T11:00:00.000Z"
+          : "2026-08-14T00:30:00.000Z"),
         user: { id: 101 },
         merged_by: { id: 202 },
         base: { ref: "main", repo: { full_name: REPOSITORY } },
@@ -477,7 +504,11 @@ function harness(options: {
       return response({
         sha: CANDIDATE,
         tree: { sha: TREE },
-        parents: [{ sha: "d".repeat(40) }],
+        parents: [{
+          sha: incident
+            ? options.incidentCandidateParent ?? INCIDENT_ORIGINAL_CANDIDATE
+            : "d".repeat(40),
+        }],
       });
     }
     if (url.endsWith(`/git/commits/${REVIEWED_HEAD}`)) {
@@ -487,7 +518,83 @@ function harness(options: {
         parents: [{ sha: "e".repeat(40) }],
       });
     }
+    if (url.includes(`/commits/${INCIDENT_ORIGINAL_CANDIDATE}/pulls?`)) {
+      return response([{
+        number: 65,
+        state: "closed",
+        merge_commit_sha: INCIDENT_ORIGINAL_CANDIDATE,
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: { repo: { full_name: REPOSITORY } },
+      }]);
+    }
+    if (url.endsWith("/pulls/65")) {
+      return response({
+        number: 65,
+        state: "closed",
+        merged: true,
+        draft: false,
+        merge_commit_sha: INCIDENT_ORIGINAL_CANDIDATE,
+        merged_at: "2026-08-28T10:20:39Z",
+        user: { id: 101 },
+        merged_by: { id: 202 },
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: {
+          sha: INCIDENT_ORIGINAL_REVIEWED_HEAD,
+          repo: { full_name: REPOSITORY },
+        },
+      });
+    }
+    if (url.endsWith(`/git/commits/${INCIDENT_ORIGINAL_CANDIDATE}`)) {
+      return response({
+        sha: INCIDENT_ORIGINAL_CANDIDATE,
+        tree: { sha: INCIDENT_ORIGINAL_TREE },
+        parents: [{ sha: "f".repeat(40) }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${INCIDENT_ORIGINAL_REVIEWED_HEAD}`)) {
+      return response({
+        sha: INCIDENT_ORIGINAL_REVIEWED_HEAD,
+        tree: { sha: INCIDENT_ORIGINAL_TREE },
+        parents: [{ sha: "e".repeat(40) }],
+      });
+    }
     if (url.endsWith(`/actions/runs/${currentId}`)) return response(current);
+    if (url.endsWith(`/actions/runs/${INCIDENT_PRIOR_RUN_ID}`)) {
+      return response(workflowRun({
+        id: INCIDENT_PRIOR_RUN_ID,
+        path: PROVIDER_PATH,
+        displayTitle:
+          `Permanent staging provider mutation | remove-forbidden-offsite-backup-variables | ${INCIDENT_ORIGINAL_CANDIDATE}`,
+        status: "completed",
+        conclusion: "failure",
+        createdAt: "2026-08-28T10:47:25Z",
+        updatedAt: "2026-08-28T10:51:43Z",
+        headSha: INCIDENT_ORIGINAL_CANDIDATE,
+      }));
+    }
+    if (url.includes(
+      `/actions/runs/${INCIDENT_PRIOR_RUN_ID}/artifacts?`,
+    )) {
+      return response({
+        total_count: 1,
+        artifacts: [{
+          id: INCIDENT_ARTIFACT_ID,
+          name: INCIDENT_ARTIFACT_NAME,
+          size_in_bytes: 2090,
+          expired: options.incidentArtifactExpired ?? false,
+          digest: options.incidentArtifactDigest ?? INCIDENT_ARTIFACT_DIGEST,
+          created_at: "2026-08-28T10:51:40Z",
+          updated_at: "2026-08-28T10:51:40Z",
+          expires_at: options.incidentArtifactExpiresAt ??
+            "2026-11-26T10:51:40Z",
+          workflow_run: {
+            id: INCIDENT_PRIOR_RUN_ID,
+            head_branch: "main",
+            head_sha: INCIDENT_ORIGINAL_CANDIDATE,
+          },
+        }],
+      });
+    }
     if (url.endsWith(`/actions/runs/${deploymentRunId}`)) {
       return response(selectedDeployment);
     }
@@ -537,7 +644,19 @@ function harness(options: {
     if (jobsMatch) {
       const runId = Number(jobsMatch[1]);
       return response(options.jobEvidence?.[runId] ??
-        (coldPrepareReconcile && runId === ambiguousPrepare.id
+        (incident && runId === INCIDENT_PRIOR_RUN_ID
+          ? jobs(workflowRun({
+              id: INCIDENT_PRIOR_RUN_ID,
+              path: PROVIDER_PATH,
+              displayTitle:
+                `Permanent staging provider mutation | remove-forbidden-offsite-backup-variables | ${INCIDENT_ORIGINAL_CANDIDATE}`,
+              status: "completed",
+              conclusion: "failure",
+              createdAt: "2026-08-28T10:47:25Z",
+              updatedAt: "2026-08-28T10:51:43Z",
+              headSha: INCIDENT_ORIGINAL_CANDIDATE,
+            }), "failure")
+          : coldPrepareReconcile && runId === ambiguousPrepare.id
           ? jobs(ambiguousPrepare, "cancelled")
           : coldReconcile && runId === ambiguousQuiesce.id
           ? jobs(ambiguousQuiesce, "cancelled")
@@ -581,6 +700,8 @@ function harness(options: {
         ? options.priorRunId ?? "679"
         : activateReconcile
         ? options.priorRunId ?? "689"
+        : incident
+        ? options.priorRunId ?? String(INCIDENT_PRIOR_RUN_ID)
         : options.priorRunId ?? null,
       prepareRunId: coldReconcile ? options.prepareRunId ?? "675" : null,
       target: runtime ? target : null,
@@ -592,6 +713,162 @@ function harness(options: {
 }
 
 describe("reviewed candidate mutation authority", () => {
+  it("authorizes only the direct-child incident cancellation bound to the retained failed run", async () => {
+    const authority = await harness({ operation: INCIDENT_OPERATION }).verify();
+    expect(authority).toMatchObject({
+        operation: INCIDENT_OPERATION,
+        incidentOriginalCandidateSha: INCIDENT_ORIGINAL_CANDIDATE,
+        incidentSuccessorDirectParentExact: true,
+        incidentPriorCleanupRunId: String(INCIDENT_PRIOR_RUN_ID),
+        incidentPriorCleanupArtifactId: String(INCIDENT_ARTIFACT_ID),
+        incidentPriorCleanupArtifactDigest: INCIDENT_ARTIFACT_DIGEST,
+        incidentPriorCleanupArtifactExact: true,
+        incidentCancellationOnlyExact: true,
+        incidentRecoveryWithinGraceExact: true,
+        incidentSafePriorSkippedWriteRunIds: [],
+        incidentAmbiguousPriorCancelRunIds: [],
+        incidentPriorRunsStrictlyOrderedAndNonOverlappingExact: true,
+        incidentSameCandidateConvergenceExact: true,
+        incidentAbsoluteRecoveryDeadline: "2026-08-29T10:51:43.000Z",
+        safePriorSkippedWriteRunIds: [],
+        successfulStagingDeploymentRunIds: [],
+      });
+    expect(protectedPermanentStagingVariableMutationInternals
+      .reviewedIncidentCleanupCancelAuthorityValueExact({
+        command: "verify-github-reviewed-candidate-authority",
+        ok: true,
+        ...authority,
+      }, {
+        candidateSha: CANDIDATE,
+        priorCleanupRunId: String(INCIDENT_PRIOR_RUN_ID),
+        currentRunId: "500",
+      })).toBe(true);
+  });
+
+  it("allows an ordered same-candidate retry only after an exact ambiguous incident write", async () => {
+    const current = workflowRun({
+      id: 500,
+      path: PROVIDER_PATH,
+      displayTitle: title(INCIDENT_OPERATION),
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-28T11:20:00.000Z",
+    });
+    const ambiguous = workflowRun({
+      id: 450,
+      path: PROVIDER_PATH,
+      displayTitle: title(INCIDENT_OPERATION),
+      status: "completed",
+      conclusion: "failure",
+      createdAt: "2026-08-28T11:05:00.000Z",
+      updatedAt: "2026-08-28T11:10:00.000Z",
+    });
+    await expect(harness({
+      operation: INCIDENT_OPERATION,
+      providerRuns: [current, ambiguous],
+      jobEvidence: { 450: jobs(ambiguous, "failure") },
+    }).verify()).resolves.toMatchObject({
+      safePriorSkippedWriteRunIds: [],
+      incidentSafePriorSkippedWriteRunIds: [],
+      incidentAmbiguousPriorCancelRunIds: ["450"],
+      incidentPriorRunsStrictlyOrderedAndNonOverlappingExact: true,
+      incidentSameCandidateConvergenceExact: true,
+    });
+  });
+
+  it("rejects overlapping, successful, or different-operation rescue-candidate history", async () => {
+    const current = workflowRun({
+      id: 500,
+      path: PROVIDER_PATH,
+      displayTitle: title(INCIDENT_OPERATION),
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-28T11:20:00.000Z",
+    });
+    const first = workflowRun({
+      id: 440,
+      path: PROVIDER_PATH,
+      displayTitle: title(INCIDENT_OPERATION),
+      conclusion: "failure",
+      createdAt: "2026-08-28T11:05:00.000Z",
+      updatedAt: "2026-08-28T11:15:00.000Z",
+    });
+    const overlapping = workflowRun({
+      id: 450,
+      path: PROVIDER_PATH,
+      displayTitle: title(INCIDENT_OPERATION),
+      conclusion: "cancelled",
+      createdAt: "2026-08-28T11:14:00.000Z",
+      updatedAt: "2026-08-28T11:18:00.000Z",
+    });
+    await expect(harness({
+      operation: INCIDENT_OPERATION,
+      providerRuns: [current, overlapping, first],
+      jobEvidence: {
+        440: jobs(first, "failure"),
+        450: jobs(overlapping, "cancelled"),
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_incident_cleanup_cancel_history_invalid",
+    );
+
+    const successful = workflowRun({
+      id: 450,
+      path: PROVIDER_PATH,
+      displayTitle: title(INCIDENT_OPERATION),
+      conclusion: "success",
+      createdAt: "2026-08-28T11:05:00.000Z",
+      updatedAt: "2026-08-28T11:10:00.000Z",
+    });
+    await expect(harness({
+      operation: INCIDENT_OPERATION,
+      providerRuns: [current, successful],
+      jobEvidence: { 450: jobs(successful, "success") },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_incident_cleanup_cancel_history_invalid",
+    );
+
+    const otherOperation = workflowRun({
+      id: 450,
+      path: PROVIDER_PATH,
+      displayTitle: title("provider-openai-api-key"),
+      conclusion: "failure",
+      createdAt: "2026-08-28T11:05:00.000Z",
+      updatedAt: "2026-08-28T11:10:00.000Z",
+    });
+    await expect(harness({
+      operation: INCIDENT_OPERATION,
+      providerRuns: [current, otherOperation],
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_incident_cleanup_cancel_history_invalid",
+    );
+  });
+
+  it("rejects incident cancellation with the wrong parent, artifact, or recovery deadline", async () => {
+    await expect(harness({
+      operation: INCIDENT_OPERATION,
+      incidentCandidateParent: "d".repeat(40),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_incident_cleanup_cancel_successor_invalid",
+    );
+    await expect(harness({
+      operation: INCIDENT_OPERATION,
+      incidentArtifactDigest: `sha256:${"0".repeat(64)}`,
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_incident_cleanup_cancel_artifact_invalid",
+    );
+    await expect(harness({
+      operation: INCIDENT_OPERATION,
+      current: {
+        created_at: "2026-08-29T10:51:43.000Z",
+        run_started_at: "2026-08-29T10:51:43.000Z",
+        updated_at: "2026-08-29T10:51:44.000Z",
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_incident_cleanup_cancel_history_invalid",
+    );
+  });
+
   it("binds cold history to the exact workflow job names", () => {
     const workflow = fs.readFileSync(COLD_RECOVERY_PATH, "utf8");
     expect(workflow).toContain(

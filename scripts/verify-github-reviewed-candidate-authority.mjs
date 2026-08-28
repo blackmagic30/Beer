@@ -82,6 +82,7 @@ const PROVIDER_OPERATIONS = new Set([
   "remove-forbidden-offsite-backup-variables",
   "resume-forbidden-offsite-backup-deletion-patch",
   "cancel-forbidden-offsite-backup-deletion-patch",
+  "cancel-masked-forbidden-offsite-backup-deletion-patch",
 ]);
 const OFFSITE_CLEANUP_OPERATION =
   "remove-forbidden-offsite-backup-variables";
@@ -89,8 +90,32 @@ const OFFSITE_CLEANUP_RECOVERY_OPERATIONS = new Set([
   "resume-forbidden-offsite-backup-deletion-patch",
   "cancel-forbidden-offsite-backup-deletion-patch",
 ]);
+const INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION =
+  "cancel-masked-forbidden-offsite-backup-deletion-patch";
 const OFFSITE_CLEANUP_PATCH_SHA256 =
   "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91";
+const INCIDENT_ORIGINAL_CANDIDATE_SHA =
+  "ac7130e0306802825922d21a4c61135b84edd43b";
+const INCIDENT_ORIGINAL_REVIEWED_HEAD_SHA =
+  "b41c39a601f20a510ccbc09187acdca29abd7a02";
+const INCIDENT_ORIGINAL_TREE_SHA =
+  "b111b763883f04d06642f8e01386b0af5a201fa0";
+const INCIDENT_ORIGINAL_PULL_REQUEST_NUMBER = 65;
+const INCIDENT_ORIGINAL_MERGED_AT = "2026-08-28T10:20:39Z";
+const INCIDENT_PRIOR_CLEANUP_RUN_ID = "33164687424";
+const INCIDENT_PRIOR_CLEANUP_RUN_CREATED_AT = "2026-08-28T10:47:25Z";
+const INCIDENT_PRIOR_CLEANUP_RUN_COMPLETED_AT = "2026-08-28T10:51:43Z";
+const INCIDENT_PRIOR_CLEANUP_ARTIFACT_ID = 9683176636;
+const INCIDENT_PRIOR_CLEANUP_ARTIFACT_NAME =
+  "pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-ac7130e0306802825922d21a4c61135b84edd43b";
+const INCIDENT_PRIOR_CLEANUP_ARTIFACT_DIGEST =
+  "sha256:0df300c84d53ece3fca5f7c72007bf5dd4a8ba9d1ea989e5d74bc80904aed98e";
+const INCIDENT_PRIOR_CLEANUP_ARTIFACT_BYTES = 2090;
+const INCIDENT_PRIOR_CLEANUP_ARTIFACT_CREATED_AT = "2026-08-28T10:51:40Z";
+const INCIDENT_STAGED_PATCH_ID = "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae";
+const INCIDENT_STAGED_PATCH_CREATED_AT = "2026-08-28T10:51:38.861Z";
+const INCIDENT_ORIGINAL_BASELINE_METADATA_SHA256 =
+  "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd";
 const RUNTIME_VARIABLE_TARGETS = new Set(["permanent-staging", "production"]);
 const RUNTIME_VARIABLE_NAMES = new Set([
   "DATABASE_URL",
@@ -175,6 +200,8 @@ function parseArguments(argv) {
   const runnerLossReconcile = RUNNER_LOSS_RECOVERY_OPERATIONS.has(operation);
   const offsiteCleanupRecovery =
     OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(operation);
+  const incidentMaskedCleanupCancel =
+    operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION;
   if (
     !SHA.test(candidateSha) ||
     (!cutover &&
@@ -191,7 +218,7 @@ function parseArguments(argv) {
         deploymentRunId !== null ||
         cutoverMode !== null
       : replacementRunId !== null || deploymentRunId !== null || cutoverMode !== null) ||
-    (offsiteCleanupRecovery || runnerLossReconcile
+    (offsiteCleanupRecovery || incidentMaskedCleanupCancel || runnerLossReconcile
       ? !RUN_ID.test(priorRunId ?? "")
       : priorRunId !== null) ||
     (coldQuiesceReconcile
@@ -292,6 +319,17 @@ function operationConfiguration(
         `Automatic maintenance worker fence | permanent-staging | reconcile-activate | ${candidateSha}`,
       jobName: "Reconcile an ambiguous staging automatic-maintenance activation",
       writeStep: null,
+      priorSkippedWriteAllowed: true,
+    });
+  }
+  if (operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION) {
+    return Object.freeze({
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      workflowId: PROVIDER_WORKFLOW_ID,
+      displayTitle:
+        `Permanent staging provider mutation | ${operation} | ${candidateSha}`,
+      jobName: PROVIDER_JOB_NAME,
+      writeStep: PROVIDER_WRITE_STEP,
       priorSkippedWriteAllowed: true,
     });
   }
@@ -1232,6 +1270,229 @@ async function verifyOffsiteCleanupRecoveryHistory(input, currentRun) {
   });
 }
 
+async function verifyIncidentMaskedCleanupCancelHistory(
+  input,
+  currentRun,
+  policy,
+) {
+  if (input.priorRunId !== INCIDENT_PRIOR_CLEANUP_RUN_ID) {
+    fail("incident_cleanup_cancel_history_invalid");
+  }
+  const candidateCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${input.candidateSha}`,
+  );
+  if (
+    candidateCommit?.sha !== input.candidateSha ||
+    !Array.isArray(candidateCommit?.parents) ||
+    candidateCommit.parents.length !== 1 ||
+    candidateCommit.parents[0]?.sha !== INCIDENT_ORIGINAL_CANDIDATE_SHA
+  ) fail("incident_cleanup_cancel_successor_invalid");
+
+  const originalPull = await verifyReviewedPullRequest(
+    input.fetchImpl,
+    input.token,
+    policy,
+    INCIDENT_ORIGINAL_CANDIDATE_SHA,
+  );
+  if (
+    originalPull.number !== INCIDENT_ORIGINAL_PULL_REQUEST_NUMBER ||
+    originalPull.reviewedPrHeadSha !== INCIDENT_ORIGINAL_REVIEWED_HEAD_SHA ||
+    originalPull.treeSha !== INCIDENT_ORIGINAL_TREE_SHA ||
+    originalPull.mergedAt !== INCIDENT_ORIGINAL_MERGED_AT
+  ) fail("incident_cleanup_cancel_original_candidate_invalid");
+
+  const originalConfiguration = operationConfiguration(
+    OFFSITE_CLEANUP_OPERATION,
+    INCIDENT_ORIGINAL_CANDIDATE_SHA,
+    null,
+    null,
+  );
+  const priorRun = validateRunIdentity(
+    await githubGet(
+      input.fetchImpl,
+      input.token,
+      REPOSITORY,
+      `/actions/runs/${INCIDENT_PRIOR_CLEANUP_RUN_ID}`,
+    ),
+    {
+      runId: Number(INCIDENT_PRIOR_CLEANUP_RUN_ID),
+      candidateSha: INCIDENT_ORIGINAL_CANDIDATE_SHA,
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      displayTitle: originalConfiguration.displayTitle,
+      failureCode: "incident_cleanup_cancel_original_run_invalid",
+    },
+  );
+  if (
+    priorRun.created_at !== INCIDENT_PRIOR_CLEANUP_RUN_CREATED_AT ||
+    priorRun.run_started_at !== INCIDENT_PRIOR_CLEANUP_RUN_CREATED_AT ||
+    priorRun.updated_at !== INCIDENT_PRIOR_CLEANUP_RUN_COMPLETED_AT ||
+    priorRun.status !== "completed" ||
+    priorRun.conclusion !== "failure" ||
+    await priorRunWriteDisposition(input, priorRun, originalConfiguration) !==
+      "may-have-written"
+  ) fail("incident_cleanup_cancel_original_run_invalid");
+
+  const artifactListing = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/actions/runs/${INCIDENT_PRIOR_CLEANUP_RUN_ID}/artifacts?per_page=100&page=1`,
+  );
+  const artifact = Array.isArray(artifactListing?.artifacts)
+    && artifactListing.artifacts.length === 1
+    ? artifactListing.artifacts[0]
+    : null;
+  const artifactCreatedAt = parseTimestamp(
+    artifact?.created_at,
+    "incident_cleanup_cancel_artifact_invalid",
+  );
+  const artifactUpdatedAt = parseTimestamp(
+    artifact?.updated_at,
+    "incident_cleanup_cancel_artifact_invalid",
+  );
+  const artifactExpiresAt = parseTimestamp(
+    artifact?.expires_at,
+    "incident_cleanup_cancel_artifact_invalid",
+  );
+  if (
+    artifactListing?.total_count !== 1 ||
+    artifact?.id !== INCIDENT_PRIOR_CLEANUP_ARTIFACT_ID ||
+    artifact?.name !== INCIDENT_PRIOR_CLEANUP_ARTIFACT_NAME ||
+    artifact?.size_in_bytes !== INCIDENT_PRIOR_CLEANUP_ARTIFACT_BYTES ||
+    artifact?.expired !== false ||
+    artifact?.digest !== INCIDENT_PRIOR_CLEANUP_ARTIFACT_DIGEST ||
+    artifact?.created_at !== INCIDENT_PRIOR_CLEANUP_ARTIFACT_CREATED_AT ||
+    artifact?.updated_at !== INCIDENT_PRIOR_CLEANUP_ARTIFACT_CREATED_AT ||
+    artifact?.workflow_run?.id !== Number(INCIDENT_PRIOR_CLEANUP_RUN_ID) ||
+    artifact?.workflow_run?.head_branch !== "main" ||
+    artifact?.workflow_run?.head_sha !== INCIDENT_ORIGINAL_CANDIDATE_SHA ||
+    artifactCreatedAt > artifactUpdatedAt ||
+    artifactUpdatedAt > priorRun.updatedAt ||
+    artifactExpiresAt <= currentRun.startedAt
+  ) fail("incident_cleanup_cancel_artifact_invalid");
+
+  if (
+    originalPull.mergedAt !== INCIDENT_ORIGINAL_MERGED_AT ||
+    parseTimestamp(originalPull.mergedAt, "incident_cleanup_cancel_history_invalid") >
+      priorRun.startedAt ||
+    priorRun.updatedAt > input.mergedAtMs ||
+    input.mergedAtMs > currentRun.startedAt ||
+    currentRun.startedAt - priorRun.updatedAt >= RECOVERY_GRACE_MS
+  ) fail("incident_cleanup_cancel_history_invalid");
+
+  const incidentConfiguration = operationConfiguration(
+    INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION,
+    input.candidateSha,
+    null,
+    null,
+  );
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: PROVIDER_WORKFLOW_ID,
+  });
+  const matching = history.filter((run) =>
+    run?.head_sha === input.candidateSha);
+  if (matching.some((run) =>
+    run?.display_title !== incidentConfiguration.displayTitle) ||
+    new Set(matching.map((run) => run?.id)).size !== matching.length) {
+    fail("incident_cleanup_cancel_history_invalid");
+  }
+  let currentSeen = 0;
+  const safePriorSkippedWriteRunIds = [];
+  const ambiguousPriorRuns = [];
+  const orderedPriorRuns = [];
+  const absoluteDeadlineMs = priorRun.updatedAt + RECOVERY_GRACE_MS;
+  for (const observed of matching) {
+    const run = validateRunIdentity(observed, {
+      runId: observed?.id,
+      candidateSha: input.candidateSha,
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      displayTitle: incidentConfiguration.displayTitle,
+      failureCode: "incident_cleanup_cancel_history_invalid",
+    });
+    if (run.createdAt < input.mergedAtMs ||
+      run.createdAt > currentRun.startedAt ||
+      run.startedAt >= absoluteDeadlineMs) {
+      fail("incident_cleanup_cancel_history_invalid");
+    }
+    if (run.id === currentRun.id) {
+      if (!isNonterminalRun(run) ||
+        run.created_at !== currentRun.created_at ||
+        run.run_started_at !== currentRun.run_started_at) {
+        fail("incident_cleanup_cancel_history_invalid");
+      }
+      currentSeen += 1;
+      continue;
+    }
+    const disposition = await priorRunWriteDisposition(
+      input,
+      run,
+      incidentConfiguration,
+    );
+    const updatedAt = parseTimestamp(
+      run.updated_at,
+      "incident_cleanup_cancel_history_invalid",
+    );
+    if (updatedAt >= absoluteDeadlineMs || updatedAt >= currentRun.startedAt) {
+      fail("incident_cleanup_cancel_history_invalid");
+    }
+    if (disposition === "skipped") {
+      safePriorSkippedWriteRunIds.push(String(run.id));
+    } else if (disposition === "may-have-written") {
+      ambiguousPriorRuns.push(Object.freeze({ run, updatedAt }));
+    } else {
+      fail("incident_cleanup_cancel_history_invalid");
+    }
+    orderedPriorRuns.push(Object.freeze({ run, updatedAt }));
+  }
+  orderedPriorRuns.sort((left, right) =>
+    left.run.startedAt - right.run.startedAt);
+  if (currentSeen !== 1 || orderedPriorRuns.some((item, index) =>
+    index > 0 && orderedPriorRuns[index - 1].updatedAt >= item.run.startedAt) ||
+    (orderedPriorRuns.length > 0 &&
+      orderedPriorRuns.at(-1).updatedAt >= currentRun.startedAt)) {
+    fail("incident_cleanup_cancel_history_invalid");
+  }
+
+  return Object.freeze({
+    incidentOriginalCandidateSha: INCIDENT_ORIGINAL_CANDIDATE_SHA,
+    incidentOriginalReviewedPrHeadSha: INCIDENT_ORIGINAL_REVIEWED_HEAD_SHA,
+    incidentOriginalPullRequestNumber: INCIDENT_ORIGINAL_PULL_REQUEST_NUMBER,
+    incidentOriginalPullRequestMergedAt: INCIDENT_ORIGINAL_MERGED_AT,
+    incidentSuccessorDirectParentExact: true,
+    incidentPriorCleanupRunId: INCIDENT_PRIOR_CLEANUP_RUN_ID,
+    incidentPriorCleanupRunCreatedAt: INCIDENT_PRIOR_CLEANUP_RUN_CREATED_AT,
+    incidentPriorCleanupRunCompletedAt: INCIDENT_PRIOR_CLEANUP_RUN_COMPLETED_AT,
+    incidentPriorCleanupArtifactId: String(INCIDENT_PRIOR_CLEANUP_ARTIFACT_ID),
+    incidentPriorCleanupArtifactName: INCIDENT_PRIOR_CLEANUP_ARTIFACT_NAME,
+    incidentPriorCleanupArtifactDigest: INCIDENT_PRIOR_CLEANUP_ARTIFACT_DIGEST,
+    incidentPriorCleanupArtifactExact: true,
+    incidentStagedPatchId: INCIDENT_STAGED_PATCH_ID,
+    incidentStagedPatchCreatedAt: INCIDENT_STAGED_PATCH_CREATED_AT,
+    incidentMaskedPatchStructure:
+      "exact-three-offsite-variable-wrappers-with-five-asterisk-values",
+    incidentOriginalBaselineMetadataSha256:
+      INCIDENT_ORIGINAL_BASELINE_METADATA_SHA256,
+    incidentCancellationOnlyExact: true,
+    incidentRecoveryGraceHours: RECOVERY_GRACE_HOURS,
+    incidentRecoveryWithinGraceExact: true,
+    incidentSafePriorSkippedWriteRunIds:
+      safePriorSkippedWriteRunIds.sort(
+        (left, right) => Number(left) - Number(right),
+      ),
+    incidentAmbiguousPriorCancelRunIds: ambiguousPriorRuns.map((item) =>
+      String(item.run.id)).sort(
+      (left, right) => Number(left) - Number(right),
+    ),
+    incidentPriorRunsStrictlyOrderedAndNonOverlappingExact: true,
+    incidentSameCandidateConvergenceExact: true,
+    incidentAbsoluteRecoveryDeadline: new Date(absoluteDeadlineMs).toISOString(),
+  });
+}
+
 async function verifySelectedReplacementHistory(input) {
   const configuration = operationConfiguration(
     "supabase-key-replacement",
@@ -1585,6 +1846,17 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     mergedAt: pull.mergedAt,
     mergedAtMs,
   };
+  const incidentCleanupCancelHistory =
+    input.operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION
+      ? await verifyIncidentMaskedCleanupCancelHistory(
+        {
+          ...historyInput,
+          priorRunId: input.priorRunId,
+        },
+        currentRun,
+        policy,
+      )
+      : null;
   const operationHistory = input.operation === "supabase-legacy-key-cutover"
     ? await verifyCutoverOperationHistory(historyInput, configuration, currentRun)
     : input.operation === "cold-recovery-reconcile-quiesce"
@@ -1602,6 +1874,13 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       priorRunId: input.priorRunId,
       replacementRunId: input.replacementRunId,
     }, currentRun)
+    : input.operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION
+    ? Object.freeze({
+      safePriorSkippedWriteRunIds:
+        incidentCleanupCancelHistory.incidentSafePriorSkippedWriteRunIds,
+      safePriorReadOnlyRunIds: [],
+      reconciledPriorAmbiguousDisableRunId: null,
+    })
     : OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(input.operation)
     ? Object.freeze({
       safePriorSkippedWriteRunIds: [],
@@ -1753,6 +2032,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       }
       : {}),
     ...(cleanupRecoveryHistory ?? {}),
+    ...(incidentCleanupCancelHistory ?? {}),
     ...(stagingDeploymentRunIds === null
       ? {}
       : {
