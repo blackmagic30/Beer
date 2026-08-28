@@ -300,7 +300,7 @@ async function call(
 ): Promise<unknown> {
   const response = await fetchImpl(ENDPOINT, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    headers: { "Project-Access-Token": token, "content-type": "application/json" },
     body: JSON.stringify({ query, variables }),
     redirect: "error",
     cache: "no-store",
