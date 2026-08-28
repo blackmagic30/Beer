@@ -140,7 +140,7 @@ jobs:
         id: prior_cleanup_evidence
         if: inputs.operation == 'resume-forbidden-offsite-backup-deletion-patch' || inputs.operation == 'cancel-forbidden-offsite-backup-deletion-patch'
         continue-on-error: true
-        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.prior_cleanup_run_id }}

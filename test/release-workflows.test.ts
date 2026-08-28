@@ -1033,7 +1033,7 @@ describe("release workflow contracts", () => {
       ["actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961", 2],
       ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 40],
       ["actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3", 1],
-      ["actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70", 49],
+      ["actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", 49],
       [
         "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
         2,

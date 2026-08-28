@@ -70,7 +70,7 @@ function prerequisitesVerification(candidateSha = CANDIDATE): string {
       producerSha256:
         "ae45432738c30b21217619946664dbf4726736371743e78279ff47d1463ca660",
       producerWorkflowSha256:
-        "983a7a507587babbaac6490e1b21a5877f1f0839e9a96aa076e5e94c39501df5",
+        "c7cb09c187a92693141db89eb0b3313d4ca8c0d1bc85179a2cf1d39ffc5f17f8",
       terminalSha256: hash,
       bindingSha256: hash,
       intentSha256: hash,
@@ -90,7 +90,7 @@ function prerequisitesVerification(candidateSha = CANDIDATE): string {
       producerSha256:
         "35dea44121eb5ac9de6a89602838fd54394574005ed11594284d75d1f7f77492",
       producerWorkflowSha256:
-        "517158926950ff623482a84fb3516c4218858f7f59fc9a7552c930eaa156768f",
+        "414163692a141fc581498e8faf9d810f441710c0312df4a814ceabd36f03b511",
       receiptSha256: hash,
       deploymentIdSha256: hash,
       replicaCount: 1,
@@ -850,7 +850,7 @@ describe("protected production maintenance LOGIN limit transition", () => {
       "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
     );
     expect(workflow).toContain(
-      "actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70",
+      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
     );
     const repositoryGate = workflow.indexOf("npm run check");
     const prerequisiteVerifier = workflow.indexOf(

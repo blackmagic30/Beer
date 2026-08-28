@@ -1605,7 +1605,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     );
     expect(workflow).toContain("--mode production-activate");
     expect(workflow).toContain("--role-intent-file \"$sealed/intent.json\"");
-    expect(workflow.match(/actions\/download-artifact@b7c52a5f7a25/g))
+    expect(workflow.match(/actions\/download-artifact@3e5f45b2cfb9/g))
       .toHaveLength(13);
     const reconcileJob = workflow.split("\n  reconcile-activate:")[1];
     expect(reconcileJob).toContain(
