@@ -128,6 +128,7 @@ const PROVIDER_MUTATION_OPERATIONS = Object.freeze([
   "remove-forbidden-offsite-backup-variables",
   "resume-forbidden-offsite-backup-deletion-patch",
   "cancel-forbidden-offsite-backup-deletion-patch",
+  "cancel-masked-forbidden-offsite-backup-deletion-patch",
 ]);
 const OFFSITE_CLEANUP_OPERATION =
   "remove-forbidden-offsite-backup-variables";
@@ -135,6 +136,10 @@ const OFFSITE_CLEANUP_RECOVERY_OPERATIONS = new Set([
   "resume-forbidden-offsite-backup-deletion-patch",
   "cancel-forbidden-offsite-backup-deletion-patch",
 ]);
+const INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION =
+  "cancel-masked-forbidden-offsite-backup-deletion-patch";
+const INCIDENT_MASKED_CLEANUP_CANCEL_DEADLINE_MS =
+  Date.parse("2026-08-29T10:51:43Z");
 const RUNTIME_VARIABLE_TARGETS = Object.freeze([
   "permanent-staging",
   "production",
@@ -768,6 +773,40 @@ async function providerWriteDisposition(
   ) ? "may-have-written" : "invalid";
 }
 
+async function successfulIncidentProviderTerminalExact(
+  fetchImpl,
+  token,
+  policy,
+  run,
+) {
+  // The reviewed workflow has no continue-on-error on this step, and the
+  // incident executor returns zero only for its three terminal outcomes.
+  if (run.conclusion !== "success") return false;
+  const listing = await githubGet(
+    fetchImpl,
+    token,
+    policy.repository,
+    `/actions/runs/${run.id}/jobs?filter=all&per_page=100`,
+  );
+  if (
+    listing?.total_count !== 1 ||
+    !Array.isArray(listing?.jobs) ||
+    listing.jobs.length !== 1
+  ) return false;
+  const job = listing.jobs[0];
+  const terminalSteps = Array.isArray(job?.steps)
+    ? job.steps.filter((step) => step?.name === PROVIDER_MUTATION_STEP)
+    : [];
+  return job?.run_id === run.id &&
+    job?.run_attempt === 1 &&
+    job?.name === PROVIDER_MUTATION_JOB &&
+    job?.status === "completed" &&
+    job?.conclusion === "success" &&
+    terminalSteps.length === 1 &&
+    terminalSteps[0]?.status === "completed" &&
+    terminalSteps[0]?.conclusion === "success";
+}
+
 async function verifyStagingMutationClosure(input) {
   const mergedAtMs = timestamp(input.reviewedPullRequest.mergedAt);
   const deployStartedAtMs = timestamp(input.deployments?.[1]?.startedAt);
@@ -852,6 +891,8 @@ async function verifyStagingMutationClosure(input) {
   const successfulOffsiteCleanupRecoveryRuns = [];
   const safeSkippedOffsiteCleanupRuns = [];
   const safeSkippedOffsiteCleanupRecoveryRuns = [];
+  const incidentCleanupCancelRuns = [];
+  let nonIncidentProviderRuns = 0;
   let successfulOffsiteCleanupRuns = 0;
   for (const observed of providerRuns.filter((run) =>
     run?.head_sha === input.candidateSha)) {
@@ -871,7 +912,29 @@ async function verifyStagingMutationClosure(input) {
       run.createdAtMs < mergedAtMs ||
       run.createdAtMs > consumerStartedAtMs
     ) throw new Error("staging_mutation_history_invalid");
-    if (run.conclusion === "success") {
+    if (operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION) {
+      const disposition = run.conclusion === "success"
+        ? await successfulIncidentProviderTerminalExact(
+          input.fetchImpl,
+          input.token,
+          input.policy,
+          run,
+        )
+          ? "success"
+          : "invalid"
+        : await providerWriteDisposition(
+          input.fetchImpl,
+          input.token,
+          input.policy,
+          run,
+        );
+      if (!new Set(["success", "skipped", "may-have-written"]).has(
+        disposition,
+      )) throw new Error("staging_mutation_history_invalid");
+      requireInitialWriteInWindow(run);
+      incidentCleanupCancelRuns.push(Object.freeze({ run, disposition }));
+    } else if (run.conclusion === "success") {
+      nonIncidentProviderRuns += 1;
       if (operation === OFFSITE_CLEANUP_OPERATION) {
         successfulOffsiteCleanupRuns += 1;
         requireInitialWriteInWindow(run);
@@ -882,6 +945,7 @@ async function verifyStagingMutationClosure(input) {
         requireInitialWriteInWindow(run);
       }
     } else {
+      nonIncidentProviderRuns += 1;
       const disposition = await providerWriteDisposition(
         input.fetchImpl,
         input.token,
@@ -915,6 +979,22 @@ async function verifyStagingMutationClosure(input) {
   }
   if (successfulOffsiteCleanupRuns > 1) {
     throw new Error("staging_mutation_history_invalid");
+  }
+  if (incidentCleanupCancelRuns.length > 0) {
+    const ordered = [...incidentCleanupCancelRuns].sort((left, right) =>
+      left.run.startedAtMs - right.run.startedAtMs);
+    const successful = ordered.filter((item) =>
+      item.disposition === "success");
+    if (
+      nonIncidentProviderRuns !== 0 ||
+      new Set(ordered.map((item) => item.run.id)).size !== ordered.length ||
+      successful.length !== 1 ||
+      ordered.at(-1) !== successful[0] ||
+      ordered.some((item) =>
+        item.run.startedAtMs >= INCIDENT_MASKED_CLEANUP_CANCEL_DEADLINE_MS) ||
+      ordered.some((item, index) => index > 0 &&
+        ordered[index - 1].run.updatedAtMs >= item.run.startedAtMs)
+    ) throw new Error("staging_mutation_history_invalid");
   }
   ambiguousOffsiteCleanupRecoveryRuns.sort((left, right) =>
     left.run.startedAtMs - right.run.startedAtMs);

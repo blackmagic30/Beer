@@ -10,6 +10,7 @@ import {
   PROTECTED_STAGING_VARIABLE_CANCEL_DELETION_QUERY,
   PROTECTED_STAGING_VARIABLE_COMMIT_DELETION_QUERY,
   PROTECTED_STAGING_VARIABLE_METADATA_QUERY,
+  PROTECTED_STAGING_VARIABLE_INCIDENT_PATCH_QUERY,
   PROTECTED_STAGING_VARIABLE_MUTATION_QUERY,
   PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
   PROTECTED_STAGING_VARIABLE_STAGE_DELETION_QUERY,
@@ -36,6 +37,11 @@ const CANDIDATE_SHA = "a".repeat(40);
 const LEGACY_SHA = "c".repeat(40);
 const IMAGE_DIGEST = `sha256:${"b".repeat(64)}`;
 const STAGED_PATCH_ID = "77777777-7777-4777-8777-777777777777";
+const INCIDENT_STAGED_PATCH_ID = "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae";
+const INCIDENT_STAGED_PATCH_CREATED_AT = "2026-08-28T10:51:38.861Z";
+const INCIDENT_PRIOR_RUN_ID = "33164687424";
+const INCIDENT_OPERATION =
+  "cancel-masked-forbidden-offsite-backup-deletion-patch";
 const EMPTY_STAGED_PATCH_ID = "<empty>";
 const FREEZE_ATTESTATION =
   "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN";
@@ -298,6 +304,221 @@ function cleanupRecoveryArgv(operation: string, includeArtifact = true): string[
   return values;
 }
 
+function incidentArgv(): string[] {
+  return [
+    "--operation",
+    INCIDENT_OPERATION,
+    "--evidence-dir",
+    "/private/evidence",
+    "--prior-cleanup-run-id",
+    INCIDENT_PRIOR_RUN_ID,
+    "--prior-cleanup-evidence-dir",
+    "/private/incident-prior-cleanup-evidence",
+    "--reviewed-authority-file",
+    "/private/reviewed-authority.json",
+  ];
+}
+
+type ProviderSnapshotFixture = {
+  environmentId: string;
+  variables: Array<Record<string, unknown>>;
+  stagedPatchId: string;
+  stagedPatchStatus: string;
+  stagedPatchEmpty: boolean;
+  serviceInstance: {
+    id: string;
+    serviceId: string;
+    environmentId: string;
+    numReplicas: number | null;
+    source: { repo: string | null; image: string | null };
+    latestDeployment: Record<string, unknown>;
+    activeDeployments: Array<Record<string, unknown>>;
+    domains: Array<Record<string, unknown> & { kind: "service" | "custom" }>;
+  };
+  deployment: Record<string, unknown>;
+};
+
+function incidentBaselineFixture(): ProviderSnapshotFixture {
+  return JSON.parse(fs.readFileSync(path.join(
+    import.meta.dirname,
+    "fixtures/permanent-staging-offsite-cleanup-preflight-provider-snapshot.json",
+  ), "utf8")) as ProviderSnapshotFixture;
+}
+
+function metadataFromSnapshot(
+  snapshot: ProviderSnapshotFixture,
+  patch: Record<string, unknown>,
+  stagedPatchId = INCIDENT_STAGED_PATCH_ID,
+): Response {
+  const serviceDomains = snapshot.serviceInstance.domains
+    .filter((domain) => domain.kind === "service")
+    .map(({ kind: _kind, ...domain }) => domain);
+  const customDomains = snapshot.serviceInstance.domains
+    .filter((domain) => domain.kind === "custom")
+    .map(({ kind: _kind, ...domain }) => domain);
+  return json({
+    data: {
+      environment: {
+        id: snapshot.environmentId,
+        variables: {
+          edges: snapshot.variables.map((node) => ({ node })),
+          pageInfo: {
+            hasNextPage: false,
+            endCursor: snapshot.variables.length > 0 ? "end" : null,
+          },
+        },
+      },
+      staged: {
+        id: stagedPatchId,
+        environmentId: snapshot.environmentId,
+        status: "STAGED",
+        patch,
+      },
+      serviceInstance: {
+        ...snapshot.serviceInstance,
+        domains: { serviceDomains, customDomains },
+      },
+    },
+  });
+}
+
+function deploymentFromSnapshot(snapshot: ProviderSnapshotFixture): Response {
+  const deployment = snapshot.deployment as ProviderSnapshotFixture["deployment"] & {
+    commitHash: string;
+    imageDigest: string | null;
+    patchId: string | null;
+  };
+  const { commitHash, imageDigest, patchId, ...identity } = deployment;
+  return json({
+    data: {
+      deployment: {
+        ...identity,
+        meta: { commitHash, imageDigest, patchId },
+      },
+    },
+  });
+}
+
+function incidentProvenance(patch: Record<string, unknown>): Response {
+  const node = {
+    id: INCIDENT_STAGED_PATCH_ID,
+    environmentId: ENVIRONMENT_ID,
+    status: "STAGED",
+    message: null,
+    createdAt: INCIDENT_STAGED_PATCH_CREATED_AT,
+    updatedAt: INCIDENT_STAGED_PATCH_CREATED_AT,
+    appliedAt: null,
+    lastAppliedError: null,
+    patch,
+  };
+  return json({ data: { active: node, selected: structuredClone(node) } });
+}
+
+function incidentPostCancelProvenance(
+  selectedPatch: Record<string, unknown>,
+  selectedOverrides: Record<string, unknown> = {},
+  activeId = EMPTY_STAGED_PATCH_ID,
+): Response {
+  return json({
+    data: {
+      active: activeId === EMPTY_STAGED_PATCH_ID
+        ? {
+            id: EMPTY_STAGED_PATCH_ID,
+            environmentId: ENVIRONMENT_ID,
+            status: "STAGED",
+            message: null,
+            createdAt: null,
+            updatedAt: null,
+            appliedAt: null,
+            lastAppliedError: null,
+            patch: {},
+          }
+        : {
+            id: INCIDENT_STAGED_PATCH_ID,
+            environmentId: ENVIRONMENT_ID,
+            status: "STAGED",
+            message: null,
+            createdAt: INCIDENT_STAGED_PATCH_CREATED_AT,
+            updatedAt: "2026-08-28T11:20:00.000Z",
+            appliedAt: null,
+            lastAppliedError: null,
+            patch: {},
+            ...selectedOverrides,
+          },
+      selected: {
+        id: INCIDENT_STAGED_PATCH_ID,
+        environmentId: ENVIRONMENT_ID,
+        status: "STAGED",
+        message: null,
+        createdAt: INCIDENT_STAGED_PATCH_CREATED_AT,
+        updatedAt: INCIDENT_STAGED_PATCH_CREATED_AT,
+        appliedAt: null,
+        lastAppliedError: null,
+        patch: selectedPatch,
+        ...selectedOverrides,
+      },
+    },
+  });
+}
+
+function incidentExecutorFetch(
+  fixture: ProviderSnapshotFixture,
+  patch: Record<string, unknown>,
+  cancelResult: Response | Error,
+  postflightObservation = incidentPostCancelProvenance(patch),
+) {
+  const fetchImpl = vi.fn()
+    .mockResolvedValueOnce(scope())
+    .mockResolvedValueOnce(scope())
+    .mockResolvedValueOnce(metadataFromSnapshot(fixture, patch))
+    .mockResolvedValueOnce(deploymentFromSnapshot(fixture))
+    .mockResolvedValueOnce(incidentProvenance(patch))
+    .mockResolvedValueOnce(metadataFromSnapshot(fixture, patch))
+    .mockResolvedValueOnce(deploymentFromSnapshot(fixture))
+    .mockResolvedValueOnce(incidentProvenance(patch))
+    .mockResolvedValueOnce(incidentProvenance(patch));
+  if (cancelResult instanceof Error) {
+    fetchImpl.mockRejectedValueOnce(cancelResult);
+  } else {
+    fetchImpl.mockResolvedValueOnce(cancelResult);
+  }
+  return fetchImpl
+    .mockResolvedValueOnce(metadataFromSnapshot(fixture, {}, "<empty>"))
+    .mockResolvedValueOnce(deploymentFromSnapshot(fixture))
+    .mockResolvedValueOnce(postflightObservation);
+}
+
+function incidentReadOnlyCloseoutFetch(
+  fixture: ProviderSnapshotFixture,
+  activeId = INCIDENT_STAGED_PATCH_ID,
+) {
+  const observation = incidentPostCancelProvenance(
+    {},
+    { updatedAt: "2026-08-28T11:20:00.000Z" },
+    activeId,
+  );
+  return vi.fn()
+    .mockResolvedValueOnce(scope())
+    .mockResolvedValueOnce(scope())
+    .mockResolvedValueOnce(metadataFromSnapshot(fixture, {}, activeId))
+    .mockResolvedValueOnce(deploymentFromSnapshot(fixture))
+    .mockResolvedValueOnce(observation)
+    .mockResolvedValueOnce(metadataFromSnapshot(fixture, {}, activeId))
+    .mockResolvedValueOnce(deploymentFromSnapshot(fixture))
+    .mockResolvedValueOnce(incidentPostCancelProvenance(
+      {},
+      { updatedAt: "2026-08-28T11:20:00.000Z" },
+      activeId,
+    ))
+    .mockResolvedValueOnce(metadataFromSnapshot(fixture, {}, activeId))
+    .mockResolvedValueOnce(deploymentFromSnapshot(fixture))
+    .mockResolvedValueOnce(incidentPostCancelProvenance(
+      {},
+      { updatedAt: "2026-08-28T11:20:00.000Z" },
+      activeId,
+    ));
+}
+
 describe("protected permanent-staging variable mutation", () => {
   it("pins metadata-only reads and the reviewed skip-deploy mutation plans", () => {
     expect(PROTECTED_STAGING_VARIABLE_MUTATION_STATE)
@@ -326,6 +547,566 @@ describe("protected permanent-staging variable mutation", () => {
     expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY)
       .toContain("environmentPatch(id: $patchId)");
     expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY).not.toMatch(/mutation\s/i);
+    expect(PROTECTED_STAGING_VARIABLE_INCIDENT_PATCH_QUERY).toContain(
+      "environmentStagedChanges(environmentId:",
+    );
+    expect(PROTECTED_STAGING_VARIABLE_INCIDENT_PATCH_QUERY).toContain(
+      "environmentPatch(id: $patchId)",
+    );
+    expect(PROTECTED_STAGING_VARIABLE_INCIDENT_PATCH_QUERY).not.toMatch(
+      /mutation\s/i,
+    );
+  });
+
+  it("accepts the exact masked incident patch independent of key order and rejects shape drift", async () => {
+    const exact = protectedPermanentStagingVariableMutationInternals
+      .incidentMaskedCleanupPatchExact;
+    const patch = protectedPermanentStagingVariableMutationInternals
+      .incidentMaskedCleanupPatch() as {
+        services: Record<string, { variables: Record<string, unknown> }>;
+      };
+    const variables = patch.services[SERVICE_ID]!.variables;
+    const reordered = {
+      services: {
+        [SERVICE_ID]: {
+          variables: Object.fromEntries(Object.entries(variables).reverse()),
+        },
+      },
+    };
+    expect(exact(patch)).toBe(true);
+    expect(exact(reordered)).toBe(true);
+    expect(exact({
+      services: {
+        [SERVICE_ID]: {
+          variables: { ...variables, EXTRA: "*****" },
+        },
+      },
+    })).toBe(false);
+    expect(exact({
+      services: {
+        [SERVICE_ID]: {
+          variables: {
+            ...variables,
+            OFFSITE_BACKUP_BUCKET: null,
+          },
+        },
+      },
+    })).toBe(false);
+    const missing = structuredClone(reordered) as typeof reordered;
+    delete missing.services[SERVICE_ID]!.variables[
+      "OFFSITE_BACKUP_SUPABASE_URL"
+    ];
+    expect(exact(missing)).toBe(false);
+    expect(exact({ services: { [SERVICE_ID]: { variables }, extra: true } }))
+      .toBe(false);
+
+    const fixture = incidentBaselineFixture();
+    const parsed = protectedPermanentStagingVariableMutationInternals
+      .parseMetadata(
+        await metadataFromSnapshot(fixture, reordered).json(),
+        "incident-masked-cleanup-cancel",
+      );
+    expect(parsed).not.toBeNull();
+    const incidentMetadata = await metadataFromSnapshot(
+      fixture,
+      reordered,
+    ).json() as { data: { staged: Record<string, unknown> } };
+    const wrongPatchId = structuredClone(incidentMetadata);
+    wrongPatchId.data.staged.id = STAGED_PATCH_ID;
+    expect(protectedPermanentStagingVariableMutationInternals.parseMetadata(
+      wrongPatchId,
+      "incident-masked-cleanup-cancel",
+    )).toBeNull();
+    const wrongPatchStatus = structuredClone(incidentMetadata);
+    wrongPatchStatus.data.staged.status = "COMMITTED";
+    expect(protectedPermanentStagingVariableMutationInternals.parseMetadata(
+      wrongPatchStatus,
+      "incident-masked-cleanup-cancel",
+    )).toBeNull();
+    expect(protectedPermanentStagingVariableMutationInternals.parseMetadata(
+      incidentMetadata,
+      "cleanup-deletion",
+    )).toBeNull();
+    expect(protectedPermanentStagingVariableMutationInternals
+      .incidentOriginalBaselineMetadataExact({
+        ...parsed!,
+        deployment: fixture.deployment,
+      }, true)).toBe(true);
+    const provenanceValue = await incidentProvenance(reordered).json() as {
+      data: {
+        active: Record<string, unknown>;
+        selected: Record<string, unknown>;
+      };
+    };
+    expect(protectedPermanentStagingVariableMutationInternals
+      .parseIncidentPatchProvenance(provenanceValue)).toBe(true);
+    const provenanceDrift: Array<{
+      label: string;
+      mutate: (node: Record<string, unknown>) => void;
+    }> = [
+      { label: "id", mutate: (node) => { node.id = STAGED_PATCH_ID; } },
+      { label: "environment", mutate: (node) => { node.environmentId = PROJECT_ID; } },
+      { label: "status", mutate: (node) => { node.status = "COMMITTED"; } },
+      { label: "message", mutate: (node) => { node.message = "cleanup"; } },
+      {
+        label: "created timestamp",
+        mutate: (node) => { node.createdAt = "2026-08-28T10:51:38.862Z"; },
+      },
+      {
+        label: "updated timestamp",
+        mutate: (node) => { node.updatedAt = "2026-08-28T10:51:38.862Z"; },
+      },
+      {
+        label: "applied timestamp",
+        mutate: (node) => { node.appliedAt = INCIDENT_STAGED_PATCH_CREATED_AT; },
+      },
+      {
+        label: "last applied error",
+        mutate: (node) => { node.lastAppliedError = "failed"; },
+      },
+      { label: "literal-null patch", mutate: (node) => { node.patch = null; } },
+    ];
+    for (const scenario of provenanceDrift) {
+      const value = structuredClone(provenanceValue);
+      scenario.mutate(value.data.active);
+      expect(
+        protectedPermanentStagingVariableMutationInternals
+          .parseIncidentPatchProvenance(value),
+        scenario.label,
+      ).toBe(false);
+    }
+    const mismatchedActiveAndSelected = structuredClone(provenanceValue);
+    mismatchedActiveAndSelected.data.selected.updatedAt =
+      "2026-08-28T10:51:38.862Z";
+    expect(protectedPermanentStagingVariableMutationInternals
+      .parseIncidentPatchProvenance(mismatchedActiveAndSelected)).toBe(false);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .parseIncidentSelectedPatchNonCommitted(
+        mismatchedActiveAndSelected,
+      )).toBe(true);
+  });
+
+  it("cancels the exact masked incident patch once after all three boundary and provenance reads", async () => {
+    const fixture = incidentBaselineFixture();
+    const generatedPatch = protectedPermanentStagingVariableMutationInternals
+      .incidentMaskedCleanupPatch() as {
+        services: Record<string, { variables: Record<string, unknown> }>;
+      };
+    const patch = {
+      services: {
+        [SERVICE_ID]: {
+          variables: Object.fromEntries(Object.entries(
+            generatedPatch.services[SERVICE_ID]!.variables,
+          ).reverse()),
+        },
+      },
+    };
+    const fetchImpl = incidentExecutorFetch(fixture, patch, json({
+      data: {
+        environmentStageChanges: {
+          environmentId: ENVIRONMENT_ID,
+          patch: {},
+        },
+      },
+    }));
+    const boundaryCheck = vi.fn().mockResolvedValue(0);
+    const verifyEvidence = vi.fn().mockReturnValue(true);
+    const verifyAuthority = vi.fn().mockReturnValue(true);
+    const now = vi.fn(() => Date.parse("2026-08-28T11:20:00Z"));
+    const outputs: string[] = [];
+    const writes: Array<{ leaf: string; source: string }> = [];
+
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: incidentArgv(),
+      env: environment(INCIDENT_OPERATION, {
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: INCIDENT_PRIOR_RUN_ID,
+      }),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck,
+      verifyIncidentPriorCleanupEvidence: verifyEvidence,
+      verifyReviewedIncidentCleanupCancelAuthority: verifyAuthority,
+      now,
+      writeDurable: (_directory, leaf, source) => {
+        writes.push({ leaf, source });
+        return sha256(source);
+      },
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result, outputs[0]).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(13);
+    expect(boundaryCheck.mock.calls).toEqual([
+      ["incident-masked-cleanup-cancel"],
+      ["incident-masked-cleanup-cancel"],
+      [],
+    ]);
+    expect(verifyEvidence).toHaveBeenCalledWith(
+      "/private/incident-prior-cleanup-evidence",
+    );
+    expect(verifyAuthority).toHaveBeenCalledWith(
+      "/private/reviewed-authority.json",
+      {
+        candidateSha: CANDIDATE_SHA,
+        priorCleanupRunId: INCIDENT_PRIOR_RUN_ID,
+        currentRunId: "500",
+      },
+    );
+    expect(now).toHaveBeenCalledTimes(3);
+
+    const requests = fetchImpl.mock.calls.map((call) => JSON.parse(
+      String((call[1] as RequestInit).body),
+    ) as { query: string; variables: Record<string, unknown> });
+    const mutations = requests.filter((request) =>
+      request.query.trimStart().startsWith("mutation "));
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0]).toEqual({
+      query: PROTECTED_STAGING_VARIABLE_CANCEL_DELETION_QUERY,
+      variables: {
+        environmentId: ENVIRONMENT_ID,
+        input: {},
+        merge: false,
+      },
+    });
+    expect(requests.filter((request) =>
+      request.query === PROTECTED_STAGING_VARIABLE_INCIDENT_PATCH_QUERY))
+      .toHaveLength(4);
+    expect(requests.some((request) =>
+      request.query.includes("environmentPatchCommitStaged") ||
+      request.query.includes("variableCollectionUpsert"))).toBe(false);
+
+    expect(writes.map((write) => write.leaf)).toEqual([
+      "intent.json",
+      "terminal.json",
+    ]);
+    expect(JSON.parse(writes[0]!.source)).toMatchObject({
+      operation: INCIDENT_OPERATION,
+      authorizedBaseline: "cold-dead-null",
+      mutationPlan: {
+        incidentCancellation: {
+          action: "cancel-exact-masked-provider-patch",
+          maximumAttempts: 1,
+          commitAllowed: false,
+          resumeAllowed: false,
+        },
+        originalCandidateSha:
+          "ac7130e0306802825922d21a4c61135b84edd43b",
+        priorCleanupRunId: INCIDENT_PRIOR_RUN_ID,
+        stagedPatch: { id: INCIDENT_STAGED_PATCH_ID },
+        originalBaselineMetadataSha256:
+          "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd",
+      },
+      preflightMetadataSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(outputs).toHaveLength(1);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      operation: INCIDENT_OPERATION,
+      outcome: "incident_masked_patch_cancel_acknowledged",
+      attempts: 1,
+      stagedDeletionPatchId: INCIDENT_STAGED_PATCH_ID,
+      checks: {
+        boundaryPreflightExact: true,
+        targetPreflightExact: true,
+        boundaryPrecommitExact: true,
+        stagedDeletionPatchExact: true,
+        acknowledgementExact: true,
+        commitAcknowledgementExact: false,
+        committedDeletionPatchExact: false,
+        selectedIncidentPatchNonCommittedExact: true,
+        postflightAttempted: true,
+        targetPostflightExact: true,
+        deploymentUnchanged: true,
+        boundaryPostflightExact: true,
+        terminalEvidenceExact: true,
+      },
+    });
+  });
+
+  it("fails the incident cancellation closed at the exact recovery deadline before Railway access", async () => {
+    const fetchImpl = vi.fn();
+    const boundaryCheck = vi.fn();
+    const verifyEvidence = vi.fn().mockReturnValue(true);
+    const verifyAuthority = vi.fn().mockReturnValue(true);
+    const writeDurable = vi.fn();
+    const outputs: string[] = [];
+
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: incidentArgv(),
+      env: environment(INCIDENT_OPERATION, {
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: INCIDENT_PRIOR_RUN_ID,
+      }),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck,
+      verifyIncidentPriorCleanupEvidence: verifyEvidence,
+      verifyReviewedIncidentCleanupCancelAuthority: verifyAuthority,
+      now: () => Date.parse("2026-08-29T10:51:43Z"),
+      writeDurable,
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(verifyAuthority).toHaveBeenCalledTimes(1);
+    expect(verifyEvidence).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(boundaryCheck).not.toHaveBeenCalled();
+    expect(writeDurable).not.toHaveBeenCalled();
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      operation: INCIDENT_OPERATION,
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: {
+        policyExact: true,
+        githubAuthorityExact: true,
+        tokenScopesExact: false,
+        mutationAttemptedAtMostOnce: true,
+        postflightAttempted: false,
+      },
+    });
+  });
+
+  it("closes out an already-empty incident patch read-only with explicit selected-patch proof", async () => {
+    const fixture = incidentBaselineFixture();
+    const fetchImpl = incidentReadOnlyCloseoutFetch(fixture);
+    const boundaryCheck = vi.fn().mockResolvedValue(0);
+    const outputs: string[] = [];
+    const writes: Array<{ leaf: string; source: string }> = [];
+
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: incidentArgv(),
+      env: environment(INCIDENT_OPERATION, {
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: INCIDENT_PRIOR_RUN_ID,
+      }),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck,
+      verifyIncidentPriorCleanupEvidence: () => true,
+      verifyReviewedIncidentCleanupCancelAuthority: () => true,
+      now: () => Date.parse("2026-08-28T11:20:00Z"),
+      writeDurable: (_directory, leaf, source) => {
+        writes.push({ leaf, source });
+        return sha256(source);
+      },
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result, outputs[0]).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(11);
+    const requests = fetchImpl.mock.calls.map((call) => JSON.parse(
+      String((call[1] as RequestInit).body),
+    ) as { query: string });
+    expect(requests.filter((request) =>
+      request.query.trimStart().startsWith("mutation "))).toHaveLength(0);
+    expect(requests.filter((request) =>
+      request.query === PROTECTED_STAGING_VARIABLE_INCIDENT_PATCH_QUERY))
+      .toHaveLength(3);
+    expect(requests.some((request) =>
+      request.query.includes("environmentPatchCommitStaged") ||
+      request.query.includes("variableCollectionUpsert"))).toBe(false);
+    expect(boundaryCheck.mock.calls).toEqual([[], []]);
+    expect(writes.map((write) => write.leaf)).toEqual([
+      "intent.json",
+      "terminal.json",
+    ]);
+    expect(JSON.parse(writes[0]!.source)).toMatchObject({
+      mutationPlan: {
+        incidentCancellation: {
+          action: "reconcile-exact-already-cancelled-masked-provider-patch",
+          mutation: null,
+          maximumAttempts: 0,
+          commitAllowed: false,
+          resumeAllowed: false,
+        },
+      },
+    });
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "incident_masked_patch_cancel_already_completed_reconciled",
+      attempts: 0,
+      stagedDeletionPatchId: INCIDENT_STAGED_PATCH_ID,
+      checks: {
+        boundaryPreflightExact: true,
+        boundaryPrecommitExact: false,
+        targetPreflightExact: true,
+        stagedDeletionPatchExact: false,
+        committedDeletionPatchExact: false,
+        selectedIncidentPatchNonCommittedExact: true,
+        postflightAttempted: true,
+        targetPostflightExact: true,
+        deploymentUnchanged: true,
+        boundaryPostflightExact: true,
+        terminalEvidenceExact: true,
+      },
+    });
+  });
+
+  it("rejects replaced, committed, or applied selected incident patches before any write", async () => {
+    const fixture = incidentBaselineFixture();
+    const patch = protectedPermanentStagingVariableMutationInternals
+      .incidentMaskedCleanupPatch();
+    const base = await incidentProvenance(patch).json() as {
+      data: { active: Record<string, unknown>; selected: Record<string, unknown> };
+    };
+    const scenarios = [
+      {
+        label: "replaced",
+        mutate: (value: typeof base) => {
+          value.data.selected.id = STAGED_PATCH_ID;
+        },
+      },
+      {
+        label: "committed",
+        mutate: (value: typeof base) => {
+          value.data.selected.status = "COMMITTED";
+        },
+      },
+      {
+        label: "applied",
+        mutate: (value: typeof base) => {
+          value.data.selected.appliedAt = "2026-08-28T11:10:00.000Z";
+        },
+      },
+    ];
+    for (const scenario of scenarios) {
+      const provenance = structuredClone(base);
+      scenario.mutate(provenance);
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(metadataFromSnapshot(fixture, patch))
+        .mockResolvedValueOnce(deploymentFromSnapshot(fixture))
+        .mockResolvedValueOnce(json(provenance));
+      const outputs: string[] = [];
+      const result = await runProtectedPermanentStagingVariableMutation({
+        argv: incidentArgv(),
+        env: environment(INCIDENT_OPERATION, {
+          PINTPATH_PRIOR_CLEANUP_RUN_ID: INCIDENT_PRIOR_RUN_ID,
+        }),
+        cwd: process.cwd(),
+        fetchImpl,
+        boundaryCheck: vi.fn().mockResolvedValue(0),
+        verifyIncidentPriorCleanupEvidence: () => true,
+        verifyReviewedIncidentCleanupCancelAuthority: () => true,
+        now: () => Date.parse("2026-08-28T11:20:00Z"),
+        writeDurable: vi.fn(),
+        writeOutput: (source) => outputs.push(source),
+      });
+      expect(result, scenario.label).toBe(1);
+      expect(fetchImpl, scenario.label).toHaveBeenCalledTimes(5);
+      const requests = fetchImpl.mock.calls.map((call) => JSON.parse(
+        String((call[1] as RequestInit).body),
+      ) as { query: string });
+      expect(requests.some((request) =>
+        request.query.trimStart().startsWith("mutation ")), scenario.label)
+        .toBe(false);
+      expect(JSON.parse(outputs[0]!)).toMatchObject({
+        outcome: "failed_before_attempt",
+        attempts: 0,
+        checks: {
+          targetPreflightExact: false,
+          selectedIncidentPatchNonCommittedExact: false,
+        },
+      });
+    }
+  });
+
+  it("requires a postflight query proving the selected incident patch stayed unapplied", async () => {
+    const fixture = incidentBaselineFixture();
+    const patch = protectedPermanentStagingVariableMutationInternals
+      .incidentMaskedCleanupPatch();
+    const fetchImpl = incidentExecutorFetch(
+      fixture,
+      patch,
+      json({
+        data: {
+          environmentStageChanges: {
+            environmentId: ENVIRONMENT_ID,
+            patch: {},
+          },
+        },
+      }),
+      incidentPostCancelProvenance(patch, { status: "COMMITTED" }),
+    );
+    const outputs: string[] = [];
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: incidentArgv(),
+      env: environment(INCIDENT_OPERATION, {
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: INCIDENT_PRIOR_RUN_ID,
+      }),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      verifyIncidentPriorCleanupEvidence: () => true,
+      verifyReviewedIncidentCleanupCancelAuthority: () => true,
+      now: () => Date.parse("2026-08-28T11:20:00Z"),
+      writeDurable: (_directory, _leaf, source) => sha256(source),
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(1);
+    const requests = fetchImpl.mock.calls.map((call) => JSON.parse(
+      String((call[1] as RequestInit).body),
+    ) as { query: string });
+    expect(requests.filter((request) =>
+      request.query.trimStart().startsWith("mutation "))).toHaveLength(1);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: 1,
+      checks: {
+        selectedIncidentPatchNonCommittedExact: false,
+        targetPostflightExact: false,
+      },
+    });
+  });
+
+  it("reconciles a lost cancel acknowledgement from the exact empty postflight without retrying", async () => {
+    const fixture = incidentBaselineFixture();
+    const patch = protectedPermanentStagingVariableMutationInternals
+      .incidentMaskedCleanupPatch();
+    const fetchImpl = incidentExecutorFetch(
+      fixture,
+      patch,
+      new Error("synthetic_lost_acknowledgement"),
+    );
+    const outputs: string[] = [];
+
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: incidentArgv(),
+      env: environment(INCIDENT_OPERATION, {
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: INCIDENT_PRIOR_RUN_ID,
+      }),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      verifyIncidentPriorCleanupEvidence: () => true,
+      verifyReviewedIncidentCleanupCancelAuthority: () => true,
+      now: () => Date.parse("2026-08-28T11:20:00Z"),
+      writeDurable: (_directory, _leaf, source) => sha256(source),
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(13);
+    const requests = fetchImpl.mock.calls.map((call) => JSON.parse(
+      String((call[1] as RequestInit).body),
+    ) as { query: string });
+    expect(requests.filter((request) =>
+      request.query.trimStart().startsWith("mutation "))).toHaveLength(1);
+    expect(requests.some((request) =>
+      request.query.includes("environmentPatchCommitStaged") ||
+      request.query.includes("variableCollectionUpsert"))).toBe(false);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "incident_masked_patch_cancel_reconciled_after_lost_ack",
+      attempts: 1,
+      checks: {
+        acknowledgementExact: false,
+        stageAcknowledgementExact: false,
+        stagedDeletionPatchExact: true,
+        targetPostflightExact: true,
+        deploymentUnchanged: true,
+        boundaryPostflightExact: true,
+        terminalEvidenceExact: true,
+      },
+    });
   });
 
   it("accepts only the captured patch identity in exact committed state", async () => {
@@ -1843,6 +2624,49 @@ describe("protected permanent-staging variable mutation", () => {
         },
       }));
       expect(exact(directory, CANDIDATE_SHA)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts only the exact three retained incident evidence files and commitments", () => {
+    const exact = protectedPermanentStagingVariableMutationInternals
+      .incidentPriorCleanupEvidenceExact;
+    const source = path.join(
+      import.meta.dirname,
+      "fixtures/permanent-staging-offsite-cleanup-prior-evidence",
+    );
+    expect(exact(source)).toBe(true);
+
+    const directory = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-incident-cleanup-")),
+    );
+    try {
+      for (const leaf of ["dispatch.json", "intent.json", "terminal.json"]) {
+        fs.copyFileSync(path.join(source, leaf), path.join(directory, leaf));
+      }
+      expect(exact(directory)).toBe(true);
+
+      const dispatch = JSON.parse(
+        fs.readFileSync(path.join(directory, "dispatch.json"), "utf8"),
+      ) as Record<string, unknown>;
+      fs.writeFileSync(path.join(directory, "dispatch.json"), canonical({
+        operation: dispatch.operation,
+        schemaVersion: dispatch.schemaVersion,
+        candidateSha: dispatch.candidateSha,
+        secretMaterialIncluded: dispatch.secretMaterialIncluded,
+      }));
+      expect(exact(directory)).toBe(false);
+
+      fs.copyFileSync(
+        path.join(source, "dispatch.json"),
+        path.join(directory, "dispatch.json"),
+      );
+      fs.writeFileSync(path.join(directory, "extra.json"), "{}\n");
+      expect(exact(directory)).toBe(false);
+      fs.rmSync(path.join(directory, "extra.json"));
+      fs.rmSync(path.join(directory, "terminal.json"));
+      expect(exact(directory)).toBe(false);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

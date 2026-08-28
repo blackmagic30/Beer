@@ -1302,6 +1302,130 @@ describe("GitHub release-candidate verifier", () => {
     )).resolves.toBe(0);
   });
 
+  it("accepts only a strictly converged incident-cancel history before staging closeout", async () => {
+    const incidentTitle =
+      `Permanent staging provider mutation | cancel-masked-forbidden-offsite-backup-deletion-patch | ${CANDIDATE}`;
+    const incidentRun = (
+      id: number,
+      startedAt: string,
+      updatedAt: string,
+      conclusion: string = "success",
+    ) => mutationRun({
+      id,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle: incidentTitle,
+      createdAt: startedAt,
+      startedAt,
+      updatedAt,
+      conclusion,
+    });
+    const skipped = incidentRun(
+      739,
+      "2026-08-14T01:03:00.000Z",
+      "2026-08-14T01:03:30.000Z",
+      "failure",
+    );
+    const ambiguous = incidentRun(
+      740,
+      "2026-08-14T01:04:00.000Z",
+      "2026-08-14T01:05:00.000Z",
+      "failure",
+    );
+    const terminal = incidentRun(
+      741,
+      "2026-08-14T01:05:20.000Z",
+      "2026-08-14T01:06:00.000Z",
+    );
+    const mutationJobs = {
+      739: providerMutationJobs(skipped, "skipped"),
+      740: providerMutationJobs(ambiguous, "failure"),
+      741: providerMutationJobs(terminal, "success"),
+    };
+    const verify = async (fixture: ReturnType<typeof harness>) => {
+      let summary = "";
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      return { code, summary: JSON.parse(summary) as Record<string, unknown> };
+    };
+
+    await expect(verify(harness({
+      providerMutationRuns: [terminal, ambiguous, skipped],
+      mutationJobs,
+    }))).resolves.toMatchObject({ code: 0, summary: { ok: true } });
+    await expect(verify(harness({
+      providerMutationRuns: [terminal],
+      mutationJobs: { 741: mutationJobs[741] },
+    }))).resolves.toMatchObject({ code: 0, summary: { ok: true } });
+
+    const overlappingTerminal = incidentRun(
+      742,
+      "2026-08-14T01:04:59.000Z",
+      "2026-08-14T01:06:00.000Z",
+    );
+    const secondSuccess = incidentRun(
+      743,
+      "2026-08-14T01:06:10.000Z",
+      "2026-08-14T01:06:20.000Z",
+    );
+    const differentMode = mutationRun({
+      id: 744,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | resume-forbidden-offsite-backup-deletion-patch | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:03:31.000Z",
+      startedAt: "2026-08-14T01:03:32.000Z",
+      updatedAt: "2026-08-14T01:03:40.000Z",
+      conclusion: "failure",
+    });
+    const invalidTerminalJobs = providerMutationJobs(terminal, "failure");
+    const rejected = [
+      harness({
+        providerMutationRuns: [ambiguous, overlappingTerminal],
+        mutationJobs: {
+          740: mutationJobs[740],
+          742: providerMutationJobs(overlappingTerminal, "success"),
+        },
+      }),
+      harness({
+        providerMutationRuns: [differentMode, terminal],
+        mutationJobs: {
+          744: providerMutationJobs(differentMode, "skipped"),
+          741: mutationJobs[741],
+        },
+      }),
+      harness({
+        providerMutationRuns: [terminal, secondSuccess],
+        mutationJobs: {
+          741: mutationJobs[741],
+          743: providerMutationJobs(secondSuccess, "success"),
+        },
+      }),
+      harness({
+        providerMutationRuns: [terminal],
+        mutationJobs: { 741: invalidTerminalJobs },
+      }),
+    ];
+    for (const fixture of rejected) {
+      await expect(verify(fixture)).resolves.toMatchObject({
+        code: 1,
+        summary: { failureCode: "staging_mutation_history_invalid" },
+      });
+    }
+  });
+
   it("allows only the fixed OFFSITE recovery grace beyond merge plus 168 hours", async () => {
     const cleanup = mutationRun({
       id: 730,

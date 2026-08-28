@@ -18,11 +18,9 @@ on:
           - provider-google-places-api-key
           - provider-openai-api-key
           - supabase-key-replacement
-          - remove-forbidden-offsite-backup-variables
-          - resume-forbidden-offsite-backup-deletion-patch
-          - cancel-forbidden-offsite-backup-deletion-patch
+          - cancel-masked-forbidden-offsite-backup-deletion-patch
       prior_cleanup_run_id:
-        description: Exact failed same-candidate cleanup run with an ambiguous reviewed deletion; recovery operations only
+        description: Exact failed cleanup run selected by the reviewed recovery operation
         required: false
         type: string
       confirmation:
@@ -30,7 +28,7 @@ on:
         required: true
         type: string
       external_mutation_freeze_attestation:
-        description: Type I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN after operationally freezing every external Railway writer
+        description: Type I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN after freezing Railway dashboard/API/autodeploy and all staging writers, including the separate Postgres build-canary workflow
         required: true
         type: string
 
@@ -85,8 +83,17 @@ jobs:
           test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
             'I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN'
           case "$OPERATION" in
+            remove-forbidden-offsite-backup-variables|resume-forbidden-offsite-backup-deletion-patch|cancel-forbidden-offsite-backup-deletion-patch)
+              echo 'Legacy staged deletion operations are disabled pending provider-verifiable deletion semantics.' >&2
+              exit 1
+              ;;
+          esac
+          case "$OPERATION" in
             resume-forbidden-offsite-backup-deletion-patch|cancel-forbidden-offsite-backup-deletion-patch)
               [[ "$PRIOR_CLEANUP_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              ;;
+            cancel-masked-forbidden-offsite-backup-deletion-patch)
+              test "$PRIOR_CLEANUP_RUN_ID" = '33164687424'
               ;;
             *) test -z "$PRIOR_CLEANUP_RUN_ID" ;;
           esac
@@ -128,7 +135,8 @@ jobs:
             --candidate-sha "$CANDIDATE_SHA"
             --operation "$OPERATION"
           )
-          if [[ "$OPERATION" =~ ^(resume|cancel)-forbidden-offsite-backup-deletion-patch$ ]]; then
+          if [[ "$OPERATION" =~ ^(resume|cancel)-forbidden-offsite-backup-deletion-patch$ ]] \
+            || test "$OPERATION" = 'cancel-masked-forbidden-offsite-backup-deletion-patch'; then
             authority_args+=(--prior-run-id "$PRIOR_CLEANUP_RUN_ID")
           fi
           npm run --silent github:reviewed-candidate-authority:verify -- \
@@ -157,6 +165,35 @@ jobs:
           test ! -L "$evidence"
           find "$evidence" -mindepth 1 -maxdepth 1 -type f | grep -q .
           test -z "$(find "$evidence" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          chmod 700 "$evidence"
+          find "$evidence" -type f -exec chmod 600 -- {} +
+
+      - name: Download the exact retained incident cleanup evidence
+        id: incident_prior_cleanup_evidence
+        if: inputs.operation == 'cancel-masked-forbidden-offsite-backup-deletion-patch'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          run-id: 33164687424
+          name: pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-ac7130e0306802825922d21a4c61135b84edd43b
+          path: ${{ runner.temp }}/pintpath-provider-input/incident-prior-offsite-cleanup-evidence
+
+      - name: Seal the exact incident cleanup evidence as read-only input
+        if: inputs.operation == 'cancel-masked-forbidden-offsite-backup-deletion-patch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/pintpath-provider-input/incident-prior-offsite-cleanup-evidence"
+          test -d "$evidence"
+          test ! -L "$evidence"
+          test -z "$(find "$evidence" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          for leaf in dispatch.json intent.json terminal.json; do
+            test -f "$evidence/$leaf"
+            test ! -L "$evidence/$leaf"
+          done
+          test -z "$(find "$evidence" -mindepth 1 -maxdepth 1 -type f \
+            ! -name dispatch.json ! -name intent.json ! -name terminal.json \
+            -print -quit)"
           chmod 700 "$evidence"
           find "$evidence" -type f -exec chmod 600 -- {} +
 
@@ -245,6 +282,7 @@ jobs:
           PINTPATH_EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           PINTPATH_PRIOR_CLEANUP_RUN_ID: ${{ inputs.prior_cleanup_run_id }}
           PINTPATH_PRIOR_CLEANUP_EVIDENCE_OUTCOME: ${{ steps.prior_cleanup_evidence.outcome }}
+          PINTPATH_INCIDENT_PRIOR_CLEANUP_EVIDENCE_OUTCOME: ${{ steps.incident_prior_cleanup_evidence.outcome }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
@@ -264,6 +302,13 @@ jobs:
           elif test "$OPERATION" = 'remove-forbidden-offsite-backup-variables'; then
             ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-variable-mutation.ts \
               "${common[@]}"
+          elif test "$OPERATION" = 'cancel-masked-forbidden-offsite-backup-deletion-patch'; then
+            test "$PINTPATH_INCIDENT_PRIOR_CLEANUP_EVIDENCE_OUTCOME" = 'success'
+            ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-variable-mutation.ts \
+              "${common[@]}" \
+              --prior-cleanup-run-id "$PINTPATH_PRIOR_CLEANUP_RUN_ID" \
+              --prior-cleanup-evidence-dir "$RUNNER_TEMP/pintpath-provider-input/incident-prior-offsite-cleanup-evidence" \
+              --reviewed-authority-file "$RUNNER_TEMP/pintpath-provider-input/reviewed-authority.json"
           elif [[ "$OPERATION" =~ ^(resume|cancel)-forbidden-offsite-backup-deletion-patch$ ]]; then
             recovery=(
               --prior-cleanup-run-id "$PINTPATH_PRIOR_CLEANUP_RUN_ID"
