@@ -106,8 +106,12 @@ original -> read-only retry(s) -> exactly one successful reconciliation, all
 inside the original run's fixed 24-hour deadline. A reconciled cold-prepare
 receipt is accepted as the selected prepare for the later quiesce chain.
 
-These recovery operations are not transferable across candidates. From the
-first potentially reached write through final recovery and staging closeout,
+The completed `permanent-staging-postgres` runtime-URL repair is closed
+historical evidence bound to `f6bfb81…`; the executable cold-recovery chain
+does not consume it, it must not be repeated, and it does not freeze later
+reviewed cleanup work onto that SHA. Recovery operations themselves are not
+transferable across candidates. From the first potentially reached write in
+the successor cleanup/provider/recovery chain through final staging closeout,
 operations must impose a protected-main merge freeze. If a later merge changes
 the current head, the stranded SHA cannot be recovered by rebinding its state
 to the new candidate; that condition remains P1/NO-GO.

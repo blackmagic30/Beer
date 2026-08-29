@@ -213,6 +213,20 @@ const FORBIDDEN_OFFSITE_VARIABLE_NAMES = Object.freeze([
   "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
   "OFFSITE_BACKUP_SUPABASE_URL",
 ] as const);
+const FORBIDDEN_OFFSITE_VARIABLE_IDENTITIES = Object.freeze({
+  OFFSITE_BACKUP_BUCKET: Object.freeze({
+    id: "a43db07e-1152-4ce1-8eb5-f03c0df9c665",
+    isSealed: false,
+  }),
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: Object.freeze({
+    id: "0f0ba362-34a0-4afd-afc0-ca59447cda32",
+    isSealed: false,
+  }),
+  OFFSITE_BACKUP_SUPABASE_URL: Object.freeze({
+    id: "671c431d-15cf-4879-b2fa-8595004ad8ef",
+    isSealed: false,
+  }),
+} as const);
 const CLEANUP_OPERATION = "remove-forbidden-offsite-backup-variables" as const;
 const RESUME_CLEANUP_OPERATION =
   "resume-forbidden-offsite-backup-deletion-patch" as const;
@@ -242,6 +256,8 @@ const INCIDENT_STAGED_PATCH_ID = "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae";
 const INCIDENT_STAGED_PATCH_CREATED_AT = "2026-08-28T10:51:38.861Z";
 const INCIDENT_RECOVERY_DEADLINE_MS = Date.parse("2026-08-29T10:51:43Z");
 const INCIDENT_ORIGINAL_BASELINE_METADATA_SHA256 =
+  "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd";
+const CLEANUP_BASELINE_METADATA_SHA256 =
   "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd";
 const RUN_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
 const REVIEWED_AUTHORITY_WORKFLOW_PATH =
@@ -1745,10 +1761,17 @@ function forbiddenOffsiteRowsExactForDeletion(snapshot: MetadataSnapshot): boole
   return rows.length === FORBIDDEN_OFFSITE_VARIABLE_NAMES.length
     && FORBIDDEN_OFFSITE_VARIABLE_NAMES.every((name) => {
       const named = rows.filter((row) => row.name === name);
+      const identity = FORBIDDEN_OFFSITE_VARIABLE_IDENTITIES[name];
       return named.length === 1
+        && named[0]?.id === identity.id
         && named[0]?.serviceId === APPLICATION_SERVICE_ID
+        && named[0]?.isSealed === identity.isSealed
         && named[0].references.length === 0;
     });
+}
+
+function cleanupBaselineMetadataExact(snapshot: ProviderSnapshot): boolean {
+  return sha256(canonical(snapshot)) === CLEANUP_BASELINE_METADATA_SHA256;
 }
 
 function maintenanceMetadataExact(snapshot: MetadataSnapshot): boolean {
@@ -2319,6 +2342,7 @@ export async function runProtectedPermanentStagingVariableMutation(
       && authorizedBaseline !== null
       && (activeOperation === CLEANUP_OPERATION
         ? forbiddenOffsiteRowsExactForDeletion(before)
+          && cleanupBaselineMetadataExact(before)
           && maintenanceMetadataExact(before)
         : recovery
           ? priorCleanupEvidenceVerified
@@ -2519,6 +2543,7 @@ export async function runProtectedPermanentStagingVariableMutation(
         : authorizedBaselineKind(prewrite, candidateSha)) === authorizedBaseline
       && (cleanup
         ? forbiddenOffsiteRowsExactForDeletion(prewrite)
+          && cleanupBaselineMetadataExact(prewrite)
           && maintenanceMetadataExact(prewrite)
         : recovery
           ? maintenanceMetadataExact(prewrite)
@@ -3129,6 +3154,7 @@ export async function runProtectedPermanentStagingVariableMutation(
 }
 
 export const protectedPermanentStagingVariableMutationInternals = {
+  cleanupBaselineMetadataExact,
   cleanupDeletionPatch,
   cleanupDeletionPatchExact,
   cleanupPostflightExact,

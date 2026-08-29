@@ -45,6 +45,11 @@ const INCIDENT_OPERATION =
 const EMPTY_STAGED_PATCH_ID = "<empty>";
 const FREEZE_ATTESTATION =
   "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN";
+const OFFSITE_VARIABLE_IDS = Object.freeze({
+  OFFSITE_BACKUP_BUCKET: "a43db07e-1152-4ce1-8eb5-f03c0df9c665",
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: "0f0ba362-34a0-4afd-afc0-ca59447cda32",
+  OFFSITE_BACKUP_SUPABASE_URL: "671c431d-15cf-4879-b2fa-8595004ad8ef",
+} as const);
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -73,8 +78,12 @@ function variable(
   isSealed = false,
   references: readonly string[] = [],
 ): Record<string, unknown> {
+  const pinnedId = serviceId === SERVICE_ID
+      && Object.hasOwn(OFFSITE_VARIABLE_IDS, name)
+    ? OFFSITE_VARIABLE_IDS[name as keyof typeof OFFSITE_VARIABLE_IDS]
+    : null;
   return {
-    id: `row-${name}-${serviceId ?? "shared"}`,
+    id: pinnedId ?? `row-${name}-${serviceId ?? "shared"}`,
     name,
     environmentId: ENVIRONMENT_ID,
     serviceId,
@@ -1539,33 +1548,31 @@ describe("protected permanent-staging variable mutation", () => {
   });
 
   it("deletes only the three Beer off-site rows from the exact dead/null baseline", async () => {
-    const beforeRows = [
-      variable("DATABASE_URL", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_SUPABASE_URL"),
-    ];
-    const afterRows = [variable("DATABASE_URL", SERVICE_ID, true)];
+    const before = incidentBaselineFixture();
+    const after = structuredClone(before);
+    after.variables = after.variables.filter((row) =>
+      !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+    );
     const patch = protectedPermanentStagingVariableMutationInternals
       .cleanupDeletionPatch();
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
       .mockResolvedValueOnce(stageDeletion(patch))
-      .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
-      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(metadataFromSnapshot(before, patch, STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
       .mockResolvedValueOnce(json({
         data: {
           environmentPatchCommitStaged: "66666666-6666-4666-8666-666666666666",
         },
       }))
       .mockResolvedValueOnce(committedDeletionPatch(patch))
-      .mockResolvedValueOnce(coldMetadata(afterRows))
-      .mockResolvedValueOnce(coldDeployment());
+      .mockResolvedValueOnce(metadataFromSnapshot(after, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(after));
     const boundaryCheck = vi.fn().mockResolvedValue(0);
     const outputs: string[] = [];
     const writes: string[] = [];
@@ -1648,23 +1655,23 @@ describe("protected permanent-staging variable mutation", () => {
   });
 
   it("refuses to claim exact cleanup after the committed patch identity does not close", async () => {
-    const beforeRows = [
-      variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_SUPABASE_URL"),
-    ];
+    const before = incidentBaselineFixture();
+    const after = structuredClone(before);
+    after.variables = after.variables.filter((row) =>
+      !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+    );
     const patch = protectedPermanentStagingVariableMutationInternals
       .cleanupDeletionPatch();
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
       .mockResolvedValueOnce(stageDeletion(patch))
-      .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
-      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(metadataFromSnapshot(before, patch, STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
       .mockResolvedValueOnce(json({
         data: {
           environmentPatchCommitStaged:
@@ -1676,8 +1683,8 @@ describe("protected permanent-staging variable mutation", () => {
         STAGED_PATCH_ID,
         "STAGED",
       ))
-      .mockResolvedValueOnce(coldMetadata([]))
-      .mockResolvedValueOnce(coldDeployment());
+      .mockResolvedValueOnce(metadataFromSnapshot(after, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(after));
     const outputs: string[] = [];
 
     const result = await runProtectedPermanentStagingVariableMutation({
@@ -1758,7 +1765,7 @@ describe("protected permanent-staging variable mutation", () => {
       const beforeRows = [
         variable("DATABASE_URL", SERVICE_ID, true),
         variable("OFFSITE_BACKUP_BUCKET"),
-        variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+        variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
         variable("OFFSITE_BACKUP_SUPABASE_URL"),
       ];
       const afterRows = operation.startsWith("resume-")
@@ -1844,7 +1851,7 @@ describe("protected permanent-staging variable mutation", () => {
     const beforeRows = [
       variable("DATABASE_URL", SERVICE_ID, true),
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const afterRows = [variable("DATABASE_URL", SERVICE_ID, true)];
@@ -1965,7 +1972,7 @@ describe("protected permanent-staging variable mutation", () => {
     const beforeRows = [
       variable("DATABASE_URL", SERVICE_ID, true),
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const afterRows = [variable("DATABASE_URL", SERVICE_ID, true)];
@@ -2035,7 +2042,7 @@ describe("protected permanent-staging variable mutation", () => {
     const rows = [
       variable("DATABASE_URL", SERVICE_ID, true),
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const fetchImpl = vi.fn()
@@ -2143,27 +2150,27 @@ describe("protected permanent-staging variable mutation", () => {
   });
 
   it("accepts an exact cleanup transition after a lost commit acknowledgement without retry", async () => {
-    const beforeRows = [
-      variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_SUPABASE_URL"),
-    ];
+    const before = incidentBaselineFixture();
+    const after = structuredClone(before);
+    after.variables = after.variables.filter((row) =>
+      !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+    );
     const patch = protectedPermanentStagingVariableMutationInternals
       .cleanupDeletionPatch();
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(metadata(beforeRows))
-      .mockResolvedValueOnce(deployment())
-      .mockResolvedValueOnce(metadata(beforeRows))
-      .mockResolvedValueOnce(deployment())
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
       .mockResolvedValueOnce(stageDeletion(patch))
-      .mockResolvedValueOnce(metadata(beforeRows, { stagedPatch: patch }))
-      .mockResolvedValueOnce(deployment())
+      .mockResolvedValueOnce(metadataFromSnapshot(before, patch, STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
       .mockRejectedValueOnce(new Error("connection_lost_after_commit"))
       .mockResolvedValueOnce(committedDeletionPatch(patch))
-      .mockResolvedValueOnce(metadata([]))
-      .mockResolvedValueOnce(deployment());
+      .mockResolvedValueOnce(metadataFromSnapshot(after, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(after));
     const outputs: string[] = [];
 
     const result = await runProtectedPermanentStagingVariableMutation({
@@ -2268,7 +2275,7 @@ describe("protected permanent-staging variable mutation", () => {
   it("accepts only exact Beer rows for in-place reconciliation and cleanup", () => {
     const offsiteRows = [
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const cleanupSnapshot = {
@@ -2291,6 +2298,21 @@ describe("protected permanent-staging variable mutation", () => {
           ...offsiteRows,
           variable("OFFSITE_BACKUP_BUCKET", null),
         ],
+      })).toBe(false);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .forbiddenOffsiteRowsExactForDeletion({
+        ...cleanupSnapshot,
+        variables: offsiteRows.map((row) => row.name === "OFFSITE_BACKUP_BUCKET"
+          ? { ...row, id: "unexpected-row-id" }
+          : row),
+      })).toBe(false);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .forbiddenOffsiteRowsExactForDeletion({
+        ...cleanupSnapshot,
+        variables: offsiteRows.map((row) =>
+          row.name === "OFFSITE_BACKUP_SERVICE_ROLE_KEY"
+            ? { ...row, isSealed: true }
+            : row),
       })).toBe(false);
 
     const providerSnapshot = {
@@ -2316,6 +2338,25 @@ describe("protected permanent-staging variable mutation", () => {
         ...providerSnapshot,
         variables: [...providerSnapshot.variables, ...offsiteRows],
       }, "GOOGLE_MAPS_API_KEY")).toBe(false);
+  });
+
+  it("pins cleanup to the complete reviewed 99-row dead baseline", () => {
+    const baseline = incidentBaselineFixture();
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(baseline as never)).toBe(true);
+
+    const unrelatedRowDrift = structuredClone(baseline);
+    unrelatedRowDrift.variables[0] = {
+      ...unrelatedRowDrift.variables[0],
+      id: "unexpected-unrelated-row-id",
+    };
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(unrelatedRowDrift as never)).toBe(false);
+
+    const missingUnrelatedRow = structuredClone(baseline);
+    missingUnrelatedRow.variables.pop();
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(missingUnrelatedRow as never)).toBe(false);
   });
 
   it("accepts only the fully pinned dead/null baseline", async () => {

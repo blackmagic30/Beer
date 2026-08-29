@@ -48,7 +48,21 @@ permanent staging remains cold/dead, production still serves
 `95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`, PostgreSQL migration and recovery
 remain unproved, and the release register remains 0/13.
 
-A fresh public read-only audit at `2026-08-29T01:00:49.245Z` still found 612
+## Reviewed candidate seal and staging URL repair — 29 August 2026
+
+PR [#69](https://github.com/blackmagic30/Beer/pull/69) passed every required
+check and merged as `f6bfb81bc681cba072087eedc4c74e3257baaccb`. Protected
+runtime-variable run
+[`33227111278`](https://github.com/blackmagic30/Beer/actions/runs/33227111278)
+then made the one reviewed permanent-staging PostgreSQL URL repair with
+`skipDeploys:true`. Its secret-free receipt records one acknowledged attempt,
+no retry, the exact reviewed compile-time value source, and unchanged Beer and
+PostgreSQL deployment identities. Artifact `9707286233` has digest
+`sha256:e4b9831f0365dd3efd8cbf5b9fbfbae7596c5b521539740cc64e1a5d07115c1a`.
+This proves the provider configuration write, not application startup,
+authentication, readiness, migration, or recovery.
+
+A fresh public read-only audit at `2026-08-29T01:55:16Z` still found 612
 venues, 288 price rows, 62 trusted rows that were all stale, zero qualifying
 current trusted rows, zero covered venues, and 0 of 112 canonical suburb
 searches returning at least three useful options. Brighton remained 0 of 1.
@@ -60,9 +74,9 @@ No launch-area coverage improvement has yet occurred.
 
 | Item | Verified state |
 | --- | --- |
-| Production | `95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`; exactly 33 commits behind current `main`, still serving the legacy SQLite authority. The live `/health` response reconfirmed that exact SHA on 28 August 2026. Railway currently shows the Beer service attached to its `/app/data` volume while the separate PostgreSQL service is merely online. |
-| Repository at post-merge reassessment | Local and remote `main` were exact at `d8f8f608728ff36cd2ddb7f048e2733ecf563bb5` before this seal candidate. PR #57 merged the reviewed Free-launch and retention tree; PR #59 merged the external venue-directory bootstrap; PRs #60–#68 then closed reviewed staging recovery, incident cancellation, and CI evidence defects. |
-| Candidate status | Current `main` is suitable as the code basis for permanent-staging proof, but it is not deployed or frozen as a release candidate. The smallest follow-up seal is locally complete on `codex/seal-staging-launch-p1s`: the final Node 22.23.2 gate passed 239 test files / 4,394 tests, with 47 files / 126 tests intentionally skipped by their existing gates. It adds a fixed, staging-only PostgreSQL runtime-source repair, removes a false cross-service inventory conflict, and tightens Free-scope public discovery checks. It does not become release authority unless it is independently reviewed, merged, and proved live. The broader iOS visual redesign remains preserved separately at `codex/ios-redesign-retention-wip` commit `1723572` and is not part of the launch implementation. |
+| Production | `95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`; exactly 34 commits behind current `main`, still serving the legacy SQLite authority. The live `/health` response reconfirmed that exact SHA on 29 August 2026. Railway currently shows the Beer service attached to its `/app/data` volume while the separate PostgreSQL service is merely online. |
+| Repository at post-merge reassessment | Local and remote `main` are exact at `f6bfb81bc681cba072087eedc4c74e3257baaccb`. PR #57 merged the reviewed Free-launch and retention tree; PR #59 merged the external venue-directory bootstrap; PRs #60–#68 closed reviewed staging recovery, incident cancellation, and CI evidence defects; PR #69 merged the final staging runtime-variable/deployment-invariance seal. |
+| Candidate status | Current `main` is suitable as the code basis for permanent-staging proof, and its final Node 22.23.2 gate passed 239 test files / 4,394 tests, with 47 files / 126 tests intentionally skipped by their existing gates. It is not deployed, frozen as a release candidate, or release authority. The broader iOS visual redesign remains preserved separately at `codex/ios-redesign-retention-wip` commit `1723572` and is not part of the launch implementation. |
 | Release register | `release.id`, `reviewedPrHeadSha`, and `candidateSha` are null. All 13 required items are pending: 0/13 complete. |
 | Permanent staging application | The public Railway route currently returns `Application not found` for `/health`, `/startup`, and `/ready`. The Beer service has `numReplicas:null`, zero active deployments, and a failed/stopped latest deployment from source `12c0d24…`; its domain correctly targets the documented application port 8080. PostgreSQL, Redis, and Supabase are online, but no current candidate application is serving or proved there. |
 | Permanent staging data services | The reviewed `20260828010000_bootstrap_external_venue_directory.sql` migration is now applied to the exact staging Supabase project. `public.venues` exists, service-role REST access returns 200 with an empty array, and anonymous access fails closed with 401. Railway PostgreSQL reports schema v1/import ready, 56 authoritative application tables, exact runtime/maintenance roles and memberships, SCRAM credentials, and no unsafe runtime role settings after the final legacy `search_path` override was transactionally removed. The Beer service remains stopped and has not authenticated with those credentials. |
@@ -182,11 +196,11 @@ These fixes are merged and tested. They do not repair the stale live deployment,
 create staging evidence, migrate production data, enable operational jobs, or
 complete any externally owned release gate.
 
-## Recovery-chain P1 fixes awaiting review and merge
+## Merged recovery-chain P1 fixes
 
-The `codex/launch-p0-p1-recovery` change now fails closed across the exact
-observed dead staging topology and addresses the final independent recovery
-review findings:
+PRs #60–#69 merged the recovery-chain changes. Current `main` now fails closed
+across the exact observed dead staging topology and addresses the final
+independent recovery review findings:
 
 - cold prepare and quiesce have exact reviewed-candidate operations and accept
   only one complete normal chain or one complete cold chain. An ambiguous
@@ -226,7 +240,9 @@ review findings:
   bootstrap relations are covered by the complete repository gate.
 
 These are repository safety fixes, not staging evidence. No recovery workflow
-has been dispatched and no Railway or Supabase state was changed by this patch.
+has been dispatched. The later one-shot runtime-URL repair changed only the
+reviewed staging variable with deploys skipped; it did not execute or prove the
+recovery chain.
 
 ## PostgreSQL staging, migration, and recovery gaps
 
@@ -250,16 +266,12 @@ before a production cutover:
   `30db986b-4df9-4847-bce0-4cd1c3a3adc7` applied the same source-only repair
   with deploys skipped and all protected identities unchanged. See
   `docs/railway-postgres-source-reference-proof-2026-08-28.md`;
-- the staging Beer service still has the legacy runtime URL query
-  `uselibpqcompat=true&sslmode=require` and is missing the maintenance URL,
-  root-CA PEM, root-CA DER pin, and automatic-maintenance candidate SHA. Four
-  protected variable runs were stopped after the first failed before any write
-  on the production source-boundary mismatch; the three redundant queued runs
-  were cancelled rather than consuming more CI time. This candidate adds a
-  staging-only `permanent-staging-postgres` target that can replace only
-  `PINTPATH_RUNTIME_DATABASE_URL` with the compile-time-reviewed
-  `sslmode=verify-full` reference template via `skipDeploys:true`; it has not
-  yet been dispatched or proved by staging startup;
+- the staging Beer runtime URL now uses the reviewed `sslmode=verify-full`
+  reference template. Protected run `33227111278` wrote it once with deploys
+  skipped and proved the Beer/PostgreSQL deployment identities unchanged. The
+  automatic-maintenance candidate SHA is intentionally absent before cold
+  prepare. The stopped application has not yet proved startup, authentication,
+  readiness, migration, or recovery against the repaired configuration;
 - a fresh metadata-only preflight found 128 staging variable rows, which was
   above the protected executors' complete-inventory limit of 100. Three exact
   stopped staging-only probe/canary services with no production instance or
@@ -544,14 +556,14 @@ genuinely ready to freeze.
 
 ### P0 — launch blockers
 
-- Production is 26 commits behind current `main` and
+- Production is 34 commits behind current `main` and
   still authoritative on SQLite, while the intended launch runtime is
   PostgreSQL.
 - The current application is not deployed and proved on permanent staging.
 - Permanent staging is failed/stopped with no active application deployment.
-  The cold-recovery framework is merged, but the final service-scoping repair
-  in this seal remains unmerged and the recovery has not been executed, so it
-  is not yet release authority or staging evidence.
+  The cold-recovery framework and final service-scoping repair are merged, but
+  recovery has not been executed, so they are not release authority or staging
+  evidence.
 - Production PostgreSQL is empty and detached; no production import or
   reconciliation exists.
 - The exact production Supabase venue-directory project is missing the
@@ -615,12 +627,14 @@ blockers.
 - Any retained disposable restore environment and its current cost must be
   re-inventoried before staging closeout; the repository review did not treat a
   historical provider-cost estimate as current evidence.
-- Recovery dispatch still requires the stranded candidate to remain the exact
-  current protected-main head. A later merge can make that candidate
-  undispatchable while a provider patch or partially completed transition is
-  still stranded. Treat a temporary protected-main merge freeze from the first
-  write through successful recovery/closeout as an explicit P1 operational
-  prerequisite; there is no cross-candidate waiver.
+- Recovery dispatch still requires the selected candidate to remain the exact
+  current protected-main head. The completed runtime-URL repair is closed
+  historical evidence and does not strand `f6bfb81…`. From the first
+  potentially reached write in the successor cleanup/provider/recovery chain,
+  a later merge can make that candidate undispatchable while a provider patch
+  or partially completed transition is stranded. Treat a protected-main merge
+  freeze from that write through successful recovery/closeout as an explicit
+  P1 operational prerequisite; there is no cross-candidate waiver.
 - Railway's staged environment-patch API does not expose a patch ETag/version
   or provider lock that can be supplied to the deploy-suppressed commit/cancel
   calls. The workflow reasserts the exact patch and records its provider patch
@@ -636,21 +650,20 @@ blockers.
 ## Do not rush the candidate authority window
 
 The protected provider/cutover guard permits candidate-bound operations only
-within 168 hours of the associated PR merge. PR #57 merged at
-`2026-08-27T23:45:47Z`, so the guard window associated with implementation merge
-`01fc932…` ends at `2026-09-03T23:45:47Z`.
+within 168 hours of the associated PR merge. PR #69 merged at
+`2026-08-29T01:41:50Z`, so the current `f6bfb81…` authority window ends at
+`2026-09-05T01:41:50Z`. Its one historical runtime-URL write is complete and
+must not be repeated or relabelled.
 
 That time bound is not release evidence or permission to bypass the failed
 staging baseline. Do not compress staging, provider, recovery, or review work to
 use the window. No candidate is frozen, and current staging has not been
-deployed. If this follow-up or any later merge makes `01fc932…` no
-longer the current protected-main head, that SHA is ineligible for protected
-candidate operations; use the new reviewed protected-main merge and its own
-authority window. Once any candidate-bound write may have happened, however,
-do not merge a replacement candidate until its exact state is reconciled and
-closed: recovery cannot be transferred across candidate SHAs. The only age
-exception is the fixed 24-hour read-only/same-mode recovery grace measured from
-the selected original ambiguous run's completion.
+deployed. The reviewed deletion-operation merge will create a successor SHA and
+its own authority window. Once the first cleanup/provider/recovery write for
+that successor may have happened, do not merge a replacement candidate until
+its exact state is reconciled and closed: recovery cannot be transferred across
+candidate SHAs. The only age exception is the fixed 24-hour read-only/same-mode
+recovery grace measured from the selected original ambiguous run's completion.
 
 ## Exact next staging chain
 
@@ -664,22 +677,23 @@ permanent-staging application is failed/stopped. Continue only in this order:
    `30db986b-4df9-4847-bce0-4cd1c3a3adc7` applied the exact digest-only source
    with the production deployment, instance, snapshot, and volume unchanged.
    Both disposable services and their staging-only volume were then deleted.
-2. Merge only the independently reviewed candidate, then re-export the exact
-   Beer staging topology, variable metadata without values, staged patch,
-   Git-autodeploy state, and failed deployment identity. Verify the new
-   protected-main SHA and all required checks; do not freeze the release register.
-3. While the cold/dead baseline and empty patch remain exact, dispatch the one
-   fixed `permanent-staging-postgres` runtime-URL repair and retain its secret-
-   free receipt; it must leave the deployment and topology unchanged. Do not
-   use `variableDelete` on the three residual OFFSITE rows yet. First
-   prove on a disposable secret-free staging variable whether it stages,
-   commits, or deploys, including runner-loss reconciliation. Review and merge
-   the smallest deletion operation whose API offers an explicit no-deploy
-   guarantee, then remove the three exact pinned rows under the external-writer
-   freeze. Re-export the empty staged patch and 96-row inventory. Only then
-   reconcile the four provider rows and execute the atomic Supabase replacement
-   whose exact pair passes the same-custody canary.
-4. Select that successful replacement run and dispatch cold `prepare` against
+2. **Completed 29 August:** merge the independently reviewed candidate and
+   re-export the exact Beer staging topology, 99-row variable metadata without
+   values, empty staged patch, Git-autodeploy state, and failed deployment
+   identity. Protected `main` is `f6bfb81…`; do not freeze the release register.
+3. **Completed 29 August:** the one fixed `permanent-staging-postgres` runtime
+   URL repair succeeded with deploys skipped and Beer/PostgreSQL deployment
+   identities unchanged. Do not repeat or relabel that historical write.
+4. Do not use `variableDelete` on the three residual OFFSITE rows. First prove
+   on a separate disposable project that an exact staged `null` deletion and
+   `environmentPatchCommitStaged(skipDeploys:true)` remove a public probe while
+   leaving the complete deployment inventory unchanged, including deterministic
+   lost-ack reconciliation. Review and merge the smallest deletion operation,
+   then remove the three exact pinned rows under the external-writer freeze.
+   Re-export the empty staged patch and 96-row inventory. Only then reconcile
+   the four provider rows and execute the atomic Supabase replacement whose
+   exact pair passes the same-custody canary.
+5. Select that successful replacement run and dispatch cold `prepare` against
    the policy-pinned `numReplicas:null` topology, then select the successful
    prepare run and dispatch cold `quiesce` to initialize explicit zero. Do not
    mix cold receipts with the separate healthy `1 -> 0` path. If the prepare
@@ -687,37 +701,37 @@ permanent-staging application is failed/stopped. Continue only in this order:
    `reconcile-prepare`; if quiesce acknowledgement is lost at exact zero, use
    only `reconcile-quiesce`. Both paths are read-only and remain bound to the
    original ambiguous run and fixed 24-hour grace.
-5. Dispatch `deploy-permanent-staging.yml` with phase `fenced`, bootstrap path
+6. Dispatch `deploy-permanent-staging.yml` with phase `fenced`, bootstrap path
    `cold-dead`, and the exact cold prepare/quiesce run IDs. This is the first of
    exactly two allowed successful same-candidate staging deployments.
-6. The staging Supabase venue-directory migration is already applied. Run the
+7. The staging Supabase venue-directory migration is already applied. Run the
    status refresh, validate its deferred constraints, and prove
    `business_status`, `last_checked_at`, `directory_eligible`, Auth isolation,
    and candidate map-query behavior. Do not apply the migration to production
    in this phase.
-7. Dispatch the worker bootstrap `restore` operation to move the exact candidate
+8. Dispatch the worker bootstrap `restore` operation to move the exact candidate
    from zero to one replica. Require `/health`, `/startup`, and `/ready` to bind
    the candidate with automatic maintenance still disabled. If the scale
    acknowledgement is lost but exact candidate-at-one is already proved, use
    only `reconcile-restore`; do not issue a second scale write.
-8. Dispatch the staging worker-fence `activate` operation, then the phase
+9. Dispatch the staging worker-fence `activate` operation, then the phase
    `active` deployment for the same candidate. This is the second and final
    allowed successful staging deployment and the selected closeout artifact.
    If activation acknowledgement is lost but the candidate-bound enabled
    runtime is exact, use only `reconcile-activate`; do not upsert again.
-9. Prove strict provider readiness, contributor and venue-Free flows, private
+10. Prove strict provider readiness, contributor and venue-Free flows, private
    Storage, Free-only surface absence, account deletion, current data quality,
    and every server/browser/mobile/scheduled consumer. Reconcile or disable
    legacy Supabase keys only through the mode-bound ceremony using the exact
    replacement, fenced-deployment, and active-closeout run IDs.
-10. Run the PostgreSQL build canary, temporary two-replica overlapping-worker
+11. Run the PostgreSQL build canary, temporary two-replica overlapping-worker
     and connection-budget proof, expected/2x load, 60-minute soak, restart,
     rolling-deploy, and PostgreSQL-compatible rollback rehearsal; return
     permanent staging to one replica.
-11. Prove provider-safe PITR, logical/private Storage backups, independent WORM
+12. Prove provider-safe PITR, logical/private Storage backups, independent WORM
     retrieval, complete disposable recovery, deletion replay, recovered-app
     smoke, RPO/RTO, and exact teardown.
-12. Only after every staging and recovery gate passes, freeze the candidate and
+13. Only after every staging and recovery gate passes, freeze the candidate and
     release ID, schedule the controlled SQLite-to-PostgreSQL production import,
     and follow the protected production rollout. Do not perform an unsafe
     production migration.
