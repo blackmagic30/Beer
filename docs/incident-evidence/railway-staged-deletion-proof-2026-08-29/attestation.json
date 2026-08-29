@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "pintpath-railway-staged-deletion-proof-attestation/v1",
+  "recordedAt": "2026-08-29T07:22:56.512Z",
+  "provider": "Railway",
+  "providerIncident": {
+    "id": "8GL2R2U5",
+    "resolvedAt": "2026-08-29T03:38:53.496101Z",
+    "activeIncidentCountDuringProof": 0
+  },
+  "disposableTarget": {
+    "projectId": "af46f82a-6642-44af-a787-746d81c0423b",
+    "environmentId": "717bdd15-5105-4847-828c-8f179d82cd1d",
+    "serviceId": "898e1c7c-a29f-49ed-b5ec-77e3948bd19e",
+    "immutableImage": "nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+    "deploymentId": "6b708c19-3500-469a-a95b-4c7485a31ccb",
+    "deploymentSnapshotId": "06efe131-3923-443f-9fc3-0dec0bb4b276",
+    "initialPublicNonSecretProbeCount": 2
+  },
+  "excludedPintPathTarget": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "mutationCount": 0
+  },
+  "operation": {
+    "stageMutation": "environmentStageChanges",
+    "stageMerge": false,
+    "commitMutation": "environmentPatchCommitStaged",
+    "commitSkipDeploys": true,
+    "maskedDeletionShape": "exact-variable-wrapper-with-five-asterisk-value",
+    "decryptedDeletionShape": "exact-variable-null",
+    "automaticRetry": false
+  },
+  "normalAcknowledgement": {
+    "patchId": "12613c49-2083-4447-9ff1-16a982f82483",
+    "acknowledgement": "commitChanges/717bdd15-5105-4847-828c-8f179d82cd1d/12613c49-2083-4447-9ff1-16a982f82483",
+    "outcome": "passed",
+    "observationDurationMs": 604284
+  },
+  "lostAcknowledgement": {
+    "patchId": "c2591ef7-b8d6-4ff3-bbf7-15369c3446a9",
+    "singleUpstreamHttpStatus": 200,
+    "callerResponseBytes": 0,
+    "commitDispatchCount": 1,
+    "retryCount": 0,
+    "reconciledOutcome": "committed-exact-null-deletion",
+    "observedPostCommitMs": 709628,
+    "stableProviderStateSha256": "9ac2b676fcb487df4b78b04fffbe15eb3142a4101eef9d72001286e74ec5a7fd"
+  },
+  "invariance": {
+    "deploymentInventoryExact": true,
+    "deploymentSnapshotExact": true,
+    "eventInventoryExact": true,
+    "topologyExact": true
+  },
+  "workerOracleDisposition": {
+    "workerOutcome": "failed-after-provider-success",
+    "providerFailure": false,
+    "failure": "The zero-variable oracle required an empty variables member while Railway canonically omitted that optional empty member.",
+    "supplementalReadOnlyReconciliationPassed": true
+  },
+  "review": {
+    "independentReviewerCount": 2,
+    "p0Count": 0,
+    "p1Count": 0,
+    "outcome": "go"
+  },
+  "disposableCleanup": {
+    "projectTokenDeleteAcknowledged": true,
+    "projectTokenRemainingCount": 0,
+    "projectDeleteAcknowledged": true,
+    "projectDeleteAttemptCount": 1,
+    "projectDeleteRetryCount": 0,
+    "deletedAt": "2026-08-29T07:12:38.637Z",
+    "activeInventoryAbsentObservationCount": 10,
+    "exactTombstoneObservationCount": 10,
+    "observedSinceDeletedAtMs": 614577,
+    "deletionType": "railway-soft-deletion-tombstone",
+    "physicalBackendPurgeClaimed": false
+  },
+  "sealedArtifacts": {
+    "proofWorkerScriptSha256": "5489b02c47103f4835c74eebc0fdc70146965bd36f24c149997dd2bd20a7226f",
+    "supplementScriptSha256": "6333c323a2c78511540ecfc87098d379974a7766df014129dc66a6d6ad47fac8",
+    "proofSealRecordSha256": "b7923ae7875bae77ef46ed14c71a4186a1c2c6965ecf23a78982905e6a7fc028",
+    "proofArchiveSha256": "6a11c19b8c13950f4bb636e32e5f468e6da93949723a85f601fb6f8ff4fa58f9",
+    "projectDeleteManifestSha256": "5df90c2cb455fb0fa12f18e555c90c10a15c4e28b14e11c524f6c40828bead6d",
+    "projectDeleteReconciliationManifestSha256": "ac7c0f36b345f0f6d31bedf989248e15350172887279eee16924c7abf6b1355d",
+    "projectDeleteArchiveSha256": "849b5ebed4d1ddd81d6b9df0e23752d42e9a830ec6b4fe43aa5a176a2613b17e"
+  },
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

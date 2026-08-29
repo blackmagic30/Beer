@@ -32,13 +32,12 @@ disabled legacy service-role credential returned HTTP 401. The secret-free
 attestation is pinned in
 [`docs/incident-evidence/permanent-staging-offsite-key-revocation-2026-08-29/`](incident-evidence/permanent-staging-offsite-key-revocation-2026-08-29/README.md).
 The rows are therefore inert residue, not a live credential, but their presence
-still blocks permanent-staging bootstrap policy. There is currently no
-authorized deletion operation: Railway's `variableDelete` input has no
-deploy-suppression control, and its staged/automatic-deploy behavior must first
-be proved on a disposable, secret-free staging variable. Do not delete these
-rows from the dashboard or dispatch the disabled legacy cleanup. Railway still
-exposes no patch ETag/CAS/lock, so any future reviewed provider write also
-retains the external writer-freeze and exact reconciliation requirement.
+still blocks permanent-staging bootstrap policy. Direct `variableDelete` remains
+forbidden because it has no deploy-suppression control. The later disposable
+proof described below established the separate staged-null deletion path; the
+three real rows must still be removed only through its reviewed protected
+workflow after that successor is merged. Railway exposes no patch ETag/CAS/lock,
+so the writer freeze and exact reconciliation remain mandatory.
 
 The rescue SHA is intentionally ineligible for normal staging provider writes.
 Use only a later reviewed protected-`main` successor as the fresh SHA-scoped
@@ -61,6 +60,34 @@ PostgreSQL deployment identities. Artifact `9707286233` has digest
 `sha256:e4b9831f0365dd3efd8cbf5b9fbfbae7596c5b521539740cc64e1a5d07115c1a`.
 This proves the provider configuration write, not application startup,
 authentication, readiness, migration, or recovery.
+
+## Railway staged-deletion proof seal — 29 August 2026
+
+After Railway incident `8GL2R2U5` resolved, a fresh disposable project used one
+immutable-image service and two public, non-secret probes. For each probe, an
+exact `environmentStageChanges(merge:false)` null patch produced five-asterisk
+wrappers in masked views and literal nulls in decrypted views; an exact
+`environmentPatchCommitStaged(skipDeploys:true)` removed only that probe. The
+normal acknowledgement was exactly
+`commitChanges/<environmentId>/<patchId>`. A deterministic lost-ack case sent
+one upstream commit, delivered zero response bytes to the caller, made no
+retry, and was reconciled from the four authoritative active/selected,
+masked/decrypted views. Deployment inventory, deployment snapshot, topology,
+and event inventory remained invariant. Both cases were observed for more than
+ten minutes.
+
+Two independent reviews found no P0/P1 in the sealed evidence. The proof bundle
+SHA-256 is
+`6a11c19b8c13950f4bb636e32e5f468e6da93949723a85f601fb6f8ff4fa58f9`.
+The disposable project was then soft-deleted once with no retry, remained absent
+from active inventory with an exact tombstone for 614,577 ms, and left PintPath
+active and untouched; its deletion archive SHA-256 is
+`849b5ebed4d1ddd81d6b9df0e23752d42e9a830ec6b4fe43aa5a176a2613b17e`.
+The repository pins the secret-free attestation at SHA-256
+`e1faa9daff1ff4927c852ccf08b917f77b7893f77a04c20bbe192f556e276de2`.
+This proves the deletion transport only. The real 99-to-96 staging cleanup is
+not complete until this successor is reviewed, merged, dispatched once under
+the writer freeze, and reconciled.
 
 A fresh public read-only audit at `2026-08-29T01:55:16Z` still found 612
 venues, 288 price rows, 62 trusted rows that were all stale, zero qualifying
@@ -257,8 +284,8 @@ before a production cutover:
   exact canaried Supabase replacement receipt and sealed service-role row,
   requires the three forbidden staging `OFFSITE_BACKUP_*` rows to be absent,
   and cannot impersonate normal `1 -> 0` evidence. The rows are credential-
-  inert after the pinned revocation proof, but deletion remains blocked on a
-  disposable provider-semantics proof and a newly reviewed operation;
+  inert after the pinned revocation proof. Disposable provider semantics are
+  now sealed, but the reviewed 99-to-96 cleanup remains unmerged and unexecuted;
 - the former mutable production PostgreSQL source blocker is closed. A running
   disposable PostgreSQL service proved stage/cancel/retry and deploy-suppressed
   commit for the exact digest source without changing its deployment, instance,
@@ -583,10 +610,10 @@ blockers.
 
 - Three credential-inert OFFSITE residue rows remain in permanent staging and
   correctly block the 96-row cold-bootstrap inventory. Their underlying key is
-  revoked, but safe removal remains externally blocked until Railway deletion
-  semantics are proved on a disposable, secret-free variable without a deploy
-  or partial-state hazard. The fixed Postgres runtime-source repair in this
-  seal does not remove or bypass that block.
+  revoked and staged-null deletion semantics are now independently proved, but
+  the proof did not mutate PintPath. The successor cleanup must still pass the
+  full gate, merge, run exactly once under the writer freeze, and reconcile an
+  empty patch, 96 rows, and unchanged cold/dead topology.
 - Production Postgres now advertises the exact policy-approved digest source.
   Railway still offers no patch-ID/ETag/CAS argument on the deploy-suppressed
   staged-commit operation, so every provider-writing ceremony must retain the
@@ -681,18 +708,18 @@ permanent-staging application is failed/stopped. Continue only in this order:
    re-export the exact Beer staging topology, 99-row variable metadata without
    values, empty staged patch, Git-autodeploy state, and failed deployment
    identity. Protected `main` is `f6bfb81…`; do not freeze the release register.
-3. **Completed 29 August:** the one fixed `permanent-staging-postgres` runtime
-   URL repair succeeded with deploys skipped and Beer/PostgreSQL deployment
+3. **Completed 29 August:** the fixed `permanent-staging-postgres` runtime-URL
+   repair succeeded with deploys skipped and Beer/PostgreSQL deployment
    identities unchanged. Do not repeat or relabel that historical write.
-4. Do not use `variableDelete` on the three residual OFFSITE rows. First prove
-   on a separate disposable project that an exact staged `null` deletion and
-   `environmentPatchCommitStaged(skipDeploys:true)` remove a public probe while
-   leaving the complete deployment inventory unchanged, including deterministic
-   lost-ack reconciliation. Review and merge the smallest deletion operation,
-   then remove the three exact pinned rows under the external-writer freeze.
-   Re-export the empty staged patch and 96-row inventory. Only then reconcile
-   the four provider rows and execute the atomic Supabase replacement whose
-   exact pair passes the same-custody canary.
+4. **Proof completed 29 August:** the separate disposable project proved exact
+   staged-null deletion, deploy suppression, four-view reconciliation, and a
+   deterministic lost acknowledgement with no retry; its project is now
+   tombstoned and absent. This is the explicit no-deploy guarantee required by
+   policy. Do not use `variableDelete`. Review and merge the
+   proof-bound protected operation, then remove the three exact pinned rows
+   once under the external-writer freeze. Re-export the empty staged patch and
+   96-row inventory. Only then reconcile the four provider rows and execute the
+   atomic Supabase replacement whose exact pair passes the same-custody canary.
 5. Select that successful replacement run and dispatch cold `prepare` against
    the policy-pinned `numReplicas:null` topology, then select the successful
    prepare run and dispatch cold `quiesce` to initialize explicit zero. Do not

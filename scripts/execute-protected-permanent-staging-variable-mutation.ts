@@ -42,6 +42,10 @@ const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const APPLICATION_TARGET_PORT = 8080;
 const POLICY_PATH = "ops/railway/permanent-staging-variable-mutation-policy.json";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
+const STAGED_DELETION_PROOF_ATTESTATION_PATH =
+  "docs/incident-evidence/railway-staged-deletion-proof-2026-08-29/attestation.json";
+const STAGED_DELETION_PROOF_ATTESTATION_SHA256 =
+  "e1faa9daff1ff4927c852ccf08b917f77b7893f77a04c20bbe192f556e276de2";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -82,7 +86,11 @@ export const PROTECTED_STAGING_VARIABLE_STAGE_DELETION_QUERY =
     id
     environmentId
     status
-    patch(decryptVariables: false)
+    message
+    createdAt
+    updatedAt
+    appliedAt
+    lastAppliedError
   }
 }`;
 
@@ -116,12 +124,53 @@ export const PROTECTED_STAGING_VARIABLE_CANCEL_DELETION_QUERY =
 }`;
 
 export const PROTECTED_STAGING_VARIABLE_PATCH_QUERY =
-  `query PintPathProtectedEnvironmentPatch($patchId: String!) {
-  environmentPatch(id: $patchId) {
+  `query PintPathProtectedEnvironmentPatch(
+  $environmentId: String!
+  $patchId: String!
+) {
+  activeMasked: environmentStagedChanges(environmentId: $environmentId) {
     id
     environmentId
     status
+    message
+    createdAt
+    updatedAt
+    appliedAt
+    lastAppliedError
     patch(decryptVariables: false)
+  }
+  activeDecrypted: environmentStagedChanges(environmentId: $environmentId) {
+    id
+    environmentId
+    status
+    message
+    createdAt
+    updatedAt
+    appliedAt
+    lastAppliedError
+    patch(decryptVariables: true)
+  }
+  selectedMasked: environmentPatch(id: $patchId) {
+    id
+    environmentId
+    status
+    message
+    createdAt
+    updatedAt
+    appliedAt
+    lastAppliedError
+    patch(decryptVariables: false)
+  }
+  selectedDecrypted: environmentPatch(id: $patchId) {
+    id
+    environmentId
+    status
+    message
+    createdAt
+    updatedAt
+    appliedAt
+    lastAppliedError
+    patch(decryptVariables: true)
   }
 }`;
 
@@ -1352,7 +1401,7 @@ function parseMetadata(
     || (expectedStagedPatch === "empty"
       ? !plainRecord(staged.patch) || Object.keys(staged.patch).length !== 0
       : expectedStagedPatch === "cleanup-deletion"
-        ? !cleanupDeletionPatchExact(staged.patch)
+        ? !incidentMaskedCleanupPatchExact(staged.patch)
         : expectedStagedPatch === "incident-masked-cleanup-cancel"
           ? staged.id !== INCIDENT_STAGED_PATCH_ID
             || !incidentMaskedCleanupPatchExact(staged.patch)
@@ -1362,7 +1411,7 @@ function parseMetadata(
               || staged.status !== "STAGED"
               || !incidentMaskedCleanupPatchExact(staged.patch))
         : (!plainRecord(staged.patch) || Object.keys(staged.patch).length !== 0)
-          && !cleanupDeletionPatchExact(staged.patch))
+          && !incidentMaskedCleanupPatchExact(staged.patch))
     || !exactKeys(serviceInstance, [
       "id", "serviceId", "environmentId", "numReplicas", "source", "latestDeployment",
       "activeDeployments", "domains",
@@ -1871,13 +1920,25 @@ function parseStageDeletionAcknowledgement(value: unknown): string | null {
   if (!(exactKeys(value, ["data"])
     && exactKeys(value.data, ["environmentStageChanges"])
     && exactKeys(value.data.environmentStageChanges, [
-      "id", "environmentId", "status", "patch",
+      "id", "environmentId", "status", "message", "createdAt", "updatedAt",
+      "appliedAt", "lastAppliedError",
     ])
     && typeof value.data.environmentStageChanges.id === "string"
     && UUID_PATTERN.test(value.data.environmentStageChanges.id)
     && value.data.environmentStageChanges.environmentId === STAGING_ENVIRONMENT_ID
     && value.data.environmentStageChanges.status === "STAGED"
-    && cleanupDeletionPatchExact(value.data.environmentStageChanges.patch))) {
+    && value.data.environmentStageChanges.message === null
+    && value.data.environmentStageChanges.appliedAt === null
+    && value.data.environmentStageChanges.lastAppliedError === null)) {
+    return null;
+  }
+  const createdAt = canonicalTimestamp(
+    value.data.environmentStageChanges.createdAt,
+  );
+  const updatedAt = canonicalTimestamp(
+    value.data.environmentStageChanges.updatedAt,
+  );
+  if (createdAt === null || updatedAt === null || updatedAt < createdAt) {
     return null;
   }
   return value.data.environmentStageChanges.id;
@@ -1892,27 +1953,199 @@ function parseCancelDeletionAcknowledgement(value: unknown): boolean {
     && Object.keys(value.data.environmentStageChanges.patch).length === 0;
 }
 
-function parseCommitDeletionAcknowledgement(value: unknown): boolean {
-  return exactKeys(value, ["data"])
+function parseCommitDeletionAcknowledgement(
+  value: unknown,
+  expectedPatchId: string,
+): boolean {
+  if (!(UUID_PATTERN.test(expectedPatchId)
+    && exactKeys(value, ["data"])
     && exactKeys(value.data, ["environmentPatchCommitStaged"])
-    && typeof value.data.environmentPatchCommitStaged === "string"
-    && UUID_PATTERN.test(value.data.environmentPatchCommitStaged);
+    && typeof value.data.environmentPatchCommitStaged === "string")) {
+    return false;
+  }
+  const acknowledgement = value.data.environmentPatchCommitStaged;
+  return acknowledgement ===
+    `commitChanges/${STAGING_ENVIRONMENT_ID}/${expectedPatchId}`;
+}
+
+const DELETION_PATCH_NODE_KEYS = Object.freeze([
+  "id",
+  "environmentId",
+  "status",
+  "message",
+  "createdAt",
+  "updatedAt",
+  "appliedAt",
+  "lastAppliedError",
+  "patch",
+] as const);
+
+function deletionPatchNodeMetadata(
+  value: unknown,
+  expectedPatchId: string,
+  expectedStatus: "STAGED" | "COMMITTED",
+  expectedMessage: string | null,
+): Record<string, unknown> | null {
+  if (!exactKeys(value, DELETION_PATCH_NODE_KEYS)
+    || value.id !== expectedPatchId
+    || value.environmentId !== STAGING_ENVIRONMENT_ID
+    || value.status !== expectedStatus
+    || value.message !== expectedMessage
+    || value.lastAppliedError !== null) return null;
+  const createdAt = canonicalTimestamp(value.createdAt);
+  const updatedAt = canonicalTimestamp(value.updatedAt);
+  const appliedAt = value.appliedAt === null
+    ? null
+    : canonicalTimestamp(value.appliedAt);
+  if (createdAt === null || updatedAt === null || updatedAt < createdAt
+    || (expectedStatus === "STAGED" && appliedAt !== null)
+    || (expectedStatus === "COMMITTED" && (appliedAt === null
+      || appliedAt < createdAt || updatedAt < appliedAt))) return null;
+  return {
+    id: value.id,
+    environmentId: value.environmentId,
+    status: value.status,
+    message: value.message,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    appliedAt: value.appliedAt,
+    lastAppliedError: value.lastAppliedError,
+  };
+}
+
+function emptyActiveDeletionPatchNodeExact(value: unknown): boolean {
+  if (!exactKeys(value, DELETION_PATCH_NODE_KEYS)
+    || value.id !== "<empty>"
+    || value.environmentId !== STAGING_ENVIRONMENT_ID
+    || value.status !== "STAGED"
+    || value.message !== null
+    || value.appliedAt !== null
+    || value.lastAppliedError !== null
+    || !plainRecord(value.patch)
+    || Object.keys(value.patch).length !== 0) return false;
+  const createdAt = value.createdAt === null
+    ? null
+    : canonicalTimestamp(value.createdAt);
+  const updatedAt = value.updatedAt === null
+    ? null
+    : canonicalTimestamp(value.updatedAt);
+  return (value.createdAt === null || createdAt !== null)
+    && (value.updatedAt === null || updatedAt !== null)
+    && (createdAt === null || updatedAt === null || updatedAt >= createdAt);
+}
+
+function deletionPatchReadbackEnvelope(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (!exactKeys(value, ["data"])
+    || !exactKeys(value.data, [
+      "activeMasked",
+      "activeDecrypted",
+      "selectedMasked",
+      "selectedDecrypted",
+    ])) return null;
+  return value.data;
+}
+
+function parseStagedDeletionPatchReadback(
+  value: unknown,
+  expectedPatchId: string,
+): boolean {
+  if (!UUID_PATTERN.test(expectedPatchId)) return false;
+  const data = deletionPatchReadbackEnvelope(value);
+  if (data === null) return false;
+  const nodes = [
+    data.activeMasked,
+    data.activeDecrypted,
+    data.selectedMasked,
+    data.selectedDecrypted,
+  ];
+  const metadata = nodes.map((node) => deletionPatchNodeMetadata(
+    node,
+    expectedPatchId,
+    "STAGED",
+    null,
+  ));
+  return metadata.every((entry) => entry !== null)
+    && metadata.every((entry) => canonical(entry) === canonical(metadata[0]))
+    && incidentMaskedCleanupPatchExact(
+      (data.activeMasked as Record<string, unknown>).patch,
+    )
+    && cleanupDeletionPatchExact(
+      (data.activeDecrypted as Record<string, unknown>).patch,
+    )
+    && incidentMaskedCleanupPatchExact(
+      (data.selectedMasked as Record<string, unknown>).patch,
+    )
+    && cleanupDeletionPatchExact(
+      (data.selectedDecrypted as Record<string, unknown>).patch,
+    );
 }
 
 function parseCommittedDeletionPatch(
   value: unknown,
   expectedPatchId: string,
+  expectedCommitMessage: string,
 ): boolean {
-  return UUID_PATTERN.test(expectedPatchId)
-    && exactKeys(value, ["data"])
-    && exactKeys(value.data, ["environmentPatch"])
-    && exactKeys(value.data.environmentPatch, [
-      "id", "environmentId", "status", "patch",
-    ])
-    && value.data.environmentPatch.id === expectedPatchId
-    && value.data.environmentPatch.environmentId === STAGING_ENVIRONMENT_ID
-    && value.data.environmentPatch.status === "COMMITTED"
-    && cleanupDeletionPatchExact(value.data.environmentPatch.patch);
+  if (!UUID_PATTERN.test(expectedPatchId)) return false;
+  const data = deletionPatchReadbackEnvelope(value);
+  if (data === null) return false;
+  const selectedMasked = deletionPatchNodeMetadata(
+    data.selectedMasked,
+    expectedPatchId,
+    "COMMITTED",
+    expectedCommitMessage,
+  );
+  const selectedDecrypted = deletionPatchNodeMetadata(
+    data.selectedDecrypted,
+    expectedPatchId,
+    "COMMITTED",
+    expectedCommitMessage,
+  );
+  return selectedMasked !== null
+    && selectedDecrypted !== null
+    && canonical(selectedMasked) === canonical(selectedDecrypted)
+    && emptyActiveDeletionPatchNodeExact(data.activeMasked)
+    && emptyActiveDeletionPatchNodeExact(data.activeDecrypted)
+    && incidentMaskedCleanupPatchExact(
+      (data.selectedMasked as Record<string, unknown>).patch,
+    )
+    && cleanupDeletionPatchExact(
+      (data.selectedDecrypted as Record<string, unknown>).patch,
+    );
+}
+
+async function readStagedDeletionPatchExact(
+  fetchImpl: typeof fetch,
+  metadataToken: string,
+  patchId: string,
+): Promise<boolean> {
+  return parseStagedDeletionPatchReadback(await graphql(
+    fetchImpl,
+    metadataToken,
+    PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
+    {
+      environmentId: STAGING_ENVIRONMENT_ID,
+      patchId,
+    },
+  ), patchId);
+}
+
+async function readCommittedDeletionPatchExact(
+  fetchImpl: typeof fetch,
+  metadataToken: string,
+  patchId: string,
+  commitMessage: string,
+): Promise<boolean> {
+  return parseCommittedDeletionPatch(await graphql(
+    fetchImpl,
+    metadataToken,
+    PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
+    {
+      environmentId: STAGING_ENVIRONMENT_ID,
+      patchId,
+    },
+  ), patchId, commitMessage);
 }
 
 function secretStrings(
@@ -1968,9 +2201,14 @@ function emptyChecks(): MutationReceipt["checks"] {
 
 function policyExact(cwd: string): boolean {
   try {
+    const deletionProofAttestation = fs.readFileSync(
+      path.resolve(cwd, STAGED_DELETION_PROOF_ATTESTATION_PATH),
+    );
+    if (sha256(deletionProofAttestation) !==
+      STAGED_DELETION_PROOF_ATTESTATION_SHA256) return false;
     const policy = JSON.parse(fs.readFileSync(path.resolve(cwd, POLICY_PATH), "utf8")) as unknown;
     return canonical(policy) === canonical({
-      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v6",
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v7",
       policyId: "pintpath-permanent-staging-protected-variable-mutations",
       activationState: PROTECTED_STAGING_VARIABLE_MUTATION_STATE,
       projectId: PROJECT_ID,
@@ -2029,8 +2267,13 @@ function policyExact(cwd: string): boolean {
           ...CLEANUP_RECOVERY_OPERATIONS,
           INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION,
         ],
+        stagedDeletionProof: {
+          attestationPath: STAGED_DELETION_PROOF_ATTESTATION_PATH,
+          attestationSha256: STAGED_DELETION_PROOF_ATTESTATION_SHA256,
+          independentReviewOutcome: "GO_NO_P0_P1",
+        },
         legacyStagedDeletionDispatchState:
-          "DISABLED_PENDING_PROVIDER_VERIFIABLE_DELETION_SEMANTICS",
+          "ENABLED_AFTER_SEALED_DISPOSABLE_PROOF",
       },
       mutationPlans: {
         variableUpsert: {
@@ -2079,7 +2322,7 @@ function policyExact(cwd: string): boolean {
               stagedPatchCreatedAt: INCIDENT_STAGED_PATCH_CREATED_AT,
               maskedPatchShape:
                 "EXACT_THREE_OFFSITE_VARIABLE_WRAPPERS_WITH_FIVE_ASTERISK_VALUES",
-              deletionSemanticsProven: false,
+              deletionSemanticsProven: true,
               originalBaselineMetadataSha256:
                 INCIDENT_ORIGINAL_BASELINE_METADATA_SHA256,
               recoveryDeadline:
@@ -2178,9 +2421,7 @@ export async function runProtectedPermanentStagingVariableMutation(
           })
         : runRailwayExactStagedPatchBoundaryCheck(
             path.resolve(dependencies.cwd, BOUNDARY_POLICY_PATH),
-            expectedStagingPatch === "cleanup-deletion"
-              ? cleanupDeletionPatch()
-              : incidentMaskedCleanupPatch(),
+            incidentMaskedCleanupPatch(),
           ),
     readSecretFile: readPrivateSecretFile,
     verifyPriorCleanupEvidence: priorCleanupEvidenceExact,
@@ -2446,7 +2687,7 @@ export async function runProtectedPermanentStagingVariableMutation(
                 appliedAt: null,
                 observedShape:
                   "exact-three-offsite-variable-wrappers-with-five-asterisk-values",
-                deletionSemanticsProven: false,
+                deletionSemanticsProven: true,
               },
               originalBaselineMetadataSha256:
                 INCIDENT_ORIGINAL_BASELINE_METADATA_SHA256,
@@ -2613,6 +2854,18 @@ export async function runProtectedPermanentStagingVariableMutation(
         stageAcknowledgementExact = false;
       }
       checks.stageAcknowledgementExact = stageAcknowledgementExact;
+      let authoritativeStageReadbackExact = false;
+      if (stagedDeletionPatchId !== null) {
+        try {
+          authoritativeStageReadbackExact = await readStagedDeletionPatchExact(
+            dependencies.fetchImpl,
+            metadataToken,
+            stagedDeletionPatchId,
+          );
+        } catch {
+          authoritativeStageReadbackExact = false;
+        }
+      }
       let staged: ProviderSnapshot | null = null;
       try {
         staged = await readProviderSnapshot(
@@ -2623,19 +2876,39 @@ export async function runProtectedPermanentStagingVariableMutation(
       } catch {
         staged = null;
       }
-      checks.stagedDeletionPatchExact = staged !== null
+      const stagedSnapshotExact = staged !== null
         && !staged.stagedPatchEmpty
         && staged.stagedPatchStatus === "STAGED"
         && (stagedDeletionPatchId === null
           || staged.stagedPatchId === stagedDeletionPatchId)
         && JSON.stringify(staged.variables) === JSON.stringify(before.variables)
         && runtimeSnapshotUnchanged(before, staged);
-      if (!checks.stagedDeletionPatchExact) throw new Error("staged_patch_invalid");
-      stagedDeletionPatchId = staged!.stagedPatchId;
+      if (!stagedSnapshotExact) throw new Error("staged_patch_invalid");
+      if (stagedDeletionPatchId === null) {
+        stagedDeletionPatchId = staged!.stagedPatchId;
+        try {
+          authoritativeStageReadbackExact = await readStagedDeletionPatchExact(
+            dependencies.fetchImpl,
+            metadataToken,
+            stagedDeletionPatchId,
+          );
+        } catch {
+          authoritativeStageReadbackExact = false;
+        }
+      }
+      checks.stagedDeletionPatchExact = authoritativeStageReadbackExact;
+      if (!checks.stagedDeletionPatchExact) {
+        throw new Error("staged_patch_readback_invalid");
+      }
       checks.boundaryPrecommitExact = await dependencies.boundaryCheck(
         "cleanup-deletion",
       ) === 0;
       if (!checks.boundaryPrecommitExact) throw new Error("precommit_boundary_invalid");
+      if (!await readStagedDeletionPatchExact(
+        dependencies.fetchImpl,
+        metadataToken,
+        stagedDeletionPatchId,
+      )) throw new Error("final_precommit_patch_invalid");
       attempts = 2;
       try {
         commitAcknowledgementExact = parseCommitDeletionAcknowledgement(await graphql(
@@ -2647,7 +2920,7 @@ export async function runProtectedPermanentStagingVariableMutation(
             commitMessage: `pintpath:staging-offsite-cleanup:${candidateSha}`,
             skipDeploys: true,
           },
-        ));
+        ), stagedDeletionPatchId);
       } catch {
         commitAcknowledgementExact = false;
       }
@@ -2656,12 +2929,12 @@ export async function runProtectedPermanentStagingVariableMutation(
         && commitAcknowledgementExact;
       try {
         checks.committedDeletionPatchExact = stagedDeletionPatchId !== null
-          && parseCommittedDeletionPatch(await graphql(
+          && await readCommittedDeletionPatchExact(
             dependencies.fetchImpl,
             metadataToken,
-            PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
-            { patchId: stagedDeletionPatchId },
-          ), stagedDeletionPatchId);
+            stagedDeletionPatchId,
+            `pintpath:staging-offsite-cleanup:${candidateSha}`,
+          );
       } catch {
         checks.committedDeletionPatchExact = false;
       }
@@ -2725,6 +2998,15 @@ export async function runProtectedPermanentStagingVariableMutation(
         && sha256(canonical(cleanupDeletionPatch())) === CLEANUP_PATCH_SHA256;
       if (checks.stagedDeletionPatchExact) {
         stagedDeletionPatchId = prewrite!.stagedPatchId;
+        try {
+          checks.stagedDeletionPatchExact = await readStagedDeletionPatchExact(
+            dependencies.fetchImpl,
+            metadataToken,
+            stagedDeletionPatchId,
+          );
+        } catch {
+          checks.stagedDeletionPatchExact = false;
+        }
       }
       if (readOnlyRecovery) {
         attempts = 0;
@@ -2746,6 +3028,19 @@ export async function runProtectedPermanentStagingVariableMutation(
           stageAcknowledgementExact = false;
         }
         checks.stageAcknowledgementExact = stageAcknowledgementExact;
+        let authoritativeStageReadbackExact = false;
+        if (stagedDeletionPatchId !== null) {
+          try {
+            authoritativeStageReadbackExact =
+              await readStagedDeletionPatchExact(
+                dependencies.fetchImpl,
+                metadataToken,
+                stagedDeletionPatchId,
+              );
+          } catch {
+            authoritativeStageReadbackExact = false;
+          }
+        }
         let staged: ProviderSnapshot | null = null;
         try {
           staged = await readProviderSnapshot(
@@ -2756,15 +3051,31 @@ export async function runProtectedPermanentStagingVariableMutation(
         } catch {
           staged = null;
         }
-        checks.stagedDeletionPatchExact = staged !== null
+        const stagedSnapshotExact = staged !== null
           && !staged.stagedPatchEmpty
           && staged.stagedPatchStatus === "STAGED"
           && (stagedDeletionPatchId === null
             || staged.stagedPatchId === stagedDeletionPatchId)
           && JSON.stringify(staged.variables) === JSON.stringify(before.variables)
           && runtimeSnapshotUnchanged(before, staged);
-        if (!checks.stagedDeletionPatchExact) throw new Error("staged_patch_invalid");
-        stagedDeletionPatchId = staged!.stagedPatchId;
+        if (!stagedSnapshotExact) throw new Error("staged_patch_invalid");
+        if (stagedDeletionPatchId === null) {
+          stagedDeletionPatchId = staged!.stagedPatchId;
+          try {
+            authoritativeStageReadbackExact =
+              await readStagedDeletionPatchExact(
+                dependencies.fetchImpl,
+                metadataToken,
+                stagedDeletionPatchId,
+              );
+          } catch {
+            authoritativeStageReadbackExact = false;
+          }
+        }
+        checks.stagedDeletionPatchExact = authoritativeStageReadbackExact;
+        if (!checks.stagedDeletionPatchExact) {
+          throw new Error("staged_patch_readback_invalid");
+        }
         checks.boundaryPrecommitExact = await dependencies.boundaryCheck(
           "cleanup-deletion",
         ) === 0;
@@ -2779,6 +3090,12 @@ export async function runProtectedPermanentStagingVariableMutation(
         if (!checks.boundaryPrecommitExact) throw new Error("precommit_boundary_invalid");
         attempts = 1;
       }
+      if (!readOnlyRecovery && (stagedDeletionPatchId === null
+        || !await readStagedDeletionPatchExact(
+          dependencies.fetchImpl,
+          metadataToken,
+          stagedDeletionPatchId,
+        ))) throw new Error("final_precommit_patch_invalid");
       if (activeOperation === RESUME_CLEANUP_OPERATION
         && !cleanupAlreadyCompletedAtPreflight) {
         try {
@@ -2791,7 +3108,7 @@ export async function runProtectedPermanentStagingVariableMutation(
               commitMessage: `pintpath:staging-offsite-cleanup:${candidateSha}`,
               skipDeploys: true,
             },
-          ));
+          ), stagedDeletionPatchId!);
         } catch {
           commitAcknowledgementExact = false;
         }
@@ -2801,12 +3118,12 @@ export async function runProtectedPermanentStagingVariableMutation(
           : commitAcknowledgementExact;
         try {
           checks.committedDeletionPatchExact = stagedDeletionPatchId !== null
-            && parseCommittedDeletionPatch(await graphql(
+            && await readCommittedDeletionPatchExact(
               dependencies.fetchImpl,
               metadataToken,
-              PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
-              { patchId: stagedDeletionPatchId },
-            ), stagedDeletionPatchId);
+              stagedDeletionPatchId,
+              `pintpath:staging-offsite-cleanup:${candidateSha}`,
+            );
         } catch {
           checks.committedDeletionPatchExact = false;
         }
@@ -2941,15 +3258,27 @@ export async function runProtectedPermanentStagingVariableMutation(
         checks.deploymentUnchanged = after !== null
           && runtimeSnapshotUnchanged(before, after);
         if (operation === CLEANUP_OPERATION && attempts === 1) {
-          checks.stagedDeletionPatchExact = after !== null
+          const stagedSnapshotExact = after !== null
             && !after.stagedPatchEmpty
             && after.stagedPatchStatus === "STAGED"
             && (stagedDeletionPatchId === null
               || after.stagedPatchId === stagedDeletionPatchId)
             && JSON.stringify(after.variables) === JSON.stringify(before.variables)
             && checks.deploymentUnchanged;
-          if (checks.stagedDeletionPatchExact) {
+          if (stagedSnapshotExact) {
             stagedDeletionPatchId = after!.stagedPatchId;
+            try {
+              checks.stagedDeletionPatchExact =
+                await readStagedDeletionPatchExact(
+                  dependencies.fetchImpl,
+                  metadataToken,
+                  stagedDeletionPatchId,
+                );
+            } catch {
+              checks.stagedDeletionPatchExact = false;
+            }
+          } else {
+            checks.stagedDeletionPatchExact = false;
           }
           checks.targetPostflightExact = false;
         } else {
@@ -3175,6 +3504,7 @@ export const protectedPermanentStagingVariableMutationInternals = {
   parseIncidentSelectedPatchNonCommitted,
   parseScope,
   parseStageDeletionAcknowledgement,
+  parseStagedDeletionPatchReadback,
   priorCleanupEvidenceExact,
   providerPostflightExact,
   providerPreflightExact,

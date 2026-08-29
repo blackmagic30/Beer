@@ -257,13 +257,24 @@ describe("Railway mutation boundary guard", () => {
   });
 
   it("accepts only the exact reviewed staging patch while every other boundary stays clean", async () => {
-    const expectedPatch = {
+    const decryptedDeletionPatch = {
       services: {
         "6816c4a2-e392-4ee5-826f-2584cb599ec0": {
           variables: {
             OFFSITE_BACKUP_BUCKET: null,
             OFFSITE_BACKUP_SERVICE_ROLE_KEY: null,
             OFFSITE_BACKUP_SUPABASE_URL: null,
+          },
+        },
+      },
+    };
+    const expectedPatch = {
+      services: {
+        "6816c4a2-e392-4ee5-826f-2584cb599ec0": {
+          variables: {
+            OFFSITE_BACKUP_BUCKET: { value: "*****" },
+            OFFSITE_BACKUP_SERVICE_ROLE_KEY: { value: "*****" },
+            OFFSITE_BACKUP_SUPABASE_URL: { value: "*****" },
           },
         },
       },
@@ -289,6 +300,14 @@ describe("Railway mutation boundary guard", () => {
     });
     expect(wrongPatch.code).toBe(1);
     expect(wrongPatch.receipt.checks.stagingPatchExact).toBe(false);
+
+    const decryptedInsteadOfMasked = await runExactStagedWith({
+      expectedPatch,
+      stagingPatch: decryptedDeletionPatch,
+    });
+    expect(decryptedInsteadOfMasked.code).toBe(1);
+    expect(decryptedInsteadOfMasked.receipt.checks.stagingPatchExact)
+      .toBe(false);
 
     const productionDrift = await runExactStagedWith({
       expectedPatch,

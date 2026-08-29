@@ -9,9 +9,9 @@ to Railway:
 
 - `.github/workflows/permanent-staging-provider-mutation.yml` reconciles one of
   the four reviewed Google/OpenAI variables in place, atomically replaces both
-  Supabase keys, and exposes no authorized `OFFSITE_BACKUP_*` deletion path.
-  The three residual rows contain a revoked credential and remain a staging
-  bootstrap blocker until deletion semantics are proved separately.
+  Supabase keys, and exposes the one proof-bound staged-null cleanup plus its
+  exact resume/cancel recovery identities. It never uses Railway's direct
+  `variableDelete` operation.
 - `.github/workflows/permanent-staging-scale-evidence.yml` scales the exact
   reviewed application deployment from one replica to two, runs expected-peak,
   2x-peak, and 60-minute soak proof, and unconditionally converges the service
@@ -89,10 +89,17 @@ Narrow recovery exceptions remain write-safe. A mode-bound read-only
 legacy-key reconciliation may follow exactly one failed, cancelled, or timed-out
 disable run whose exact cutover step may have written; the reconciliation
 receives no write credential, and any second disable remains blocked. An
-older OFFSITE cleanup implementation and its resume/cancel identities remain
-disabled. They are not a current recovery exception and must not be dispatched:
-the provider contract did not establish whether `variableDelete` stages,
-commits, or deploys, and its input exposes no `skipDeploys` control.
+older direct-delete OFFSITE path remains forbidden. The authorized cleanup does
+not use `variableDelete`: a sealed disposable proof established that exact
+service-scoped nulls staged with `environmentStageChanges(merge:false)` appear
+as five-asterisk wrappers in masked views and literal nulls in decrypted views,
+then commit without a deploy through
+`environmentPatchCommitStaged(skipDeploys:true)`. The workflow requires all
+four active/selected masked/decrypted views immediately after staging and again
+before commit. It accepts only the exact
+`commitChanges/<environment>/<patch>` acknowledgement; a lost acknowledgement
+is reconciled from the exact committed views without redispatch. Resume/cancel
+remain candidate/run-bound recovery modes, not retry authority.
 
 Cold prepare, cold quiesce, staging restore, and staging worker activation also
 have distinct runner-loss reconciliation identities. Each binds the exact
@@ -163,9 +170,10 @@ mutations on that exact dead baseline before cold prepare.
   `SUPABASE_SERVICE_ROLE_KEY` row in place, then replace both values atomically.
   Do not delete or recreate either row.
 - Do not recreate the three inherited Beer `OFFSITE_BACKUP_*` rows. Their key
-  is revoked and returns 401, but deletion is not authorized until a disposable
-  secret-free provider proof establishes exact no-deploy semantics and a new
-  reviewed operation is merged.
+  is revoked and returns 401. Remove only their three pinned row identities
+  through the protected staged-null operation after its exact candidate is
+  reviewed and merged. Require the operational writer freeze, empty final
+  patch, 96-row inventory, and unchanged cold/dead topology.
 - Do not recreate the missing Railway canary service. It is not an application
   staging prerequisite; the later protected legacy-cutover runner supplies the
   required direct Auth/admin/Storage runtime proof.
@@ -467,14 +475,16 @@ route open. The controlling policy is schema v2 at SHA-256
    ancestry. Human PR approval is not required in this solo-owner repository;
    require the exact merged non-draft same-repository PR and pass all required
    checks on the exact candidate.
-2. Do not dispatch the disabled OFFSITE delete/resume/cancel operations. First
-   create a disposable, secret-free staging variable and prove whether the
-   selected provider deletion API stages, commits, or deploys, including lost-
-   acknowledgement recovery. Merge a new reviewed operation only if it has an
-   explicit no-deploy guarantee. Under the external-writer freeze, delete only
-   the three pinned residual rows and prove the 96-row inventory, empty patch,
-   and unchanged cold/dead topology. This external proof is a hard prerequisite
-   for cold prepare.
+2. The disposable staged-null proof is complete and pinned by
+   `docs/incident-evidence/railway-staged-deletion-proof-2026-08-29/attestation.json`
+   at SHA-256
+   `e1faa9daff1ff4927c852ccf08b917f77b7893f77a04c20bbe192f556e276de2`.
+   Do not use `variableDelete`. Under the external-writer freeze, dispatch the
+   reviewed `remove-forbidden-offsite-backup-variables` operation once for the
+   exact current protected-main candidate. If and only if runner loss strands
+   the exact authenticated patch, use its reviewed same-candidate resume/cancel
+   identity; never redispatch the original. Prove the 96-row inventory, empty
+   patch, and unchanged cold/dead topology before cold prepare.
 3. Run `Mutate Pint Path permanent-staging provider variables` once per
    Google/OpenAI variable that needs reconciliation. Existing exact Beer rows
    are adopted in place; an absent row may be created. Shared, foreign, sealed,
