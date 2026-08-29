@@ -1763,6 +1763,53 @@ describe("reviewed candidate mutation authority", () => {
     });
   });
 
+  it("binds the fixed PostgreSQL source repair to its one staging-only target-variable pair", async () => {
+    const fixture = harness({
+      operation: "runtime-variable",
+      target: "permanent-staging-postgres",
+      variableName: "PINTPATH_RUNTIME_DATABASE_URL",
+    });
+    let summary = "";
+    await expect(runGithubReviewedCandidateAuthority([
+      "--candidate-sha", CANDIDATE,
+      "--operation", "runtime-variable",
+      "--target", "permanent-staging-postgres",
+      "--variable-name", "PINTPATH_RUNTIME_DATABASE_URL",
+    ], {
+      env: fixture.env,
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(0);
+    expect(JSON.parse(summary)).toMatchObject({
+      ok: true,
+      operation: "runtime-variable",
+      workflowPath: RUNTIME_PATH,
+      stagingLifecycleSealed: false,
+    });
+
+    for (const [target, variableName] of [
+      ["production", "PINTPATH_RUNTIME_DATABASE_URL"],
+      ["permanent-staging", "PINTPATH_RUNTIME_DATABASE_URL"],
+      ["permanent-staging-postgres", "DATABASE_URL"],
+    ]) {
+      summary = "";
+      await expect(runGithubReviewedCandidateAuthority([
+        "--candidate-sha", CANDIDATE,
+        "--operation", "runtime-variable",
+        "--target", target!,
+        "--variable-name", variableName!,
+      ], {
+        env: fixture.env,
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      })).resolves.toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({
+        ok: false,
+        failureCode: "github_reviewed_candidate_authority_arguments_invalid",
+      });
+    }
+  });
+
   it("allows writes after deploy one and seals staging after deploy two", async () => {
     const first = workflowRun({
       id: 300,
@@ -1843,6 +1890,22 @@ describe("reviewed candidate mutation authority", () => {
       operation: "supabase-legacy-key-cutover",
       providerRuns: [selected],
       runtimeRuns: [lateRuntime],
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_stale_deployment",
+    );
+
+    const latePostgresRuntimeSource = workflowRun({
+      id: 703,
+      path: RUNTIME_PATH,
+      displayTitle:
+        `Configure runtime variable | permanent-staging-postgres | PINTPATH_RUNTIME_DATABASE_URL | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:51:00.000Z",
+    });
+    latePostgresRuntimeSource.updated_at = "2026-08-14T01:55:00.000Z";
+    await expect(harness({
+      operation: "supabase-legacy-key-cutover",
+      providerRuns: [selected],
+      runtimeRuns: [latePostgresRuntimeSource],
     }).verify()).rejects.toThrow(
       "github_reviewed_candidate_authority_stale_deployment",
     );

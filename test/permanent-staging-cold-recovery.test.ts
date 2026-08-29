@@ -23,6 +23,7 @@ import {
   COLD_RECOVERY_POLICY_SHA256,
   parseSupabaseReplacementPrerequisite,
   policyExact,
+  requiredRowsExact,
   runScaleCommand,
   type ColdRecoveryState,
   type ColdRecoveryVariableRow,
@@ -350,6 +351,82 @@ function reconcilePrepareEnvironment() {
 }
 
 describe("permanent-staging cold recovery", () => {
+  it("accepts a legitimate database-service DATABASE_URL without accepting a shared shadow", () => {
+    const requiredRows: ColdRecoveryVariableRow[] = [
+      {
+        ...row("DATABASE_URL", true),
+        references: [
+          "c454955f-263b-4599-aee0-dc447a4d3d15.PINTPATH_RUNTIME_DATABASE_URL",
+        ],
+      },
+      {
+        ...row("REDIS_URL", true),
+        references: ["d6351cec-fe04-4a6f-8e05-1cc164ea1e73.REDIS_URL"],
+      },
+      ...[
+        "ALCOHOL_GAMIFICATION_ENABLED",
+        "CONSUMER_PAID_ENROLLMENT_ENABLED",
+        "GOOGLE_MAPS_API_KEY",
+        "GOOGLE_MAPS_MAP_ID",
+        "GOOGLE_PLACES_API_KEY",
+        "OPENAI_API_KEY",
+        "PINT_POINTS_REWARDS_ENABLED",
+        "PUBLIC_BASE_URL",
+        "REPORT_DELIVERY_SCHEDULE_ENABLED",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_RESULTS_TABLE",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_URL",
+      ].map((name) => row(name)),
+      {
+        ...row("DATABASE_URL", true),
+        id: "postgres-service-database-url",
+        serviceId: "c454955f-263b-4599-aee0-dc447a4d3d15",
+        references: [],
+      },
+    ];
+    expect(requiredRowsExact(requiredRows)).toBe(true);
+    expect(requiredRowsExact([
+      ...requiredRows,
+      {
+        ...row("DATABASE_URL", true),
+        id: "shared-database-url-shadow",
+        serviceId: null,
+        references: [
+          "c454955f-263b-4599-aee0-dc447a4d3d15.PINTPATH_RUNTIME_DATABASE_URL",
+        ],
+      },
+    ])).toBe(false);
+  });
+
+  it("accepts the complete audited 99-row inventory after only the three revoked off-site rows are absent", () => {
+    const fixture = JSON.parse(fs.readFileSync(path.resolve(
+      "test/fixtures/permanent-staging-offsite-cleanup-preflight-provider-snapshot.json",
+    ), "utf8")) as { variables: ColdRecoveryVariableRow[] };
+    expect(fixture.variables).toHaveLength(99);
+    const forbidden = new Set([
+      "OFFSITE_BACKUP_BUCKET",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SUPABASE_URL",
+    ]);
+    const reconciled = fixture.variables.filter((item) =>
+      !forbidden.has(item.name)
+    );
+    expect(reconciled).toHaveLength(96);
+    expect(requiredRowsExact(reconciled)).toBe(true);
+    expect(requiredRowsExact([
+      ...reconciled,
+      {
+        id: "shared-database-url-shadow",
+        name: "DATABASE_URL",
+        environmentId: COLD_RECOVERY_LOCK.environmentId,
+        serviceId: null,
+        isSealed: false,
+        references: [],
+      },
+    ])).toBe(false);
+  });
+
   it("binds prepare to the exact replacement artifact without a second key pair", () => {
     const workflow = fs.readFileSync(
       ".github/workflows/recover-permanent-staging-cold-zero.yml",

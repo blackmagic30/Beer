@@ -3089,7 +3089,18 @@ describe("release workflow contracts", () => {
     expect(publicJob).toContain(
       "npm run --silent readiness:data | tee production-data-readiness.json",
     );
+    expect(publicJob).toContain("node scripts/production-public-discovery-check.mjs");
     expect(publicJob).toContain("PINTPATH_DATA_BASE_URL: https://pintpath.au");
+    expect(publicJob).toContain(
+      "PINTPATH_DISCOVERY_LAUNCH_SUBURBS: ${{ vars.PINTPATH_DATA_MARKETED_SUBURBS || 'Brighton' }}",
+    );
+    expect(publicJob).toContain(
+      "PINTPATH_DATA_MARKETED_SUBURBS: ${{ vars.PINTPATH_DATA_MARKETED_SUBURBS }}",
+    );
+    expect(publicJob).toContain('PINTPATH_DATA_NO_HAPPY_HOUR_LAUNCH_SCOPE: "true"');
+    expect(publicJob).toContain(
+      "PINTPATH_DATA_NO_HAPPY_HOUR_SCOPE_REFERENCE: ${{ vars.PINTPATH_DATA_NO_HAPPY_HOUR_SCOPE_REFERENCE }}",
+    );
     expect(publicJob).not.toContain("PINTPATH_DATA_STRICT");
     expect(publicJob).not.toContain("secrets.");
 

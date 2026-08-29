@@ -13058,14 +13058,18 @@ export class BusinessService {
     if (progress.status === "completed") {
       throw new AppError("You have already completed this mission.", 409);
     }
+    const normalizedMissionReason = mission.reason.toLowerCase().replace(/[-_]+/g, " ");
+    const fullVenueUpdate = !mission.lastVerifiedAt
+      || /no data|empty venue/i.test(mission.reason)
+      || /\b(?:drink\s+menu|menu\s+freshness)\b/.test(normalizedMissionReason);
     const params = new URLSearchParams({
       missionId: mission.id,
       venueId: mission.venueId,
       venueName: mission.venueName,
       missionReason: mission.reason,
-      type: mission.reason.toLowerCase().includes("happy")
+      type: isHappyHourMission(mission)
         ? "happy_hour_update"
-        : !mission.lastVerifiedAt || /no data|empty venue/i.test(mission.reason)
+        : fullVenueUpdate
           ? "full_venue_update"
           : "single_beer_price",
     });

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-offsite-key-revocation-attestation/v1",
+  "recordedAt": "2026-08-29T00:18:59.000Z",
+  "supabaseProjectRef": "hfbmhdxrwtihukmixxta",
+  "revokedKeyId": "3d49728a-72e7-453a-b9a0-243b7354ca0e",
+  "revokedKeyName": "beer_staging_offsite_backup_incident_20260809",
+  "managementRevocationHttpStatus": 200,
+  "managementInventoryAfterRevocationExact": true,
+  "revokedKeyAbsentAfterRevocation": true,
+  "revokedKeyAuthenticationHttpStatus": 401,
+  "legacyServiceRoleDisabled": true,
+  "legacyServiceRoleAuthenticationHttpStatus": 401,
+  "railwayConsumerInventoryExact": true,
+  "trackedRepositoryConsumerInventoryExact": true,
+  "remainingRailwayRowIsInvalidCredential": true,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

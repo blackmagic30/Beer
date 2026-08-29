@@ -341,6 +341,52 @@ describe("autonomous mission lifecycle", () => {
       .toMatchObject({ status: "accepted", submissionId: null });
   });
 
+  it("opens menu-freshness missions as full updates without widening beer-specific missions", async () => {
+    const { repository, missionLifecycleRepository, service } = createHarness();
+    const contributor = createAccount(repository, "mission-routing-contributor");
+    const createRoutedMission = (id: string, reason: string) => (
+      missionLifecycleRepository.createMission({
+        id,
+        venueId: `venue-${id}`,
+        venueName: `Venue ${id}`,
+        suburb: "Brighton",
+        reason,
+        priority: "high",
+        points: 5,
+        multiplier: 1,
+        active: true,
+        lastVerifiedAt: "2026-06-01T00:00:00.000Z",
+        createdAt: START,
+        updatedAt: START,
+      })
+    );
+    const staleDrinkMenu = await createRoutedMission(
+      "mission-stale-drink-menu",
+      "Stale drink-menu - update with current venue data",
+    );
+    const menuFreshness = await createRoutedMission(
+      "mission-menu-freshness",
+      "Menu-freshness check - update with current venue data",
+    );
+    const staleBeer = await createRoutedMission(
+      "mission-stale-beer",
+      "Stale Carlton Draught price - update with current venue data",
+    );
+
+    const acceptedTypes = await Promise.all(
+      [staleDrinkMenu, menuFreshness, staleBeer].map(async (mission) => {
+        const accepted = await service.acceptMission(contributor, mission.id);
+        return new URL(accepted.submitUrl, "https://pintpath.test").searchParams.get("type");
+      }),
+    );
+
+    expect(acceptedTypes).toEqual([
+      "full_venue_update",
+      "full_venue_update",
+      "single_beer_price",
+    ]);
+  });
+
   it("moves an accepted mission through submitted to completed and archives it on approval", async () => {
     const { repository, service } = createHarness();
     const contributor = createAccount(repository, "mission-contributor");

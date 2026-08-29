@@ -379,8 +379,12 @@ describe("protected provider mutation workflows", () => {
     )?.groups?.body ?? "";
     const variableNames = [...variableOptions.matchAll(/^          - ([A-Z0-9_]+)$/gm)]
       .map((match) => match[1]!);
-    expect(variableNames).toHaveLength(16);
-    for (const variableName of variableNames) {
+    expect(variableNames).toHaveLength(17);
+    const secretBackedVariableNames = variableNames.filter((variableName) =>
+      variableName !== "PINTPATH_RUNTIME_DATABASE_URL"
+    );
+    expect(secretBackedVariableNames).toHaveLength(16);
+    for (const variableName of secretBackedVariableNames) {
       expect(worker).toContain(
         `PINTPATH_PRODUCTION_${variableName}:\n        required: false`,
       );
@@ -389,10 +393,29 @@ describe("protected provider mutation workflows", () => {
       );
     }
     expect(dispatcher).toContain(
-      "value_secret_name: ${{ format('PINTPATH_STAGING_{0}', inputs.variable_name) }}",
+      "value_secret_name: ${{ inputs.target == 'permanent-staging-postgres' && 'PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL' || format('PINTPATH_STAGING_{0}', inputs.variable_name) }}",
     );
     expect(dispatcher).toContain(
       "value_secret_name: ${{ format('PINTPATH_PRODUCTION_{0}', inputs.variable_name) }}",
+    );
+    expect(dispatcher).toContain("- permanent-staging-postgres");
+    expect(dispatcher).toContain("- PINTPATH_RUNTIME_DATABASE_URL");
+    expect(dispatcher).toContain(
+      "'PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL'",
+    );
+    expect(worker).toContain(
+      'test "$TARGET" = permanent-staging-postgres',
+    );
+    expect(worker).toContain(
+      'test "$VARIABLE_NAME" = PINTPATH_RUNTIME_DATABASE_URL',
+    );
+    expect(worker).toContain('test -z "$RUNTIME_VALUE"');
+    expect(worker).toContain('"REVIEWED_COMPILE_TIME_CONSTANT"');
+    expect(worker).not.toContain(
+      "PINTPATH_STAGING_PINTPATH_RUNTIME_DATABASE_URL:",
+    );
+    expect(worker).not.toContain(
+      "PINTPATH_PRODUCTION_PINTPATH_RUNTIME_DATABASE_URL:",
     );
     expect(dispatcher).toContain("- REDIS_URL");
     expect(dispatcher).toContain("- PINTPATH_POSTGRES_ROOT_CA_PEM");

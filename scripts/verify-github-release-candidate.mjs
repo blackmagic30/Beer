@@ -142,6 +142,7 @@ const INCIDENT_MASKED_CLEANUP_CANCEL_DEADLINE_MS =
   Date.parse("2026-08-29T10:51:43Z");
 const RUNTIME_VARIABLE_TARGETS = Object.freeze([
   "permanent-staging",
+  "permanent-staging-postgres",
   "production",
 ]);
 const RUNTIME_VARIABLE_NAMES = Object.freeze([
@@ -161,7 +162,16 @@ const RUNTIME_VARIABLE_NAMES = Object.freeze([
   "RESEND_WEBHOOK_SIGNING_SECRET",
   "SOURCE_EVIDENCE_SIGNING_SECRET",
   "ACCOUNT_DELETION_NOTICE_KEYRING_JSON",
+  "PINTPATH_RUNTIME_DATABASE_URL",
 ]);
+
+function runtimeVariableCombinationExact(target, variableName) {
+  return target === "permanent-staging-postgres"
+    ? variableName === "PINTPATH_RUNTIME_DATABASE_URL"
+    : (target === "permanent-staging" || target === "production") &&
+      variableName !== "PINTPATH_RUNTIME_DATABASE_URL" &&
+      RUNTIME_VARIABLE_NAMES.includes(variableName);
+}
 
 function canonicalJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -584,6 +594,7 @@ function providerOperationForTitle(value, candidateSha) {
 function runtimeVariableTitle(value, candidateSha) {
   for (const target of RUNTIME_VARIABLE_TARGETS) {
     for (const variableName of RUNTIME_VARIABLE_NAMES) {
+      if (!runtimeVariableCombinationExact(target, variableName)) continue;
       if (
         value ===
           `Configure runtime variable | ${target} | ${variableName} | ${candidateSha}`
@@ -1066,7 +1077,7 @@ async function verifyStagingMutationClosure(input) {
       input.candidateSha,
     );
     if (classified === null) throw new Error("staging_mutation_history_invalid");
-    if (classified.target !== "permanent-staging") continue;
+    if (classified.target === "production") continue;
     const run = validateMutationWorkflowRun(
       observed,
       input.policy,

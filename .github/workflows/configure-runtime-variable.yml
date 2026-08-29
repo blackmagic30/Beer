@@ -14,6 +14,7 @@ on:
         type: choice
         options:
           - permanent-staging
+          - permanent-staging-postgres
           - production
       variable_name:
         description: Exact reviewed runtime variable
@@ -36,6 +37,7 @@ on:
           - RESEND_WEBHOOK_SIGNING_SECRET
           - SOURCE_EVIDENCE_SIGNING_SECRET
           - ACCOUNT_DELETION_NOTICE_KEYRING_JSON
+          - PINTPATH_RUNTIME_DATABASE_URL
       confirmation:
         description: UPSERT_<VARIABLE>_IN_<TARGET_WITH_UNDERSCORES>
         required: true
@@ -47,11 +49,21 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ inputs.target == 'permanent-staging' && 'pintpath-permanent-staging-key-rollout' || format('pintpath-runtime-variable-{0}-{1}', inputs.target, inputs.variable_name) }}
+  group: ${{ inputs.target != 'production' && 'pintpath-permanent-staging-key-rollout' || format('pintpath-runtime-variable-{0}-{1}', inputs.target, inputs.variable_name) }}
   queue: max
   cancel-in-progress: false
 
 jobs:
+  reject-invalid-service-variable-pair:
+    if: (inputs.target == 'permanent-staging-postgres' && inputs.variable_name != 'PINTPATH_RUNTIME_DATABASE_URL') || (inputs.target != 'permanent-staging-postgres' && inputs.variable_name == 'PINTPATH_RUNTIME_DATABASE_URL')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Reject a variable outside its one reviewed service target
+        shell: bash
+        run: |
+          echo 'PINTPATH_RUNTIME_DATABASE_URL is fixed to the permanent-staging PostgreSQL service; all other variables target the Beer application service.' >&2
+          exit 1
+
   reject-permanent-staging-supabase-key-bypass:
     if: inputs.target == 'permanent-staging' && (inputs.variable_name == 'SUPABASE_ANON_KEY' || inputs.variable_name == 'SUPABASE_SERVICE_ROLE_KEY')
     runs-on: ubuntu-24.04
@@ -63,20 +75,20 @@ jobs:
           exit 1
 
   configure-staging:
-    if: inputs.target == 'permanent-staging' && inputs.variable_name != 'SUPABASE_ANON_KEY' && inputs.variable_name != 'SUPABASE_SERVICE_ROLE_KEY'
+    if: ((inputs.target == 'permanent-staging' && inputs.variable_name != 'PINTPATH_RUNTIME_DATABASE_URL') || (inputs.target == 'permanent-staging-postgres' && inputs.variable_name == 'PINTPATH_RUNTIME_DATABASE_URL')) && inputs.variable_name != 'SUPABASE_ANON_KEY' && inputs.variable_name != 'SUPABASE_SERVICE_ROLE_KEY'
     name: Configure permanent staging
     uses: ./.github/workflows/runtime-variable-worker.yml
     with:
       candidate_sha: ${{ inputs.candidate_sha }}
-      target: permanent-staging
+      target: ${{ inputs.target }}
       variable_name: ${{ inputs.variable_name }}
       confirmation: ${{ inputs.confirmation }}
       protected_environment: permanent-staging-provider-mutation
-      value_secret_name: ${{ format('PINTPATH_STAGING_{0}', inputs.variable_name) }}
+      value_secret_name: ${{ inputs.target == 'permanent-staging-postgres' && 'PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL' || format('PINTPATH_STAGING_{0}', inputs.variable_name) }}
     secrets: inherit
 
   configure-production:
-    if: inputs.target == 'production'
+    if: inputs.target == 'production' && inputs.variable_name != 'PINTPATH_RUNTIME_DATABASE_URL'
     name: Configure production
     uses: ./.github/workflows/runtime-variable-worker.yml
     with:

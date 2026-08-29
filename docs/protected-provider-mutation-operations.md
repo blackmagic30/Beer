@@ -9,15 +9,18 @@ to Railway:
 
 - `.github/workflows/permanent-staging-provider-mutation.yml` reconciles one of
   the four reviewed Google/OpenAI variables in place, atomically replaces both
-  Supabase keys, or removes exactly the three prohibited staging
-  `OFFSITE_BACKUP_*` rows through a staged, deploy-suppressed patch.
+  Supabase keys, and exposes no authorized `OFFSITE_BACKUP_*` deletion path.
+  The three residual rows contain a revoked credential and remain a staging
+  bootstrap blocker until deletion semantics are proved separately.
 - `.github/workflows/permanent-staging-scale-evidence.yml` scales the exact
   reviewed application deployment from one replica to two, runs expected-peak,
   2x-peak, and 60-minute soak proof, and unconditionally converges the service
   back to one replica.
 - `.github/workflows/configure-runtime-variable.yml` writes one allowlisted
-  application variable in exact permanent staging or production. Its worker
-  uses separate protected environments and target-scoped tokens.
+  application variable in exact permanent staging or production. It also has
+  one staging-only PostgreSQL-service target for the compile-time-reviewed
+  `PINTPATH_RUNTIME_DATABASE_URL` template. Its worker uses separate protected
+  environments and target-scoped tokens.
 - `.github/workflows/permanent-staging-supabase-legacy-cutover.yml` runs the
   replacement-key canaries, performs one staging legacy-disable request,
   unconditionally reconciles disabled state, and proves HTTP 401 rejection for
@@ -86,21 +89,10 @@ Narrow recovery exceptions remain write-safe. A mode-bound read-only
 legacy-key reconciliation may follow exactly one failed, cancelled, or timed-out
 disable run whose exact cutover step may have written; the reconciliation
 receives no write credential, and any second disable remains blocked. An
-OFFSITE cleanup recovery must select the exact failed same-candidate cleanup
-run through the reviewed GitHub authority. A retained prior artifact is checked
-as additional evidence when available, but runner loss after the provider write
-cannot make that artifact a prerequisite. Live state must be either the fixed
-Beer-service three-null deletion patch (SHA-256
-`3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91`),
-or the exact already-completed deletion with an empty staged patch and all three
-rows absent. The operator may commit the exact staged patch, replace it with
-`{}` using `merge=false`, or use `resume` to reconcile the already-completed
-state read-only with zero mutation attempts. If provider state proves the prior
-cleanup had no effect (the exact three original rows and an empty patch),
-`resume` may stage and commit once under the reviewed recovery authority, while
-`cancel` closes the already-cancelled state read-only. An ambiguous recovery may
-be redispatched only in the same mode: each run re-proves exact live state and
-converges toward the same result. The opposite mode remains blocked.
+older OFFSITE cleanup implementation and its resume/cancel identities remain
+disabled. They are not a current recovery exception and must not be dispatched:
+the provider contract did not establish whether `variableDelete` stages,
+commits, or deploys, and its input exposes no `skipDeploys` control.
 
 Cold prepare, cold quiesce, staging restore, and staging worker activation also
 have distinct runner-loss reconciliation identities. Each binds the exact
@@ -121,24 +113,20 @@ the current head, the stranded SHA cannot be recovered by rebinding its state
 to the new candidate; that condition remains P1/NO-GO.
 
 The executors run the production/staging Railway mutation boundary immediately
-before and after writes. Every write has a durable secret-free intent, a maximum
-of one attempt per named mutation, no automatic retry, unconditional read-only
-reconciliation, and secret-free terminal evidence. The OFFSITE cleanup rechecks
-the boundary between its one staging call and its one staged-patch commit. An
+before and after writes. Every authorized write has a durable secret-free
+intent, a maximum of one attempt per named mutation, no automatic retry,
+unconditional read-only reconciliation, and secret-free terminal evidence. An
 ambiguous provider-value upsert or legacy-cutover write is terminal and cannot
-be retried. The OFFSITE cleanup and route close/open executors have distinct,
-explicitly bounded lost-ack rules: each requires its unique exact before→after
-transition with no collateral change. They never treat desired state alone, a
-pre-existing state, or an incomplete inventory as success.
+be retried. Route close/open executors have explicitly bounded lost-ack rules
+and require their unique exact before→after transition with no collateral
+change. They never treat desired state alone, a pre-existing state, or an
+incomplete inventory as success.
 
 Railway does not currently expose a staged environment-patch ETag/version or a
-provider lock that the deploy-suppressed stage/commit/cancel operations can
-consume. The OFFSITE executor therefore reasserts the exact live patch
-immediately before the terminal call, records and rechecks its provider patch
-identity afterward, and requires an explicit external-mutation-freeze
-attestation. That narrows the race but is not provider-enforced CAS. Out-of-band
-Railway mutation exclusion remains a P1 operational trust assumption and a
-launch NO-GO unless the freeze is actively controlled for the entire ceremony.
+provider lock that deploy-suppressed operations can consume. Out-of-band
+Railway mutation exclusion therefore remains an operational trust assumption;
+every authorized ceremony requires an explicit external-writer freeze and
+exact postflight reconciliation.
 
 The paired Supabase operation is one Railway `variableCollectionUpsert` with
 `skipDeploys=true`; it is not two CLI writes and has no Railway canary-service
@@ -154,9 +142,9 @@ the same candidate's second, closeout permanent-staging deployment must then
 pass the Auth, Storage, browser, server, mobile, and sealed-variable gates before
 a legacy key can be disabled.
 
-Provider reconciliation and OFFSITE cleanup accept exactly one of two
-policy-pinned staging baselines: the original healthy legacy deployment at one
-replica, or the currently observed detached dead state at `replicas=null` with
+Provider reconciliation accepts exactly one of two policy-pinned staging
+baselines: the original healthy legacy deployment at one replica, or the
+currently observed detached dead state at `replicas=null` with
 the exact service-instance, failed/stopped deployment, snapshot, source SHA,
 empty active set, domain, port, null image digest, and empty staged patch. A
 generic failed, stopped, zero-active, null-replica, or detached service never
@@ -170,8 +158,10 @@ mutations on that exact dead baseline before cold prepare.
 - Keep the existing Beer `SUPABASE_ANON_KEY` row. Seal the existing Beer
   `SUPABASE_SERVICE_ROLE_KEY` row in place, then replace both values atomically.
   Do not delete or recreate either row.
-- Delete the three inherited Beer `OFFSITE_BACKUP_*` rows through the exact
-  protected cleanup plan. Do not recreate them in permanent staging.
+- Do not recreate the three inherited Beer `OFFSITE_BACKUP_*` rows. Their key
+  is revoked and returns 401, but deletion is not authorized until a disposable
+  secret-free provider proof establishes exact no-deploy semantics and a new
+  reviewed operation is merged.
 - Do not recreate the missing Railway canary service. It is not an application
   staging prerequisite; the later protected legacy-cutover runner supplies the
   required direct Auth/admin/Storage runtime proof.
@@ -272,6 +262,22 @@ private mode-`600` input file:
 The repeated `PINTPATH` segment is intentional: the dispatcher prepends the
 target namespace to the exact Railway variable name and the worker verifies
 that bijection before reading the protected secret.
+
+The one exception is the non-secret staging source repair. Select target
+`permanent-staging-postgres`, variable
+`PINTPATH_RUNTIME_DATABASE_URL`, and confirmation
+`UPSERT_PINTPATH_RUNTIME_DATABASE_URL_IN_PERMANENT_STAGING_POSTGRES`. The worker
+requires the sentinel value-source identity
+`PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL`; no GitHub value secret exists or
+is read. The executor supplies one compile-time constant whose authority is
+exactly `postgres-staging.railway.internal:5432`, database
+`pintpath_staging`, login `pintpath_staging_runtime_login`, and sole query
+`sslmode=verify-full`, with only the existing same-service password, private-
+domain, and port references. Any production pairing, arbitrary input, altered
+reference graph, shared shadow, host, database, login, port, or query fails
+before the provider write. The acknowledged non-deploying upsert still requires
+later startup and authentication proof; metadata cannot reveal the resolved
+value.
 
 For each target, configure `DATABASE_URL`, `DATABASE_MAINTENANCE_URL`,
 `PINTPATH_POSTGRES_ROOT_CA_PEM`, and
@@ -457,22 +463,14 @@ route open. The controlling policy is schema v2 at SHA-256
    ancestry. Human PR approval is not required in this solo-owner repository;
    require the exact merged non-draft same-repository PR and pass all required
    checks on the exact candidate.
-2. While the authorized staging baseline is still exact and before any worker
-   prepare, remove the inherited production-copy configuration. The current
-   recovery uses the policy-pinned dead/null baseline; a still-healthy legacy
-   service may instead use the separately constrained one-replica baseline.
-   Dispatch
-   `remove-forbidden-offsite-backup-variables` only when the complete inventory
-   has exactly one Beer-service literal row for each of
-   `OFFSITE_BACKUP_BUCKET`, `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, and
-   `OFFSITE_BACKUP_SUPABASE_URL`, no shared/foreign shadow, and an empty staged
-   patch. The executor stages only those three `null` entries with `merge=false`,
-   reads that exact patch with variable decryption disabled, rechecks the
-   production boundary, commits once with `skipDeploys=true`, and proves all
-   three rows absent, every other row unchanged, the staged patch empty, and
-   the deployment/topology unchanged. It may report
-   `cleanup_reconciled_after_lost_ack` only for that unique proved transition;
-   it never repeats either mutation.
+2. Do not dispatch the disabled OFFSITE delete/resume/cancel operations. First
+   create a disposable, secret-free staging variable and prove whether the
+   selected provider deletion API stages, commits, or deploys, including lost-
+   acknowledgement recovery. Merge a new reviewed operation only if it has an
+   explicit no-deploy guarantee. Under the external-writer freeze, delete only
+   the three pinned residual rows and prove the 96-row inventory, empty patch,
+   and unchanged cold/dead topology. This external proof is a hard prerequisite
+   for cold prepare.
 3. Run `Mutate Pint Path permanent-staging provider variables` once per
    Google/OpenAI variable that needs reconciliation. Existing exact Beer rows
    are adopted in place; an absent row may be created. Shared, foreign, sealed,
