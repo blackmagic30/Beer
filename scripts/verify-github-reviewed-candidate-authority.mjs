@@ -83,6 +83,7 @@ const PROVIDER_OPERATIONS = new Set([
   "resume-forbidden-offsite-backup-deletion-patch",
   "cancel-forbidden-offsite-backup-deletion-patch",
   "cancel-masked-forbidden-offsite-backup-deletion-patch",
+  "reconcile-completed-forbidden-offsite-backup-deletion",
 ]);
 const OFFSITE_CLEANUP_OPERATION =
   "remove-forbidden-offsite-backup-variables";
@@ -92,8 +93,40 @@ const OFFSITE_CLEANUP_RECOVERY_OPERATIONS = new Set([
 ]);
 const INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION =
   "cancel-masked-forbidden-offsite-backup-deletion-patch";
+const OFFSITE_CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION =
+  "reconcile-completed-forbidden-offsite-backup-deletion";
 const OFFSITE_CLEANUP_PATCH_SHA256 =
   "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91";
+const CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA =
+  "0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA =
+  "b8d0d0e44cf63e996388a223ba4ee2ff02ab02e5";
+const CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA =
+  "2f624d697d97f5682d7b69231ed4d0ec66a21e6d";
+const CLEANUP_CLOSEOUT_ORIGINAL_PULL_REQUEST_NUMBER = 71;
+const CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT = "2026-08-29T09:42:49Z";
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID = 33246243698;
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_CREATED_AT = "2026-08-29T09:45:53Z";
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_COMPLETED_AT = "2026-08-29T09:49:29Z";
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID = 9712963222;
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_NAME =
+  "pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_DIGEST =
+  "sha256:aeb28aef046845e9f8ce830c2ae4a2eee762ce79810c69a1727fbef07f121ad3";
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_BYTES = 2111;
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_CREATED_AT = "2026-08-29T09:49:26Z";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID = 33246655561;
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_CREATED_AT = "2026-08-29T09:56:44Z";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_COMPLETED_AT = "2026-08-29T10:00:57Z";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID = 9713096183;
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_NAME =
+  "pintpath-permanent-staging-provider-mutation-resume-forbidden-offsite-backup-deletion-patch-0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_DIGEST =
+  "sha256:e1a4e7017298b49df7c0afb3fcc8a354740248c5333cb21248d3bbd80d65c0b8";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_BYTES = 313;
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_CREATED_AT =
+  "2026-08-29T10:00:54Z";
+const CLEANUP_CLOSEOUT_MINIMUM_OBSERVATION_MS = 10 * 60 * 1_000;
 const INCIDENT_ORIGINAL_CANDIDATE_SHA =
   "ac7130e0306802825922d21a4c61135b84edd43b";
 const INCIDENT_ORIGINAL_REVIEWED_HEAD_SHA =
@@ -215,6 +248,8 @@ function parseArguments(argv) {
     OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(operation);
   const incidentMaskedCleanupCancel =
     operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION;
+  const offsiteCleanupSuccessorCloseout =
+    operation === OFFSITE_CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION;
   if (
     !SHA.test(candidateSha) ||
     (!cutover &&
@@ -231,7 +266,8 @@ function parseArguments(argv) {
         deploymentRunId !== null ||
         cutoverMode !== null
       : replacementRunId !== null || deploymentRunId !== null || cutoverMode !== null) ||
-    (offsiteCleanupRecovery || incidentMaskedCleanupCancel || runnerLossReconcile
+    (offsiteCleanupRecovery || incidentMaskedCleanupCancel ||
+      offsiteCleanupSuccessorCloseout || runnerLossReconcile
       ? !RUN_ID.test(priorRunId ?? "")
       : priorRunId !== null) ||
     (coldQuiesceReconcile
@@ -1508,6 +1544,307 @@ async function verifyIncidentMaskedCleanupCancelHistory(
   });
 }
 
+async function verifyCleanupSuccessorCloseoutHistory(
+  input,
+  currentRun,
+  policy,
+) {
+  if (input.priorRunId !== String(CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID)) {
+    fail("cleanup_successor_closeout_history_invalid");
+  }
+  const candidateCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${input.candidateSha}`,
+  );
+  if (
+    candidateCommit?.sha !== input.candidateSha ||
+    !Array.isArray(candidateCommit?.parents) ||
+    candidateCommit.parents.length !== 1 ||
+    candidateCommit.parents[0]?.sha !== CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
+  ) fail("cleanup_successor_closeout_candidate_invalid");
+
+  const originalPull = await verifyReviewedPullRequest(
+    input.fetchImpl,
+    input.token,
+    policy,
+    CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+  );
+  if (
+    originalPull.number !== CLEANUP_CLOSEOUT_ORIGINAL_PULL_REQUEST_NUMBER ||
+    originalPull.reviewedPrHeadSha !==
+      CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA ||
+    originalPull.treeSha !== CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA ||
+    originalPull.mergedAt !== CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT ||
+    originalPull.reviewedTreeExact !== true
+  ) fail("cleanup_successor_closeout_original_candidate_invalid");
+
+  const originalConfiguration = operationConfiguration(
+    OFFSITE_CLEANUP_OPERATION,
+    CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+    null,
+    null,
+  );
+  const failedRecoveryConfiguration = operationConfiguration(
+    "resume-forbidden-offsite-backup-deletion-patch",
+    CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+    null,
+    null,
+  );
+  const originalRun = validateRunIdentity(
+    await githubGet(
+      input.fetchImpl,
+      input.token,
+      REPOSITORY,
+      `/actions/runs/${CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID}`,
+    ),
+    {
+      runId: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+      candidateSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      displayTitle: originalConfiguration.displayTitle,
+      failureCode: "cleanup_successor_closeout_original_run_invalid",
+    },
+  );
+  const failedRecoveryRun = validateRunIdentity(
+    await githubGet(
+      input.fetchImpl,
+      input.token,
+      REPOSITORY,
+      `/actions/runs/${CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID}`,
+    ),
+    {
+      runId: CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID,
+      candidateSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      displayTitle: failedRecoveryConfiguration.displayTitle,
+      failureCode: "cleanup_successor_closeout_failed_recovery_run_invalid",
+    },
+  );
+  if (
+    originalRun.created_at !== CLEANUP_CLOSEOUT_ORIGINAL_RUN_CREATED_AT ||
+    originalRun.run_started_at !== CLEANUP_CLOSEOUT_ORIGINAL_RUN_CREATED_AT ||
+    originalRun.updated_at !== CLEANUP_CLOSEOUT_ORIGINAL_RUN_COMPLETED_AT ||
+    originalRun.status !== "completed" ||
+    originalRun.conclusion !== "failure" ||
+    await priorRunWriteDisposition(input, originalRun, originalConfiguration) !==
+      "may-have-written" ||
+    failedRecoveryRun.created_at !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_CREATED_AT ||
+    failedRecoveryRun.run_started_at !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_CREATED_AT ||
+    failedRecoveryRun.updated_at !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_COMPLETED_AT ||
+    failedRecoveryRun.status !== "completed" ||
+    failedRecoveryRun.conclusion !== "failure" ||
+    await priorRunWriteDisposition(
+      input,
+      failedRecoveryRun,
+      failedRecoveryConfiguration,
+    ) !== "may-have-written"
+  ) fail("cleanup_successor_closeout_predecessor_runs_invalid");
+
+  const exactArtifact = async (runId, expected) => {
+    const listing = await githubGet(
+      input.fetchImpl,
+      input.token,
+      REPOSITORY,
+      `/actions/runs/${runId}/artifacts?per_page=100&page=1`,
+    );
+    const artifact = Array.isArray(listing?.artifacts) &&
+      listing.artifacts.length === 1
+      ? listing.artifacts[0]
+      : null;
+    const createdAt = parseTimestamp(
+      artifact?.created_at,
+      "cleanup_successor_closeout_artifact_invalid",
+    );
+    const updatedAt = parseTimestamp(
+      artifact?.updated_at,
+      "cleanup_successor_closeout_artifact_invalid",
+    );
+    const expiresAt = parseTimestamp(
+      artifact?.expires_at,
+      "cleanup_successor_closeout_artifact_invalid",
+    );
+    if (
+      listing?.total_count !== 1 ||
+      artifact?.id !== expected.id ||
+      artifact?.name !== expected.name ||
+      artifact?.size_in_bytes !== expected.bytes ||
+      artifact?.expired !== false ||
+      artifact?.digest !== expected.digest ||
+      artifact?.created_at !== expected.createdAt ||
+      artifact?.updated_at !== expected.createdAt ||
+      artifact?.workflow_run?.id !== runId ||
+      artifact?.workflow_run?.head_branch !== "main" ||
+      artifact?.workflow_run?.head_sha !==
+        CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA ||
+      createdAt !== updatedAt ||
+      expiresAt <= currentRun.startedAt
+    ) fail("cleanup_successor_closeout_artifact_invalid");
+  };
+  await exactArtifact(CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID, {
+    id: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID,
+    name: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_NAME,
+    digest: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_DIGEST,
+    bytes: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_BYTES,
+    createdAt: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_CREATED_AT,
+  });
+  await exactArtifact(CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID, {
+    id: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID,
+    name: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_NAME,
+    digest: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_DIGEST,
+    bytes: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_BYTES,
+    createdAt: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_CREATED_AT,
+  });
+
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: PROVIDER_WORKFLOW_ID,
+    mergedAt: CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT,
+  });
+  if (
+    history.length !== 3 ||
+    new Set(history.map((run) => run?.id)).size !== history.length
+  ) fail("cleanup_successor_closeout_history_invalid");
+  const originalCandidateRuns = history.filter((run) =>
+    run?.head_sha === CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA);
+  if (
+    originalCandidateRuns.length !== 2 ||
+    JSON.stringify(originalCandidateRuns.map((run) => run?.id).sort(
+      (left, right) => left - right,
+    )) !== JSON.stringify([
+      CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID,
+    ])
+  ) fail("cleanup_successor_closeout_original_history_invalid");
+  const listedOriginalRun = validateRunIdentity(
+    originalCandidateRuns.find((run) =>
+      run?.id === CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID),
+    {
+      runId: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+      candidateSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      displayTitle: originalConfiguration.displayTitle,
+      failureCode: "cleanup_successor_closeout_original_history_invalid",
+    },
+  );
+  const listedFailedRecoveryRun = validateRunIdentity(
+    originalCandidateRuns.find((run) =>
+      run?.id === CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID),
+    {
+      runId: CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID,
+      candidateSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      workflowPath: PROVIDER_WORKFLOW_PATH,
+      displayTitle: failedRecoveryConfiguration.displayTitle,
+      failureCode: "cleanup_successor_closeout_original_history_invalid",
+    },
+  );
+  if (
+    listedOriginalRun.created_at !== originalRun.created_at ||
+    listedOriginalRun.run_started_at !== originalRun.run_started_at ||
+    listedOriginalRun.updated_at !== originalRun.updated_at ||
+    listedOriginalRun.status !== originalRun.status ||
+    listedOriginalRun.conclusion !== originalRun.conclusion ||
+    listedFailedRecoveryRun.created_at !== failedRecoveryRun.created_at ||
+    listedFailedRecoveryRun.run_started_at !== failedRecoveryRun.run_started_at ||
+    listedFailedRecoveryRun.updated_at !== failedRecoveryRun.updated_at ||
+    listedFailedRecoveryRun.status !== failedRecoveryRun.status ||
+    listedFailedRecoveryRun.conclusion !== failedRecoveryRun.conclusion
+  ) fail("cleanup_successor_closeout_original_history_invalid");
+  const successorRuns = history.filter((run) =>
+    run?.head_sha === input.candidateSha);
+  if (
+    successorRuns.length !== 1 ||
+    successorRuns[0]?.id !== currentRun.id ||
+    successorRuns[0]?.display_title !== operationConfiguration(
+      OFFSITE_CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION,
+      input.candidateSha,
+      null,
+      null,
+    ).displayTitle
+  ) fail("cleanup_successor_closeout_current_history_invalid");
+  const listedCurrentRun = validateRunIdentity(successorRuns[0], {
+    runId: currentRun.id,
+    candidateSha: input.candidateSha,
+    workflowPath: PROVIDER_WORKFLOW_PATH,
+    displayTitle: operationConfiguration(
+      OFFSITE_CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION,
+      input.candidateSha,
+      null,
+      null,
+    ).displayTitle,
+    failureCode: "cleanup_successor_closeout_current_history_invalid",
+  });
+  if (
+    !isNonterminalRun(listedCurrentRun) ||
+    listedCurrentRun.created_at !== currentRun.created_at ||
+    listedCurrentRun.run_started_at !== currentRun.run_started_at
+  ) fail("cleanup_successor_closeout_current_history_invalid");
+
+  const absoluteDeadlineMs = originalRun.updatedAt + RECOVERY_GRACE_MS;
+  if (
+    parseTimestamp(CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT,
+      "cleanup_successor_closeout_history_invalid") > originalRun.startedAt ||
+    originalRun.updatedAt >= failedRecoveryRun.startedAt ||
+    failedRecoveryRun.updatedAt > input.mergedAtMs ||
+    input.mergedAtMs > currentRun.startedAt ||
+    currentRun.startedAt - originalRun.updatedAt <
+      CLEANUP_CLOSEOUT_MINIMUM_OBSERVATION_MS ||
+    currentRun.startedAt >= absoluteDeadlineMs
+  ) fail("cleanup_successor_closeout_history_invalid");
+
+  return Object.freeze({
+    cleanupCloseoutOriginalCandidateSha:
+      CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+    cleanupCloseoutOriginalReviewedPrHeadSha:
+      CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA,
+    cleanupCloseoutOriginalTreeSha: CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA,
+    cleanupCloseoutOriginalPullRequestNumber:
+      CLEANUP_CLOSEOUT_ORIGINAL_PULL_REQUEST_NUMBER,
+    cleanupCloseoutOriginalPullRequestMergedAt:
+      CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT,
+    cleanupCloseoutSuccessorDirectParentExact: true,
+    cleanupCloseoutOriginalRunId: String(CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID),
+    cleanupCloseoutOriginalRunCreatedAt:
+      CLEANUP_CLOSEOUT_ORIGINAL_RUN_CREATED_AT,
+    cleanupCloseoutOriginalRunCompletedAt:
+      CLEANUP_CLOSEOUT_ORIGINAL_RUN_COMPLETED_AT,
+    cleanupCloseoutOriginalRunMayHaveWrittenExact: true,
+    cleanupCloseoutOriginalArtifactId:
+      String(CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID),
+    cleanupCloseoutOriginalArtifactName:
+      CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_NAME,
+    cleanupCloseoutOriginalArtifactDigest:
+      CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_DIGEST,
+    cleanupCloseoutOriginalArtifactExact: true,
+    cleanupCloseoutFailedRecoveryRunId:
+      String(CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID),
+    cleanupCloseoutFailedRecoveryRunCreatedAt:
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_CREATED_AT,
+    cleanupCloseoutFailedRecoveryRunCompletedAt:
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_COMPLETED_AT,
+    cleanupCloseoutFailedRecoveryArtifactId:
+      String(CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID),
+    cleanupCloseoutFailedRecoveryArtifactName:
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_NAME,
+    cleanupCloseoutFailedRecoveryArtifactDigest:
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_DIGEST,
+    cleanupCloseoutFailedRecoveryDispatchOnlyArtifactExact: true,
+    cleanupCloseoutOriginalHistoryExact: true,
+    cleanupCloseoutCurrentHistoryExact: true,
+    cleanupCloseoutRecoveryGraceHours: RECOVERY_GRACE_HOURS,
+    cleanupCloseoutWithinGraceExact: true,
+    cleanupCloseoutMinimumObservationMinutes:
+      CLEANUP_CLOSEOUT_MINIMUM_OBSERVATION_MS / 60_000,
+    cleanupCloseoutMinimumObservationSatisfiedExact: true,
+    cleanupCloseoutAbsoluteDeadline: new Date(absoluteDeadlineMs).toISOString(),
+    cleanupCloseoutMetadataOnlyExact: true,
+  });
+}
+
 async function verifySelectedReplacementHistory(input) {
   const configuration = operationConfiguration(
     "supabase-key-replacement",
@@ -1873,6 +2210,17 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
         policy,
       )
       : null;
+  const cleanupSuccessorCloseoutHistory =
+    input.operation === OFFSITE_CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION
+      ? await verifyCleanupSuccessorCloseoutHistory(
+        {
+          ...historyInput,
+          priorRunId: input.priorRunId,
+        },
+        currentRun,
+        policy,
+      )
+      : null;
   const operationHistory = input.operation === "supabase-legacy-key-cutover"
     ? await verifyCutoverOperationHistory(historyInput, configuration, currentRun)
     : input.operation === "cold-recovery-reconcile-quiesce"
@@ -1894,6 +2242,12 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     ? Object.freeze({
       safePriorSkippedWriteRunIds:
         incidentCleanupCancelHistory.incidentSafePriorSkippedWriteRunIds,
+      safePriorReadOnlyRunIds: [],
+      reconciledPriorAmbiguousDisableRunId: null,
+    })
+    : input.operation === OFFSITE_CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION
+    ? Object.freeze({
+      safePriorSkippedWriteRunIds: [],
       safePriorReadOnlyRunIds: [],
       reconciledPriorAmbiguousDisableRunId: null,
     })
@@ -1981,6 +2335,10 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     workflowRunAttempt: 1,
     workflowRunCreatedAt: currentRun.created_at,
     reviewedPullRequestMergedAt: pull.mergedAt,
+    ...(OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(input.operation) ||
+        input.operation === OFFSITE_CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION
+      ? { reviewedTreeExact: pull.reviewedTreeExact }
+      : {}),
     candidateHistoryMaximumAgeHours: MAX_CANDIDATE_AGE_HOURS,
     completeRetainedHistoryExact: true,
     safePriorSkippedWriteRunIds: operationHistory.safePriorSkippedWriteRunIds,
@@ -2049,6 +2407,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       : {}),
     ...(cleanupRecoveryHistory ?? {}),
     ...(incidentCleanupCancelHistory ?? {}),
+    ...(cleanupSuccessorCloseoutHistory ?? {}),
     ...(stagingDeploymentRunIds === null
       ? {}
       : {

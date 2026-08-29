@@ -251,6 +251,13 @@ export const PROTECTED_STAGING_VARIABLE_DEPLOYMENT_QUERY =
 export const PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY =
   `query PintPathProtectedVariableTokenScope { projectToken { projectId environmentId } }`;
 
+const CLEANUP_CLOSEOUT_QUERY_DOCUMENTS = new Set([
+  PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY,
+  PROTECTED_STAGING_VARIABLE_METADATA_QUERY,
+  PROTECTED_STAGING_VARIABLE_DEPLOYMENT_QUERY,
+  PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
+]);
+
 const PROVIDER_OPERATIONS = Object.freeze({
   "provider-google-maps-api-key": "GOOGLE_MAPS_API_KEY",
   "provider-google-maps-map-id": "GOOGLE_MAPS_MAP_ID",
@@ -283,6 +290,8 @@ const CANCEL_CLEANUP_OPERATION =
   "cancel-forbidden-offsite-backup-deletion-patch" as const;
 const INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION =
   "cancel-masked-forbidden-offsite-backup-deletion-patch" as const;
+const CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION =
+  "reconcile-completed-forbidden-offsite-backup-deletion" as const;
 const CLEANUP_RECOVERY_OPERATIONS = Object.freeze([
   RESUME_CLEANUP_OPERATION,
   CANCEL_CLEANUP_OPERATION,
@@ -308,6 +317,43 @@ const INCIDENT_ORIGINAL_BASELINE_METADATA_SHA256 =
   "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd";
 const CLEANUP_BASELINE_METADATA_SHA256 =
   "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd";
+const CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA =
+  "0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA =
+  "b8d0d0e44cf63e996388a223ba4ee2ff02ab02e5";
+const CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA =
+  "2f624d697d97f5682d7b69231ed4d0ec66a21e6d";
+const CLEANUP_CLOSEOUT_ORIGINAL_PULL_REQUEST_NUMBER = 71;
+const CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT = "2026-08-29T09:42:49Z";
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID = "33246243698";
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_CREATED_AT = "2026-08-29T09:45:53Z";
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_COMPLETED_AT = "2026-08-29T09:49:29Z";
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID = "9712963222";
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_NAME =
+  "pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_DIGEST =
+  "sha256:aeb28aef046845e9f8ce830c2ae4a2eee762ce79810c69a1727fbef07f121ad3";
+const CLEANUP_CLOSEOUT_ORIGINAL_DISPATCH_SHA256 =
+  "35009e4ca3422b8728167e016b88ae6a9541d2c06043e0778efd1533250366e3";
+const CLEANUP_CLOSEOUT_ORIGINAL_INTENT_SHA256 =
+  "d8e4ed8dda9702c59a6c1c38abd04fc5f8f98f6d387458bc33150aaf8fad2574";
+const CLEANUP_CLOSEOUT_ORIGINAL_TERMINAL_SHA256 =
+  "eb3185f494758b79df76e2f366a8f174964c1ac624da03d62dfb2c047a395aea";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID = "33246655561";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_CREATED_AT =
+  "2026-08-29T09:56:44Z";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_COMPLETED_AT =
+  "2026-08-29T10:00:57Z";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID = "9713096183";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_NAME =
+  "pintpath-permanent-staging-provider-mutation-resume-forbidden-offsite-backup-deletion-patch-0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_DIGEST =
+  "sha256:e1a4e7017298b49df7c0afb3fcc8a354740248c5333cb21248d3bbd80d65c0b8";
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_DISPATCH_SHA256 =
+  "951da3aa4f69fa84f157c27ef9430a8923c58f682029f7b1ed3962ac29492d3b";
+const CLEANUP_CLOSEOUT_POST_METADATA_SHA256 =
+  "54fae04fd4dda1688bae3080a2c9c2220fb257f7b5c3ea1ce8677685cc4b18dc";
+const CLEANUP_CLOSEOUT_DEADLINE_MS = Date.parse("2026-08-30T09:49:29Z");
 const RUN_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
 const REVIEWED_AUTHORITY_WORKFLOW_PATH =
   ".github/workflows/permanent-staging-provider-mutation.yml";
@@ -344,7 +390,8 @@ export type ProtectedStagingVariableOperation =
   | typeof CLEANUP_OPERATION
   | typeof RESUME_CLEANUP_OPERATION
   | typeof CANCEL_CLEANUP_OPERATION
-  | typeof INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION;
+  | typeof INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION
+  | typeof CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION;
 
 interface VariableRow {
   readonly id: string;
@@ -426,6 +473,7 @@ interface MutationReceipt {
     | "cleanup_no_effect_retry_acknowledged"
     | "cleanup_no_effect_retry_reconciled_after_lost_ack"
     | "cleanup_already_cancelled_reconciled"
+    | "cleanup_completed_read_only_reconciled"
     | "blocked"
     | "failed_before_attempt"
     | "mutation_uncertain";
@@ -485,6 +533,10 @@ interface Dependencies {
     candidateSha: string,
   ) => boolean;
   readonly verifyIncidentPriorCleanupEvidence: (directory: string) => boolean;
+  readonly verifyCleanupSuccessorCloseoutEvidence: (
+    originalDirectory: string,
+    failedRecoveryDirectory: string,
+  ) => boolean;
   readonly verifyReviewedCleanupRecoveryAuthority: (
     filename: string,
     expected: Parameters<typeof reviewedCleanupRecoveryAuthorityValueExact>[1],
@@ -495,7 +547,14 @@ interface Dependencies {
       typeof reviewedIncidentCleanupCancelAuthorityValueExact
     >[1],
   ) => boolean;
+  readonly verifyReviewedCleanupSuccessorCloseoutAuthority: (
+    filename: string,
+    expected: Parameters<
+      typeof reviewedCleanupSuccessorCloseoutAuthorityValueExact
+    >[1],
+  ) => boolean;
   readonly now: () => number;
+  readonly hashPrivateFile: (filename: string) => string;
   readonly writeDurable: (directory: string, leaf: string, source: string) => string;
   readonly writeOutput: (source: string) => void;
 }
@@ -604,6 +663,12 @@ function incidentCleanupCancelOperation(
   return value === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION;
 }
 
+function cleanupSuccessorCloseoutOperation(
+  value: ProtectedStagingVariableOperation,
+): value is typeof CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION {
+  return value === CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION;
+}
+
 function cleanupRecoveryOperation(
   value: ProtectedStagingVariableOperation,
 ): value is typeof RESUME_CLEANUP_OPERATION | typeof CANCEL_CLEANUP_OPERATION {
@@ -615,8 +680,10 @@ function cleanupRecoveryOperation(
 function cleanupOrIncidentRecoveryOperation(
   value: ProtectedStagingVariableOperation,
 ): value is typeof RESUME_CLEANUP_OPERATION | typeof CANCEL_CLEANUP_OPERATION |
-  typeof INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION {
-  return cleanupRecoveryOperation(value) || incidentCleanupCancelOperation(value);
+  typeof INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION |
+  typeof CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION {
+  return cleanupRecoveryOperation(value) || incidentCleanupCancelOperation(value)
+    || cleanupSuccessorCloseoutOperation(value);
 }
 
 function parseArguments(argv: readonly string[]): {
@@ -625,6 +692,7 @@ function parseArguments(argv: readonly string[]): {
   evidenceDirectory: string;
   priorCleanupRunId: string | null;
   priorCleanupEvidenceDirectory: string | null;
+  failedRecoveryEvidenceDirectory: string | null;
   reviewedAuthorityFile: string | null;
 } | null {
   const values = new Map<string, string>();
@@ -644,6 +712,7 @@ function parseArguments(argv: readonly string[]): {
     "--secret-key-file",
     "--prior-cleanup-run-id",
     "--prior-cleanup-evidence-dir",
+    "--failed-recovery-evidence-dir",
     "--reviewed-authority-file",
   ]);
   if ([...values.keys()].some((key) => !allowed.has(key))
@@ -654,6 +723,7 @@ function parseArguments(argv: readonly string[]): {
     if (!publishable || !secret || values.has("--value-file")) return null;
     if (values.has("--prior-cleanup-run-id") ||
       values.has("--prior-cleanup-evidence-dir") ||
+      values.has("--failed-recovery-evidence-dir") ||
       values.has("--reviewed-authority-file")) return null;
     return {
       operation,
@@ -661,6 +731,7 @@ function parseArguments(argv: readonly string[]): {
       valueFiles: [publishable, secret],
       priorCleanupRunId: null,
       priorCleanupEvidenceDirectory: null,
+      failedRecoveryEvidenceDirectory: null,
       reviewedAuthorityFile: null,
     };
   }
@@ -668,6 +739,7 @@ function parseArguments(argv: readonly string[]): {
     if (values.has("--value-file") || values.has("--publishable-key-file")
       || values.has("--secret-key-file") || values.has("--prior-cleanup-run-id")
       || values.has("--prior-cleanup-evidence-dir")
+      || values.has("--failed-recovery-evidence-dir")
       || values.has("--reviewed-authority-file")) return null;
     return {
       operation,
@@ -675,6 +747,7 @@ function parseArguments(argv: readonly string[]): {
       valueFiles: [],
       priorCleanupRunId: null,
       priorCleanupEvidenceDirectory: null,
+      failedRecoveryEvidenceDirectory: null,
       reviewedAuthorityFile: null,
     };
   }
@@ -682,11 +755,17 @@ function parseArguments(argv: readonly string[]): {
     const priorCleanupRunId = values.get("--prior-cleanup-run-id") ?? "";
     const priorCleanupEvidenceDirectory =
       values.get("--prior-cleanup-evidence-dir") ?? null;
+    const failedRecoveryEvidenceDirectory =
+      values.get("--failed-recovery-evidence-dir") ?? null;
     const reviewedAuthorityFile = values.get("--reviewed-authority-file") ?? "";
     if (values.has("--value-file") || values.has("--publishable-key-file")
       || values.has("--secret-key-file") || !RUN_ID_PATTERN.test(priorCleanupRunId)
       || (priorCleanupEvidenceDirectory !== null
         && !path.isAbsolute(priorCleanupEvidenceDirectory))
+      || (cleanupSuccessorCloseoutOperation(operation)
+        ? failedRecoveryEvidenceDirectory === null ||
+          !path.isAbsolute(failedRecoveryEvidenceDirectory)
+        : failedRecoveryEvidenceDirectory !== null)
       || !path.isAbsolute(reviewedAuthorityFile)) return null;
     return {
       operation,
@@ -694,6 +773,7 @@ function parseArguments(argv: readonly string[]): {
       valueFiles: [],
       priorCleanupRunId,
       priorCleanupEvidenceDirectory,
+      failedRecoveryEvidenceDirectory,
       reviewedAuthorityFile,
     };
   }
@@ -704,6 +784,7 @@ function parseArguments(argv: readonly string[]): {
   }
   if (values.has("--prior-cleanup-run-id") ||
     values.has("--prior-cleanup-evidence-dir") ||
+    values.has("--failed-recovery-evidence-dir") ||
     values.has("--reviewed-authority-file")) return null;
   return {
     operation,
@@ -711,6 +792,7 @@ function parseArguments(argv: readonly string[]): {
     valueFiles: [value],
     priorCleanupRunId: null,
     priorCleanupEvidenceDirectory: null,
+    failedRecoveryEvidenceDirectory: null,
     reviewedAuthorityFile: null,
   };
 }
@@ -957,6 +1039,89 @@ function incidentPriorCleanupEvidenceExact(directory: string): boolean {
   }
 }
 
+function cleanupSuccessorCloseoutEvidenceExact(
+  originalDirectory: string,
+  failedRecoveryDirectory: string,
+): boolean {
+  try {
+    const originalEntries = fs.readdirSync(originalDirectory, {
+      withFileTypes: true,
+    });
+    const originalNames = originalEntries.map((entry) => entry.name).sort();
+    if (originalEntries.some((entry) => !entry.isFile()) ||
+      JSON.stringify(originalNames) !==
+        JSON.stringify(["dispatch.json", "intent.json", "terminal.json"]) ||
+      !priorCleanupEvidenceExact(
+        originalDirectory,
+        CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      )) return false;
+    const originalCommitments = Object.freeze({
+      "dispatch.json": CLEANUP_CLOSEOUT_ORIGINAL_DISPATCH_SHA256,
+      "intent.json": CLEANUP_CLOSEOUT_ORIGINAL_INTENT_SHA256,
+      "terminal.json": CLEANUP_CLOSEOUT_ORIGINAL_TERMINAL_SHA256,
+    });
+    if (!Object.entries(originalCommitments).every(([leaf, expected]) => {
+      const source = readTrustedRegularFile(path.join(originalDirectory, leaf), {
+        minBytes: 2,
+        maxBytes: 256 * 1024,
+        requireOwner: true,
+      });
+      return sha256(source) === expected;
+    })) return false;
+    const originalIntent = readEvidenceJson(originalDirectory, "intent.json");
+    const originalTerminal = readEvidenceJson(originalDirectory, "terminal.json");
+    if (!plainRecord(originalIntent) ||
+      originalIntent.preflightMetadataSha256 !==
+        "1a3b868b81d9e263941d92b919f31f6ab6a98ade1da1bc8d8c0f524e6374706f" ||
+      !plainRecord(originalTerminal) ||
+      !plainRecord(originalTerminal.receipt) ||
+      !plainRecord(originalTerminal.receipt.checks) ||
+      originalTerminal.receipt.outcome !== "mutation_uncertain" ||
+      originalTerminal.receipt.attempts !== 2 ||
+      originalTerminal.receipt.retryAllowed !== false ||
+      originalTerminal.receipt.stagedDeletionPatchId !==
+        INCIDENT_STAGED_PATCH_ID ||
+      originalTerminal.receipt.checks.targetPreflightExact !== true ||
+      originalTerminal.receipt.checks.boundaryPrecommitExact !== true ||
+      originalTerminal.receipt.checks.stagedDeletionPatchExact !== true ||
+      originalTerminal.receipt.checks.stageAcknowledgementExact !== true ||
+      originalTerminal.receipt.checks.commitAcknowledgementExact !== true ||
+      originalTerminal.receipt.checks.mutationAttemptedAtMostOnce !== true ||
+      originalTerminal.receipt.checks.committedDeletionPatchExact !== false) {
+      return false;
+    }
+
+    const recoveryEntries = fs.readdirSync(failedRecoveryDirectory, {
+      withFileTypes: true,
+    });
+    if (recoveryEntries.some((entry) => !entry.isFile()) ||
+      JSON.stringify(recoveryEntries.map((entry) => entry.name).sort()) !==
+        JSON.stringify(["dispatch.json"])) return false;
+    const recoverySource = readTrustedRegularFile(
+      path.join(failedRecoveryDirectory, "dispatch.json"),
+      { minBytes: 2, maxBytes: 64 * 1024, requireOwner: true },
+    );
+    if (sha256(recoverySource) !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_DISPATCH_SHA256) return false;
+    const recoveryDispatch = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(recoverySource),
+    ) as unknown;
+    return exactKeys(recoveryDispatch, [
+      "schemaVersion",
+      "candidateSha",
+      "operation",
+      "secretMaterialIncluded",
+    ]) && recoveryDispatch.schemaVersion ===
+        "pintpath-provider-mutation-dispatch/v1" &&
+      recoveryDispatch.candidateSha ===
+        CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA &&
+      recoveryDispatch.operation === RESUME_CLEANUP_OPERATION &&
+      recoveryDispatch.secretMaterialIncluded === false;
+  } catch {
+    return false;
+  }
+}
+
 function exactRunIdArray(value: unknown): value is readonly string[] {
   if (!Array.isArray(value) || value.length > 100
     || !value.every((entry) => typeof entry === "string"
@@ -1003,6 +1168,7 @@ function reviewedCleanupRecoveryAuthorityValueExact(
     "workflowRunAttempt",
     "workflowRunCreatedAt",
     "reviewedPullRequestMergedAt",
+    "reviewedTreeExact",
     "candidateHistoryMaximumAgeHours",
     "completeRetainedHistoryExact",
     "safePriorSkippedWriteRunIds",
@@ -1027,7 +1193,8 @@ function reviewedCleanupRecoveryAuthorityValueExact(
     || value.kind !== "pintpath-github-reviewed-candidate-authority"
     || value.repository !== REVIEWED_AUTHORITY_REPOSITORY
     || value.candidateSha !== expected.candidateSha
-    || value.reviewedPrHeadSha !== expected.candidateSha
+    || typeof value.reviewedPrHeadSha !== "string"
+    || !SHA_PATTERN.test(value.reviewedPrHeadSha)
     || !Number.isSafeInteger(value.reviewedPullRequestNumber)
     || Number(value.reviewedPullRequestNumber) < 1
     || value.operation !== expected.operation
@@ -1035,6 +1202,7 @@ function reviewedCleanupRecoveryAuthorityValueExact(
     || value.workflowRunId !== expected.currentRunId
     || value.workflowRunAttempt !== 1
     || value.candidateHistoryMaximumAgeHours !== 168
+    || value.reviewedTreeExact !== true
     || value.completeRetainedHistoryExact !== true
     || !exactRunIdArray(value.safePriorSkippedWriteRunIds)
     || value.priorCleanupRunId !== expected.priorCleanupRunId
@@ -1094,6 +1262,180 @@ function reviewedCleanupRecoveryAuthorityExact(
       new TextDecoder("utf-8", { fatal: true }).decode(source),
     ) as unknown;
     return reviewedCleanupRecoveryAuthorityValueExact(value, expected);
+  } catch {
+    return false;
+  }
+}
+
+function reviewedCleanupSuccessorCloseoutAuthorityValueExact(
+  value: unknown,
+  expected: {
+    readonly candidateSha: string;
+    readonly priorCleanupRunId: string;
+    readonly currentRunId: string;
+  },
+): boolean {
+  const keys = [
+    "command",
+    "ok",
+    "schemaVersion",
+    "kind",
+    "repository",
+    "candidateSha",
+    "reviewedPrHeadSha",
+    "reviewedPullRequestNumber",
+    "operation",
+    "workflowPath",
+    "workflowRunId",
+    "workflowRunAttempt",
+    "workflowRunCreatedAt",
+    "reviewedPullRequestMergedAt",
+    "reviewedTreeExact",
+    "candidateHistoryMaximumAgeHours",
+    "completeRetainedHistoryExact",
+    "safePriorSkippedWriteRunIds",
+    "cleanupCloseoutOriginalCandidateSha",
+    "cleanupCloseoutOriginalReviewedPrHeadSha",
+    "cleanupCloseoutOriginalTreeSha",
+    "cleanupCloseoutOriginalPullRequestNumber",
+    "cleanupCloseoutOriginalPullRequestMergedAt",
+    "cleanupCloseoutSuccessorDirectParentExact",
+    "cleanupCloseoutOriginalRunId",
+    "cleanupCloseoutOriginalRunCreatedAt",
+    "cleanupCloseoutOriginalRunCompletedAt",
+    "cleanupCloseoutOriginalRunMayHaveWrittenExact",
+    "cleanupCloseoutOriginalArtifactId",
+    "cleanupCloseoutOriginalArtifactName",
+    "cleanupCloseoutOriginalArtifactDigest",
+    "cleanupCloseoutOriginalArtifactExact",
+    "cleanupCloseoutFailedRecoveryRunId",
+    "cleanupCloseoutFailedRecoveryRunCreatedAt",
+    "cleanupCloseoutFailedRecoveryRunCompletedAt",
+    "cleanupCloseoutFailedRecoveryArtifactId",
+    "cleanupCloseoutFailedRecoveryArtifactName",
+    "cleanupCloseoutFailedRecoveryArtifactDigest",
+    "cleanupCloseoutFailedRecoveryDispatchOnlyArtifactExact",
+    "cleanupCloseoutOriginalHistoryExact",
+    "cleanupCloseoutCurrentHistoryExact",
+    "cleanupCloseoutRecoveryGraceHours",
+    "cleanupCloseoutWithinGraceExact",
+    "cleanupCloseoutMinimumObservationMinutes",
+    "cleanupCloseoutMinimumObservationSatisfiedExact",
+    "cleanupCloseoutAbsoluteDeadline",
+    "cleanupCloseoutMetadataOnlyExact",
+    "successfulStagingDeploymentRunIds",
+    "stagingLifecycleSealed",
+    "reviewedAuthorityExact",
+    "freshDispatchWriteGuardExact",
+  ];
+  if (!unorderedExactKeys(value, keys) ||
+    value.command !== "verify-github-reviewed-candidate-authority" ||
+    value.ok !== true ||
+    value.schemaVersion !== 1 ||
+    value.kind !== "pintpath-github-reviewed-candidate-authority" ||
+    value.repository !== REVIEWED_AUTHORITY_REPOSITORY ||
+    value.candidateSha !== expected.candidateSha ||
+    typeof value.reviewedPrHeadSha !== "string" ||
+    !SHA_PATTERN.test(value.reviewedPrHeadSha) ||
+    !Number.isSafeInteger(value.reviewedPullRequestNumber) ||
+    Number(value.reviewedPullRequestNumber) < 1 ||
+    value.operation !== CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION ||
+    value.workflowPath !== REVIEWED_AUTHORITY_WORKFLOW_PATH ||
+    value.workflowRunId !== expected.currentRunId ||
+    value.workflowRunAttempt !== 1 ||
+    canonicalTimestamp(value.workflowRunCreatedAt) === null ||
+    canonicalTimestamp(value.reviewedPullRequestMergedAt) === null ||
+    value.reviewedTreeExact !== true ||
+    value.candidateHistoryMaximumAgeHours !== 168 ||
+    value.completeRetainedHistoryExact !== true ||
+    !exactRunIdArray(value.safePriorSkippedWriteRunIds) ||
+    value.safePriorSkippedWriteRunIds.length !== 0 ||
+    value.cleanupCloseoutOriginalCandidateSha !==
+      CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA ||
+    value.cleanupCloseoutOriginalReviewedPrHeadSha !==
+      CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA ||
+    value.cleanupCloseoutOriginalTreeSha !==
+      CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA ||
+    value.cleanupCloseoutOriginalPullRequestNumber !==
+      CLEANUP_CLOSEOUT_ORIGINAL_PULL_REQUEST_NUMBER ||
+    value.cleanupCloseoutOriginalPullRequestMergedAt !==
+      CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT ||
+    value.cleanupCloseoutSuccessorDirectParentExact !== true ||
+    value.cleanupCloseoutOriginalRunId !== expected.priorCleanupRunId ||
+    value.cleanupCloseoutOriginalRunId !== CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID ||
+    value.cleanupCloseoutOriginalRunCreatedAt !==
+      CLEANUP_CLOSEOUT_ORIGINAL_RUN_CREATED_AT ||
+    value.cleanupCloseoutOriginalRunCompletedAt !==
+      CLEANUP_CLOSEOUT_ORIGINAL_RUN_COMPLETED_AT ||
+    value.cleanupCloseoutOriginalRunMayHaveWrittenExact !== true ||
+    value.cleanupCloseoutOriginalArtifactId !==
+      CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID ||
+    value.cleanupCloseoutOriginalArtifactName !==
+      CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_NAME ||
+    value.cleanupCloseoutOriginalArtifactDigest !==
+      CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_DIGEST ||
+    value.cleanupCloseoutOriginalArtifactExact !== true ||
+    value.cleanupCloseoutFailedRecoveryRunId !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID ||
+    value.cleanupCloseoutFailedRecoveryRunCreatedAt !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_CREATED_AT ||
+    value.cleanupCloseoutFailedRecoveryRunCompletedAt !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_COMPLETED_AT ||
+    value.cleanupCloseoutFailedRecoveryArtifactId !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID ||
+    value.cleanupCloseoutFailedRecoveryArtifactName !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_NAME ||
+    value.cleanupCloseoutFailedRecoveryArtifactDigest !==
+      CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_DIGEST ||
+    value.cleanupCloseoutFailedRecoveryDispatchOnlyArtifactExact !== true ||
+    value.cleanupCloseoutOriginalHistoryExact !== true ||
+    value.cleanupCloseoutCurrentHistoryExact !== true ||
+    value.cleanupCloseoutRecoveryGraceHours !== 24 ||
+    value.cleanupCloseoutWithinGraceExact !== true ||
+    value.cleanupCloseoutMinimumObservationMinutes !== 10 ||
+    value.cleanupCloseoutMinimumObservationSatisfiedExact !== true ||
+    canonicalTimestamp(value.cleanupCloseoutAbsoluteDeadline) !==
+      CLEANUP_CLOSEOUT_DEADLINE_MS ||
+    value.cleanupCloseoutMetadataOnlyExact !== true ||
+    !exactRunIdArray(value.successfulStagingDeploymentRunIds) ||
+    value.successfulStagingDeploymentRunIds.length > 1 ||
+    value.stagingLifecycleSealed !== false ||
+    value.reviewedAuthorityExact !== true ||
+    value.freshDispatchWriteGuardExact !== true) return false;
+  const currentCreatedAt = canonicalTimestamp(value.workflowRunCreatedAt)!;
+  const successorMergedAt = canonicalTimestamp(
+    value.reviewedPullRequestMergedAt,
+  )!;
+  const originalCompletedAt = canonicalTimestamp(
+    value.cleanupCloseoutOriginalRunCompletedAt,
+  )!;
+  const failedRecoveryCompletedAt = canonicalTimestamp(
+    value.cleanupCloseoutFailedRecoveryRunCompletedAt,
+  )!;
+  return originalCompletedAt < failedRecoveryCompletedAt &&
+    failedRecoveryCompletedAt <= successorMergedAt &&
+    successorMergedAt <= currentCreatedAt &&
+    currentCreatedAt < CLEANUP_CLOSEOUT_DEADLINE_MS &&
+    !value.successfulStagingDeploymentRunIds.includes(expected.currentRunId);
+}
+
+function reviewedCleanupSuccessorCloseoutAuthorityExact(
+  filename: string,
+  expected: Parameters<
+    typeof reviewedCleanupSuccessorCloseoutAuthorityValueExact
+  >[1],
+): boolean {
+  try {
+    const source = readTrustedRegularFile(filename, {
+      minBytes: 2,
+      maxBytes: 64 * 1024,
+      requireOwner: true,
+      requirePrivate: true,
+    });
+    return reviewedCleanupSuccessorCloseoutAuthorityValueExact(
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(source)),
+      expected,
+    );
   } catch {
     return false;
   }
@@ -1310,6 +1652,19 @@ async function graphql(
     response.headers.get("content-type") ?? "",
   )) throw new Error("provider_response_invalid");
   return await readBoundedJson(response);
+}
+
+async function cleanupCloseoutReadOnlyGraphql(
+  fetchImpl: typeof fetch,
+  token: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<unknown> {
+  if (!CLEANUP_CLOSEOUT_QUERY_DOCUMENTS.has(query) ||
+    !query.trimStart().startsWith("query ")) {
+    throw new Error("cleanup_closeout_query_invalid");
+  }
+  return await graphql(fetchImpl, token, query, variables);
 }
 
 function parseScope(value: unknown): boolean {
@@ -1537,8 +1892,9 @@ async function readProviderSnapshot(
     "empty" | "cleanup-deletion" | "empty-or-cleanup-deletion" |
       "incident-masked-cleanup-cancel" |
       "empty-or-incident-masked-cleanup-cancel" = "empty",
+  graphqlRequest: typeof graphql = graphql,
 ): Promise<ProviderSnapshot | null> {
-  const metadata = parseMetadata(await graphql(
+  const metadata = parseMetadata(await graphqlRequest(
     fetchImpl,
     metadataToken,
     PROTECTED_STAGING_VARIABLE_METADATA_QUERY,
@@ -1549,7 +1905,7 @@ async function readProviderSnapshot(
     },
   ), expectedStagedPatch);
   if (!metadata) return null;
-  const deployment = parseDeployment(await graphql(
+  const deployment = parseDeployment(await graphqlRequest(
     fetchImpl,
     metadataToken,
     PROTECTED_STAGING_VARIABLE_DEPLOYMENT_QUERY,
@@ -1830,6 +2186,26 @@ function cleanupBaselineMetadataExact(snapshot: ProviderSnapshot): boolean {
     ...snapshot,
     stagedPatchId: normalizedStagedPatchId,
   })) === CLEANUP_BASELINE_METADATA_SHA256;
+}
+
+function cleanupCompletedSnapshotExact(snapshot: ProviderSnapshot): boolean {
+  return snapshot.variables.length === 96
+    && snapshot.stagedPatchId === "<empty>"
+    && snapshot.stagedPatchStatus === "STAGED"
+    && snapshot.stagedPatchEmpty
+    && forbiddenOffsiteRowsAbsent(snapshot)
+    && maintenanceMetadataExact(snapshot)
+    && exactColdDeadBaseline(snapshot)
+    && sha256(canonical(snapshot)) === CLEANUP_CLOSEOUT_POST_METADATA_SHA256;
+}
+
+function privateFileSha256(filename: string): string {
+  return sha256(readTrustedRegularFile(filename, {
+    minBytes: 2,
+    maxBytes: 64 * 1024,
+    requireOwner: true,
+    requirePrivate: true,
+  }));
 }
 
 function maintenanceMetadataExact(snapshot: MetadataSnapshot): boolean {
@@ -2145,8 +2521,9 @@ async function readCommittedDeletionPatchExact(
   metadataToken: string,
   patchId: string,
   commitMessage: string,
+  graphqlRequest: typeof graphql = graphql,
 ): Promise<boolean> {
-  return parseCommittedDeletionPatch(await graphql(
+  return parseCommittedDeletionPatch(await graphqlRequest(
     fetchImpl,
     metadataToken,
     PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
@@ -2217,7 +2594,7 @@ function policyExact(cwd: string): boolean {
       STAGED_DELETION_PROOF_ATTESTATION_SHA256) return false;
     const policy = JSON.parse(fs.readFileSync(path.resolve(cwd, POLICY_PATH), "utf8")) as unknown;
     return canonical(policy) === canonical({
-      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v7",
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v8",
       policyId: "pintpath-permanent-staging-protected-variable-mutations",
       activationState: PROTECTED_STAGING_VARIABLE_MUTATION_STATE,
       projectId: PROJECT_ID,
@@ -2275,6 +2652,7 @@ function policyExact(cwd: string): boolean {
         stagingForbiddenVariableDeletionRecoveryOperations: [
           ...CLEANUP_RECOVERY_OPERATIONS,
           INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION,
+          CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION,
         ],
         stagedDeletionProof: {
           attestationPath: STAGED_DELETION_PROOF_ATTESTATION_PATH,
@@ -2351,6 +2729,39 @@ function policyExact(cwd: string): boolean {
               providerCasOrLockVerified: false,
               residualRisk:
                 "OUT_OF_BAND_STAGED_PATCH_REPLACEMENT_CAN_BE_DISCARDED_BETWEEN_FINAL_READ_AND_CANCEL",
+            },
+            successorReadOnlyCloseout: {
+              operation: CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION,
+              originalCandidateSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+              originalReviewedPrHeadSha:
+                CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA,
+              originalTreeSha: CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA,
+              currentCandidateMustBeDirectChild: true,
+              originalCleanupRunId: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+              originalCleanupArtifactId:
+                CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID,
+              originalCleanupArtifactDigest:
+                CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_DIGEST,
+              failedRecoveryRunId: CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID,
+              failedRecoveryArtifactId:
+                CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID,
+              failedRecoveryArtifactDigest:
+                CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_DIGEST,
+              expectedPostCleanupMetadataSha256:
+                CLEANUP_CLOSEOUT_POST_METADATA_SHA256,
+              committedPatchId: INCIDENT_STAGED_PATCH_ID,
+              committedPatchMessage:
+                `pintpath:staging-offsite-cleanup:${
+                  CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
+                }`,
+              committedPatchReadback:
+                "ACTIVE_EMPTY_AND_SELECTED_COMMITTED_MASKED_DECRYPTED_EXACT",
+              minimumObservationMinutes: 10,
+              recoveryDeadline:
+                new Date(CLEANUP_CLOSEOUT_DEADLINE_MS).toISOString(),
+              metadataOnly: true,
+              mutationCredentialAllowed: false,
+              maximumAttempts: 0,
             },
           },
         },
@@ -2435,11 +2846,16 @@ export async function runProtectedPermanentStagingVariableMutation(
     readSecretFile: readPrivateSecretFile,
     verifyPriorCleanupEvidence: priorCleanupEvidenceExact,
     verifyIncidentPriorCleanupEvidence: incidentPriorCleanupEvidenceExact,
+    verifyCleanupSuccessorCloseoutEvidence:
+      cleanupSuccessorCloseoutEvidenceExact,
     verifyReviewedCleanupRecoveryAuthority:
       reviewedCleanupRecoveryAuthorityExact,
     verifyReviewedIncidentCleanupCancelAuthority:
       reviewedIncidentCleanupCancelAuthorityExact,
+    verifyReviewedCleanupSuccessorCloseoutAuthority:
+      reviewedCleanupSuccessorCloseoutAuthorityExact,
     now: Date.now,
+    hashPrivateFile: privateFileSha256,
     writeDurable: durableWrite,
     writeOutput: (source) => process.stdout.write(source),
     ...overrides,
@@ -2461,6 +2877,9 @@ export async function runProtectedPermanentStagingVariableMutation(
   let priorCleanupEvidenceVerified = false;
   let cleanupAlreadyCompletedAtPreflight = false;
   let cleanupNoEffectAtPreflight = false;
+  let cleanupSuccessorCloseoutAtPreflight = false;
+  let cleanupCloseoutCommittedPatchAtPreflight = false;
+  let providerGraphql: typeof graphql = graphql;
   let stageAcknowledgementExact = false;
   let commitAcknowledgementExact = false;
   let stagedDeletionPatchId: string | null = null;
@@ -2473,11 +2892,15 @@ export async function runProtectedPermanentStagingVariableMutation(
         EXTERNAL_MUTATION_FREEZE_ATTESTATION;
     candidateSha = dependencies.env.GITHUB_SHA ?? null;
     const confirmation = operation
-      ? `MUTATE_${operation.toUpperCase().replaceAll("-", "_")}_IN_PERMANENT_STAGING`
+      ? `${cleanupSuccessorCloseoutOperation(operation) ? "RECONCILE" : "MUTATE"}_${
+        operation.toUpperCase().replaceAll("-", "_")
+      }_IN_PERMANENT_STAGING`
       : "";
     const requestedRecovery = args !== null && cleanupRecoveryOperation(args.operation);
     const requestedIncidentCancel = args !== null
       && incidentCleanupCancelOperation(args.operation);
+    const requestedSuccessorCloseout = args !== null
+      && cleanupSuccessorCloseoutOperation(args.operation);
     checks.githubAuthorityExact = dependencies.env.GITHUB_REF === "refs/heads/main"
       && candidateSha !== null && SHA_PATTERN.test(candidateSha)
       && dependencies.env.GITHUB_RUN_ATTEMPT === "1"
@@ -2513,6 +2936,21 @@ export async function runProtectedPermanentStagingVariableMutation(
                 currentRunId: dependencies.env.GITHUB_RUN_ID!,
               },
             )
+        : requestedSuccessorCloseout
+          ? dependencies.env.PINTPATH_PRIOR_CLEANUP_RUN_ID ===
+            args?.priorCleanupRunId
+            && args?.priorCleanupRunId === CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID
+            && dependencies.env.GITHUB_REPOSITORY ===
+              REVIEWED_AUTHORITY_REPOSITORY
+            && RUN_ID_PATTERN.test(dependencies.env.GITHUB_RUN_ID ?? "")
+            && dependencies.verifyReviewedCleanupSuccessorCloseoutAuthority(
+              args!.reviewedAuthorityFile!,
+              {
+                candidateSha: candidateSha!,
+                priorCleanupRunId: args!.priorCleanupRunId!,
+                currentRunId: dependencies.env.GITHUB_RUN_ID!,
+              },
+            )
         : !dependencies.env.PINTPATH_PRIOR_CLEANUP_RUN_ID);
     if (!args || !checks.policyExact || !checks.githubAuthorityExact
       || !checks.externalMutationFreezeAttested) {
@@ -2521,10 +2959,22 @@ export async function runProtectedPermanentStagingVariableMutation(
     const activeOperation = args.operation;
     const recovery = cleanupRecoveryOperation(activeOperation);
     const incidentCancel = incidentCleanupCancelOperation(activeOperation);
+    const successorCloseout =
+      cleanupSuccessorCloseoutOperation(activeOperation);
+    providerGraphql = successorCloseout
+      ? cleanupCloseoutReadOnlyGraphql
+      : graphql;
     if (incidentCancel) {
       checks.selectedIncidentPatchNonCommittedExact = false;
     }
-    priorCleanupEvidenceVerified = incidentCancel
+    priorCleanupEvidenceVerified = successorCloseout
+      ? args.priorCleanupEvidenceDirectory !== null
+        && args.failedRecoveryEvidenceDirectory !== null
+        && dependencies.verifyCleanupSuccessorCloseoutEvidence(
+          args.priorCleanupEvidenceDirectory,
+          args.failedRecoveryEvidenceDirectory,
+        )
+      : incidentCancel
       ? args.priorCleanupEvidenceDirectory !== null
         && dependencies.verifyIncidentPriorCleanupEvidence(
           args.priorCleanupEvidenceDirectory,
@@ -2540,17 +2990,40 @@ export async function runProtectedPermanentStagingVariableMutation(
     if (incidentCancel && dependencies.now() >= INCIDENT_RECOVERY_DEADLINE_MS) {
       throw new Error("incident_recovery_expired");
     }
+    if (successorCloseout && dependencies.now() >= CLEANUP_CLOSEOUT_DEADLINE_MS) {
+      throw new Error("cleanup_closeout_expired");
+    }
     const mutationToken = dependencies.env.PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN ?? "";
     metadataToken = dependencies.env.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN ?? "";
-    if (!TOKEN_PATTERN.test(mutationToken) || !TOKEN_PATTERN.test(metadataToken)
-      || mutationToken === metadataToken) throw new Error("token_invalid");
-    const [mutationScope, metadataScope] = await Promise.all([
-      graphql(dependencies.fetchImpl, mutationToken,
-        PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY, {}),
-      graphql(dependencies.fetchImpl, metadataToken,
-        PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY, {}),
-    ]);
-    checks.tokenScopesExact = parseScope(mutationScope) && parseScope(metadataScope);
+    if (!TOKEN_PATTERN.test(metadataToken) ||
+      (successorCloseout
+        ? mutationToken !== ""
+        : !TOKEN_PATTERN.test(mutationToken) || mutationToken === metadataToken)) {
+      throw new Error("token_invalid");
+    }
+    const [mutationScope, metadataScope] = successorCloseout
+      ? [null, await providerGraphql(
+          dependencies.fetchImpl,
+          metadataToken,
+          PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY,
+          {},
+        )]
+      : await Promise.all([
+          providerGraphql(
+            dependencies.fetchImpl,
+            mutationToken,
+            PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY,
+            {},
+          ),
+          providerGraphql(
+            dependencies.fetchImpl,
+            metadataToken,
+            PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY,
+            {},
+          ),
+        ]);
+    checks.tokenScopesExact = parseScope(metadataScope) &&
+      (successorCloseout || parseScope(mutationScope));
     if (!checks.tokenScopesExact) throw new Error("token_scope_invalid");
     before = await readProviderSnapshot(
       dependencies.fetchImpl,
@@ -2558,6 +3031,7 @@ export async function runProtectedPermanentStagingVariableMutation(
       incidentCancel
         ? "empty-or-incident-masked-cleanup-cancel"
         : recovery ? "empty-or-cleanup-deletion" : "empty",
+      providerGraphql,
     );
     const incidentPatchObservation = incidentCancel
       ? await readIncidentPatchObservation(dependencies.fetchImpl, metadataToken)
@@ -2582,7 +3056,7 @@ export async function runProtectedPermanentStagingVariableMutation(
     if (!checks.boundaryPreflightExact) throw new Error("boundary_invalid");
     authorizedBaseline = before === null
       ? null
-      : recovery || incidentCancel
+      : recovery || incidentCancel || successorCloseout
         ? authorizedCleanupRecoveryBaselineKind(before, candidateSha)
         : authorizedBaselineKind(before, candidateSha);
     const variableName = Object.hasOwn(PROVIDER_OPERATIONS, activeOperation)
@@ -2610,6 +3084,9 @@ export async function runProtectedPermanentStagingVariableMutation(
               ? before.stagedPatchId === INCIDENT_STAGED_PATCH_ID
                 && before.stagedPatchStatus === "STAGED"
               : incidentReadOnlyCloseoutAtPreflight)
+        : successorCloseout
+          ? priorCleanupEvidenceVerified
+            && cleanupCompletedSnapshotExact(before)
         : activeOperation === "supabase-key-replacement"
           ? supabaseMetadataExact(before)
           : providerPreflightExact(before, variableName!));
@@ -2621,15 +3098,42 @@ export async function runProtectedPermanentStagingVariableMutation(
     cleanupNoEffectAtPreflight = recovery
       && before.stagedPatchEmpty
       && forbiddenOffsiteRowsExactForDeletion(before);
+    cleanupSuccessorCloseoutAtPreflight = successorCloseout
+      && cleanupCompletedSnapshotExact(before);
+    if (successorCloseout) {
+      stagedDeletionPatchId = INCIDENT_STAGED_PATCH_ID;
+      try {
+        cleanupCloseoutCommittedPatchAtPreflight =
+          await readCommittedDeletionPatchExact(
+            dependencies.fetchImpl,
+            metadataToken,
+            INCIDENT_STAGED_PATCH_ID,
+            `pintpath:staging-offsite-cleanup:${
+              CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
+            }`,
+            providerGraphql,
+          );
+      } catch {
+        cleanupCloseoutCommittedPatchAtPreflight = false;
+      }
+      checks.committedDeletionPatchExact =
+        cleanupCloseoutCommittedPatchAtPreflight;
+      if (!checks.committedDeletionPatchExact) {
+        throw new Error("cleanup_closeout_committed_patch_invalid");
+      }
+    }
     buffers = args.valueFiles.map((filename) => dependencies.readSecretFile(filename));
     variables = activeOperation === CLEANUP_OPERATION || recovery || incidentCancel
+        || successorCloseout
       ? null
       : secretStrings(activeOperation, buffers);
-    if (activeOperation === CLEANUP_OPERATION || recovery || incidentCancel) {
+    if (activeOperation === CLEANUP_OPERATION || recovery || incidentCancel
+      || successorCloseout) {
       checks.inputZeroized = true;
     }
     const cleanup = activeOperation === CLEANUP_OPERATION;
-    const cleanupOrRecovery = cleanup || recovery || incidentCancel;
+    const cleanupOrRecovery = cleanup || recovery || incidentCancel
+      || successorCloseout;
     const intent = canonical({
       schemaVersion: "pintpath-permanent-staging-variable-mutation-intent/v4",
       operation: activeOperation,
@@ -2661,6 +3165,46 @@ export async function runProtectedPermanentStagingVariableMutation(
               commitMessage: `pintpath:staging-offsite-cleanup:${candidateSha}`,
             },
           }
+        : successorCloseout
+          ? {
+              readOnlyCloseout: {
+                action: "reconcile-exact-completed-deletion-across-reviewed-successor",
+                mutation: null,
+                maximumAttempts: 0,
+                mutationCredentialAvailable: false,
+                expectedPostCleanupMetadataSha256:
+                  CLEANUP_CLOSEOUT_POST_METADATA_SHA256,
+              },
+              originalCandidateSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+              originalReviewedPrHeadSha:
+                CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA,
+              originalTreeSha: CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA,
+              originalCleanupRunId: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+              originalCleanupArtifact: {
+                id: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID,
+                digest: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_DIGEST,
+                exact: true,
+              },
+              failedRecoveryRunId: CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID,
+              failedRecoveryArtifact: {
+                id: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID,
+                digest: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_DIGEST,
+                dispatchOnlyExact: true,
+              },
+              committedPatch: {
+                id: INCIDENT_STAGED_PATCH_ID,
+                status: "COMMITTED",
+                commitMessage: `pintpath:staging-offsite-cleanup:${
+                  CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
+                }`,
+                activePatchEmpty: true,
+                maskedAndDecryptedDeletionExact: true,
+              },
+              reviewedAuthoritySha256:
+                dependencies.hashPrivateFile(args.reviewedAuthorityFile!),
+              closeoutDeadline:
+                new Date(CLEANUP_CLOSEOUT_DEADLINE_MS).toISOString(),
+            }
         : incidentCancel
           ? {
               incidentCancellation: {
@@ -2781,6 +3325,7 @@ export async function runProtectedPermanentStagingVariableMutation(
       incidentCancel
         ? "empty-or-incident-masked-cleanup-cancel"
         : recovery ? "empty-or-cleanup-deletion" : "empty",
+      providerGraphql,
     );
     const prewriteIncidentPatchObservation = incidentCancel
       ? await readIncidentPatchObservation(dependencies.fetchImpl, metadataToken)
@@ -2788,7 +3333,7 @@ export async function runProtectedPermanentStagingVariableMutation(
     checks.targetPreflightExact = prewrite !== null
       && authorizedBaseline !== null
       && canonical(prewrite) === canonical(before)
-      && (recovery || incidentCancel
+      && (recovery || incidentCancel || successorCloseout
         ? authorizedCleanupRecoveryBaselineKind(prewrite, candidateSha)
         : authorizedBaselineKind(prewrite, candidateSha)) === authorizedBaseline
       && (cleanup
@@ -2805,6 +3350,9 @@ export async function runProtectedPermanentStagingVariableMutation(
                   && forbiddenOffsiteRowsExactForDeletion(prewrite)
               : !prewrite.stagedPatchEmpty
                 && forbiddenOffsiteRowsExactForDeletion(prewrite))
+        : successorCloseout
+          ? cleanupSuccessorCloseoutAtPreflight
+            && cleanupCompletedSnapshotExact(prewrite)
         : incidentCancel
           ? forbiddenOffsiteRowsExactForDeletion(prewrite)
             && maintenanceMetadataExact(prewrite)
@@ -2829,6 +3377,9 @@ export async function runProtectedPermanentStagingVariableMutation(
     if (incidentCancel && dependencies.now() >= INCIDENT_RECOVERY_DEADLINE_MS) {
       throw new Error("incident_recovery_expired");
     }
+    if (successorCloseout && dependencies.now() >= CLEANUP_CLOSEOUT_DEADLINE_MS) {
+      throw new Error("cleanup_closeout_expired");
+    }
     if (activeOperation === "supabase-key-replacement") {
       supabaseKeyCanary = await canaryPermanentStagingSupabaseKeyPair({
         fetchImpl: dependencies.fetchImpl,
@@ -2845,10 +3396,12 @@ export async function runProtectedPermanentStagingVariableMutation(
     } else {
       checks.supabasePairCanaryExact = true;
     }
-    if (cleanup) {
+    if (successorCloseout) {
+      attempts = 0;
+    } else if (cleanup) {
       attempts = 1;
       try {
-        stagedDeletionPatchId = parseStageDeletionAcknowledgement(await graphql(
+        stagedDeletionPatchId = parseStageDeletionAcknowledgement(await providerGraphql(
           dependencies.fetchImpl,
           mutationToken,
           PROTECTED_STAGING_VARIABLE_STAGE_DELETION_QUERY,
@@ -2881,6 +3434,7 @@ export async function runProtectedPermanentStagingVariableMutation(
           dependencies.fetchImpl,
           metadataToken,
           "cleanup-deletion",
+          providerGraphql,
         );
       } catch {
         staged = null;
@@ -2920,7 +3474,7 @@ export async function runProtectedPermanentStagingVariableMutation(
       )) throw new Error("final_precommit_patch_invalid");
       attempts = 2;
       try {
-        commitAcknowledgementExact = parseCommitDeletionAcknowledgement(await graphql(
+        commitAcknowledgementExact = parseCommitDeletionAcknowledgement(await providerGraphql(
           dependencies.fetchImpl,
           mutationToken,
           PROTECTED_STAGING_VARIABLE_COMMIT_DELETION_QUERY,
@@ -2979,7 +3533,7 @@ export async function runProtectedPermanentStagingVariableMutation(
         attempts = 1;
         try {
           stageAcknowledgementExact = parseCancelDeletionAcknowledgement(
-            await graphql(
+            await providerGraphql(
               dependencies.fetchImpl,
               mutationToken,
               PROTECTED_STAGING_VARIABLE_CANCEL_DELETION_QUERY,
@@ -3022,7 +3576,7 @@ export async function runProtectedPermanentStagingVariableMutation(
       } else if (cleanupNoEffectAtPreflight) {
         attempts = 1;
         try {
-          stagedDeletionPatchId = parseStageDeletionAcknowledgement(await graphql(
+          stagedDeletionPatchId = parseStageDeletionAcknowledgement(await providerGraphql(
             dependencies.fetchImpl,
             mutationToken,
             PROTECTED_STAGING_VARIABLE_STAGE_DELETION_QUERY,
@@ -3056,6 +3610,7 @@ export async function runProtectedPermanentStagingVariableMutation(
             dependencies.fetchImpl,
             metadataToken,
             "cleanup-deletion",
+            providerGraphql,
           );
         } catch {
           staged = null;
@@ -3108,7 +3663,7 @@ export async function runProtectedPermanentStagingVariableMutation(
       if (activeOperation === RESUME_CLEANUP_OPERATION
         && !cleanupAlreadyCompletedAtPreflight) {
         try {
-          commitAcknowledgementExact = parseCommitDeletionAcknowledgement(await graphql(
+          commitAcknowledgementExact = parseCommitDeletionAcknowledgement(await providerGraphql(
             dependencies.fetchImpl,
             mutationToken,
             PROTECTED_STAGING_VARIABLE_COMMIT_DELETION_QUERY,
@@ -3139,7 +3694,7 @@ export async function runProtectedPermanentStagingVariableMutation(
       } else if (activeOperation === CANCEL_CLEANUP_OPERATION
         && !cleanupNoEffectAtPreflight) {
         try {
-          stageAcknowledgementExact = parseCancelDeletionAcknowledgement(await graphql(
+          stageAcknowledgementExact = parseCancelDeletionAcknowledgement(await providerGraphql(
             dependencies.fetchImpl,
             mutationToken,
             PROTECTED_STAGING_VARIABLE_CANCEL_DELETION_QUERY,
@@ -3158,7 +3713,7 @@ export async function runProtectedPermanentStagingVariableMutation(
     } else {
       attempts = 1;
       try {
-        checks.acknowledgementExact = parseAcknowledgement(await graphql(
+        checks.acknowledgementExact = parseAcknowledgement(await providerGraphql(
           dependencies.fetchImpl,
           mutationToken,
           PROTECTED_STAGING_VARIABLE_MUTATION_QUERY,
@@ -3182,7 +3737,12 @@ export async function runProtectedPermanentStagingVariableMutation(
     checks.postflightAttempted = true;
     let after: ProviderSnapshot | null = null;
     try {
-      after = await readProviderSnapshot(dependencies.fetchImpl, metadataToken);
+      after = await readProviderSnapshot(
+        dependencies.fetchImpl,
+        metadataToken,
+        "empty",
+        providerGraphql,
+      );
     } catch {
       after = null;
     }
@@ -3201,12 +3761,33 @@ export async function runProtectedPermanentStagingVariableMutation(
         checks.selectedIncidentPatchNonCommittedExact = false;
       }
     }
+    if (successorCloseout) {
+      try {
+        checks.committedDeletionPatchExact =
+          cleanupCloseoutCommittedPatchAtPreflight &&
+          await readCommittedDeletionPatchExact(
+            dependencies.fetchImpl,
+            metadataToken,
+            INCIDENT_STAGED_PATCH_ID,
+            `pintpath:staging-offsite-cleanup:${
+              CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
+            }`,
+            providerGraphql,
+          );
+      } catch {
+        checks.committedDeletionPatchExact = false;
+      }
+    }
     checks.deploymentUnchanged = after !== null
       && runtimeSnapshotUnchanged(before, after);
     checks.targetPostflightExact = after !== null
       && authorizedBaselineKind(after, candidateSha) === authorizedBaseline
       && (cleanup
         ? cleanupPostflightExact(before, after)
+        : successorCloseout
+          ? cleanupSuccessorCloseoutAtPreflight
+            && cleanupCompletedSnapshotExact(after)
+            && canonical(after) === canonical(before)
         : incidentCancel
           ? cleanupCancelPostflightExact(before, after)
             && after.stagedPatchEmpty
@@ -3227,7 +3808,7 @@ export async function runProtectedPermanentStagingVariableMutation(
     } catch {
       checks.boundaryPostflightExact = false;
     }
-    outcome = "mutation_uncertain";
+    outcome = successorCloseout ? "failed_before_attempt" : "mutation_uncertain";
   } catch {
     outcome = attempts > 0 ? "mutation_uncertain" : "failed_before_attempt";
   } finally {
@@ -3246,6 +3827,7 @@ export async function runProtectedPermanentStagingVariableMutation(
           operation === CLEANUP_OPERATION && attempts === 1
             ? "cleanup-deletion"
             : "empty",
+          providerGraphql,
         );
       } catch { after = null; }
       if (operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION) {
@@ -3335,7 +3917,18 @@ export async function runProtectedPermanentStagingVariableMutation(
     && checks.deploySuppressionExact
     && checks.boundaryPostflightExact
     && checks.inputZeroized;
-  if (operation === CLEANUP_OPERATION) {
+  if (operation === CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION) {
+    const cleanupCloseoutSuccess = attempts === 0
+      && cleanupSuccessorCloseoutAtPreflight
+      && priorCleanupEvidenceVerified
+      && !checks.stagedDeletionPatchExact
+      && checks.committedDeletionPatchExact
+      && !checks.boundaryPrecommitExact
+      && commonSuccess;
+    outcome = cleanupCloseoutSuccess
+      ? "cleanup_completed_read_only_reconciled"
+      : outcome;
+  } else if (operation === CLEANUP_OPERATION) {
     const cleanupSuccess = attempts === 2
       && checks.stagedDeletionPatchExact
       && checks.committedDeletionPatchExact
@@ -3488,11 +4081,13 @@ export async function runProtectedPermanentStagingVariableMutation(
     "cleanup_no_effect_retry_acknowledged",
     "cleanup_no_effect_retry_reconciled_after_lost_ack",
     "cleanup_already_cancelled_reconciled",
+    "cleanup_completed_read_only_reconciled",
   ].includes(receipt.outcome) && receipt.checks.terminalEvidenceExact ? 0 : 1;
 }
 
 export const protectedPermanentStagingVariableMutationInternals = {
   cleanupBaselineMetadataExact,
+  cleanupCompletedSnapshotExact,
   cleanupDeletionPatch,
   cleanupDeletionPatchExact,
   cleanupPostflightExact,
@@ -3503,6 +4098,7 @@ export const protectedPermanentStagingVariableMutationInternals = {
   incidentMaskedCleanupPatchExact,
   incidentOriginalBaselineMetadataExact,
   incidentPriorCleanupEvidenceExact,
+  cleanupSuccessorCloseoutEvidenceExact,
   parseAcknowledgement,
   parseArguments,
   parseCommitDeletionAcknowledgement,
@@ -3518,6 +4114,7 @@ export const protectedPermanentStagingVariableMutationInternals = {
   providerPostflightExact,
   providerPreflightExact,
   reviewedCleanupRecoveryAuthorityValueExact,
+  reviewedCleanupSuccessorCloseoutAuthorityValueExact,
   reviewedIncidentCleanupCancelAuthorityValueExact,
   secretStrings,
   supabaseMetadataExact,

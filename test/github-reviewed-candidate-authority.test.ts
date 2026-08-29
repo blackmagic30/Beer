@@ -26,6 +26,18 @@ const INCIDENT_ARTIFACT_NAME =
   "pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-ac7130e0306802825922d21a4c61135b84edd43b";
 const INCIDENT_ARTIFACT_DIGEST =
   "sha256:0df300c84d53ece3fca5f7c72007bf5dd4a8ba9d1ea989e5d74bc80904aed98e";
+const CLEANUP_CLOSEOUT_OPERATION =
+  "reconcile-completed-forbidden-offsite-backup-deletion";
+const CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE =
+  "0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_CLOSEOUT_ORIGINAL_HEAD =
+  "b8d0d0e44cf63e996388a223ba4ee2ff02ab02e5";
+const CLEANUP_CLOSEOUT_ORIGINAL_TREE =
+  "2f624d697d97f5682d7b69231ed4d0ec66a21e6d";
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID = 33246243698;
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID = 33246655561;
+const CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID = 9712963222;
+const CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID = 9713096183;
 const REPOSITORY = "blackmagic30/Beer";
 const PROVIDER_PATH =
   ".github/workflows/permanent-staging-provider-mutation.yml";
@@ -49,6 +61,7 @@ const PROVIDER_OPERATIONS = [
   "resume-forbidden-offsite-backup-deletion-patch",
   "cancel-forbidden-offsite-backup-deletion-patch",
   "cancel-masked-forbidden-offsite-backup-deletion-patch",
+  "reconcile-completed-forbidden-offsite-backup-deletion",
 ] as const;
 const DISABLE_CUTOVER_MODE = "disable-enabled-legacy-keys";
 const RECONCILE_CUTOVER_MODE = "reconcile-already-disabled-legacy-keys";
@@ -290,9 +303,17 @@ function harness(options: {
   incidentArtifactDigest?: string;
   incidentArtifactExpired?: boolean;
   incidentArtifactExpiresAt?: string;
+  cleanupCloseoutOriginalArtifactDigest?: string;
+  cleanupCloseoutOriginalArtifactExpired?: boolean;
+  cleanupCloseoutOriginalArtifactExpiresAt?: string;
+  cleanupCloseoutFailedRecoveryArtifactDigest?: string;
+  cleanupCloseoutFailedRecoveryArtifactExpired?: boolean;
+  cleanupCloseoutFailedRecoveryArtifactExpiresAt?: string;
+  cleanupCloseoutExtraProviderRuns?: Run[];
 } = {}) {
   const operation = options.operation ?? "supabase-key-replacement";
   const incident = operation === INCIDENT_OPERATION;
+  const cleanupCloseout = operation === CLEANUP_CLOSEOUT_OPERATION;
   const cutover = operation === "supabase-legacy-key-cutover";
   const cutoverMode = options.cutoverMode ?? DISABLE_CUTOVER_MODE;
   const runtime = operation === "runtime-variable";
@@ -361,10 +382,32 @@ function harness(options: {
       conclusion: null,
       createdAt: incident
         ? "2026-08-28T11:20:00.000Z"
+        : cleanupCloseout
+        ? "2026-08-29T10:20:00.000Z"
         : "2026-08-14T02:00:00.000Z",
     }),
     ...options.current,
   };
+  const closeoutOriginal = workflowRun({
+    id: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+    path: PROVIDER_PATH,
+    displayTitle:
+      `Permanent staging provider mutation | remove-forbidden-offsite-backup-variables | ${CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE}`,
+    conclusion: "failure",
+    createdAt: "2026-08-29T09:45:53Z",
+    updatedAt: "2026-08-29T09:49:29Z",
+    headSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+  });
+  const closeoutFailedRecovery = workflowRun({
+    id: CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID,
+    path: PROVIDER_PATH,
+    displayTitle:
+      `Permanent staging provider mutation | resume-forbidden-offsite-backup-deletion-patch | ${CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE}`,
+    conclusion: "failure",
+    createdAt: "2026-08-29T09:56:44Z",
+    updatedAt: "2026-08-29T10:00:57Z",
+    headSha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+  });
   const providerRuns = options.providerRuns ??
     (cutover || coldPrepare || coldPrepareReconcile
     ? [workflowRun({
@@ -375,6 +418,13 @@ function harness(options: {
     })]
     : runtime || coldRecovery || restoreReconcile || activateReconcile
     ? []
+    : cleanupCloseout
+    ? [
+        closeoutOriginal,
+        closeoutFailedRecovery,
+        ...(options.cleanupCloseoutExtraProviderRuns ?? []),
+        current,
+      ]
     : [current]);
   const cutoverRuns = options.cutoverRuns ?? (cutover ? [current] : []);
   const runtimeRuns = options.runtimeRuns ?? (runtime ? [current] : []);
@@ -477,6 +527,8 @@ function harness(options: {
         merge_commit_sha: CANDIDATE,
         merged_at: options.mergedAt ?? (incident
           ? "2026-08-28T11:00:00.000Z"
+          : cleanupCloseout
+          ? "2026-08-29T10:10:00.000Z"
           : "2026-08-14T00:30:00.000Z"),
         user: { id: 101 },
         merged_by: { id: 202 },
@@ -507,6 +559,9 @@ function harness(options: {
         parents: [{
           sha: incident
             ? options.incidentCandidateParent ?? INCIDENT_ORIGINAL_CANDIDATE
+            : cleanupCloseout
+            ? options.incidentCandidateParent ??
+              CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE
             : "d".repeat(40),
         }],
       });
@@ -558,7 +613,109 @@ function harness(options: {
         parents: [{ sha: "e".repeat(40) }],
       });
     }
+    if (url.includes(
+      `/commits/${CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE}/pulls?`,
+    )) {
+      return response([{
+        number: 71,
+        state: "closed",
+        merge_commit_sha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: { repo: { full_name: REPOSITORY } },
+      }]);
+    }
+    if (url.endsWith("/pulls/71")) {
+      return response({
+        number: 71,
+        state: "closed",
+        merged: true,
+        draft: false,
+        merge_commit_sha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+        merged_at: "2026-08-29T09:42:49Z",
+        user: { id: 101 },
+        merged_by: { id: 202 },
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: {
+          sha: CLEANUP_CLOSEOUT_ORIGINAL_HEAD,
+          repo: { full_name: REPOSITORY },
+        },
+      });
+    }
+    if (url.endsWith(
+      `/git/commits/${CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE}`,
+    )) {
+      return response({
+        sha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+        tree: { sha: CLEANUP_CLOSEOUT_ORIGINAL_TREE },
+        parents: [{ sha: "f".repeat(40) }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${CLEANUP_CLOSEOUT_ORIGINAL_HEAD}`)) {
+      return response({
+        sha: CLEANUP_CLOSEOUT_ORIGINAL_HEAD,
+        tree: { sha: CLEANUP_CLOSEOUT_ORIGINAL_TREE },
+        parents: [{ sha: "e".repeat(40) }],
+      });
+    }
     if (url.endsWith(`/actions/runs/${currentId}`)) return response(current);
+    if (url.endsWith(`/actions/runs/${CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID}`)) {
+      return response(closeoutOriginal);
+    }
+    if (url.endsWith(
+      `/actions/runs/${CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID}`,
+    )) {
+      return response(closeoutFailedRecovery);
+    }
+    if (url.includes(
+      `/actions/runs/${CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID}/artifacts?`,
+    )) {
+      return response({
+        total_count: 1,
+        artifacts: [{
+          id: CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID,
+          name:
+            "pintpath-permanent-staging-provider-mutation-remove-forbidden-offsite-backup-variables-0eadad05ce6c313ed3c12492d3095609ce5872d5",
+          size_in_bytes: 2111,
+          expired: options.cleanupCloseoutOriginalArtifactExpired ?? false,
+          digest: options.cleanupCloseoutOriginalArtifactDigest ??
+            "sha256:aeb28aef046845e9f8ce830c2ae4a2eee762ce79810c69a1727fbef07f121ad3",
+          created_at: "2026-08-29T09:49:26Z",
+          updated_at: "2026-08-29T09:49:26Z",
+          expires_at: options.cleanupCloseoutOriginalArtifactExpiresAt ??
+            "2026-09-28T09:49:25Z",
+          workflow_run: {
+            id: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+            head_branch: "main",
+            head_sha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+          },
+        }],
+      });
+    }
+    if (url.includes(
+      `/actions/runs/${CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID}/artifacts?`,
+    )) {
+      return response({
+        total_count: 1,
+        artifacts: [{
+          id: CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID,
+          name:
+            "pintpath-permanent-staging-provider-mutation-resume-forbidden-offsite-backup-deletion-patch-0eadad05ce6c313ed3c12492d3095609ce5872d5",
+          size_in_bytes: 313,
+          expired: options.cleanupCloseoutFailedRecoveryArtifactExpired ?? false,
+          digest: options.cleanupCloseoutFailedRecoveryArtifactDigest ??
+            "sha256:e1a4e7017298b49df7c0afb3fcc8a354740248c5333cb21248d3bbd80d65c0b8",
+          created_at: "2026-08-29T10:00:54Z",
+          updated_at: "2026-08-29T10:00:54Z",
+          expires_at: options.cleanupCloseoutFailedRecoveryArtifactExpiresAt ??
+            "2026-09-28T10:00:53Z",
+          workflow_run: {
+            id: CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID,
+            head_branch: "main",
+            head_sha: CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+          },
+        }],
+      });
+    }
     if (url.endsWith(`/actions/runs/${INCIDENT_PRIOR_RUN_ID}`)) {
       return response(workflowRun({
         id: INCIDENT_PRIOR_RUN_ID,
@@ -656,6 +813,11 @@ function harness(options: {
               updatedAt: "2026-08-28T10:51:43Z",
               headSha: INCIDENT_ORIGINAL_CANDIDATE,
             }), "failure")
+          : cleanupCloseout && runId === CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID
+          ? jobs(closeoutOriginal, "failure")
+          : cleanupCloseout &&
+              runId === CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID
+          ? jobs(closeoutFailedRecovery, "failure")
           : coldPrepareReconcile && runId === ambiguousPrepare.id
           ? jobs(ambiguousPrepare, "cancelled")
           : coldReconcile && runId === ambiguousQuiesce.id
@@ -702,6 +864,8 @@ function harness(options: {
         ? options.priorRunId ?? "689"
         : incident
         ? options.priorRunId ?? String(INCIDENT_PRIOR_RUN_ID)
+        : cleanupCloseout
+        ? options.priorRunId ?? String(CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID)
         : options.priorRunId ?? null,
       prepareRunId: coldReconcile ? options.prepareRunId ?? "675" : null,
       target: runtime ? target : null,
@@ -713,6 +877,138 @@ function harness(options: {
 }
 
 describe("reviewed candidate mutation authority", () => {
+  it("binds the metadata-only cleanup closeout to the exact direct successor and both retained runs", async () => {
+    const authority = await harness({
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+    }).verify();
+    expect(authority).toMatchObject({
+      candidateSha: CANDIDATE,
+      reviewedPrHeadSha: REVIEWED_HEAD,
+      reviewedTreeExact: true,
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+      cleanupCloseoutOriginalCandidateSha:
+        CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE,
+      cleanupCloseoutOriginalReviewedPrHeadSha:
+        CLEANUP_CLOSEOUT_ORIGINAL_HEAD,
+      cleanupCloseoutOriginalTreeSha: CLEANUP_CLOSEOUT_ORIGINAL_TREE,
+      cleanupCloseoutSuccessorDirectParentExact: true,
+      cleanupCloseoutOriginalRunId:
+        String(CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID),
+      cleanupCloseoutOriginalArtifactId:
+        String(CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID),
+      cleanupCloseoutFailedRecoveryRunId:
+        String(CLEANUP_CLOSEOUT_FAILED_RECOVERY_RUN_ID),
+      cleanupCloseoutFailedRecoveryArtifactId:
+        String(CLEANUP_CLOSEOUT_FAILED_RECOVERY_ARTIFACT_ID),
+      cleanupCloseoutFailedRecoveryDispatchOnlyArtifactExact: true,
+      cleanupCloseoutOriginalHistoryExact: true,
+      cleanupCloseoutCurrentHistoryExact: true,
+      cleanupCloseoutMinimumObservationMinutes: 10,
+      cleanupCloseoutMinimumObservationSatisfiedExact: true,
+      cleanupCloseoutAbsoluteDeadline: "2026-08-30T09:49:29.000Z",
+      cleanupCloseoutMetadataOnlyExact: true,
+    });
+    const authorityDocument = {
+      command: "verify-github-reviewed-candidate-authority",
+      ok: true,
+      ...authority,
+    };
+    const authorityExpected = {
+      candidateSha: CANDIDATE,
+      priorCleanupRunId: String(CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID),
+      currentRunId: "500",
+    };
+    const authorityExact = protectedPermanentStagingVariableMutationInternals
+      .reviewedCleanupSuccessorCloseoutAuthorityValueExact;
+    expect(authorityExact(authorityDocument, authorityExpected)).toBe(true);
+    for (const tampered of [
+      { ...authorityDocument, reviewedTreeExact: false },
+      {
+        ...authorityDocument,
+        cleanupCloseoutOriginalArtifactDigest: `sha256:${"0".repeat(64)}`,
+      },
+      {
+        ...authorityDocument,
+        cleanupCloseoutFailedRecoveryRunId: "33246655562",
+      },
+      {
+        ...authorityDocument,
+        cleanupCloseoutMinimumObservationMinutes: 9,
+      },
+      { ...authorityDocument, unexpected: true },
+    ]) expect(authorityExact(tampered, authorityExpected)).toBe(false);
+
+    await expect(harness({
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+      incidentCandidateParent: "d".repeat(40),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cleanup_successor_closeout_candidate_invalid",
+    );
+  });
+
+  it("rejects substituted, expired, or unavailable cleanup closeout artifacts", async () => {
+    for (const options of [
+      {
+        cleanupCloseoutOriginalArtifactDigest:
+          `sha256:${"0".repeat(64)}`,
+      },
+      { cleanupCloseoutFailedRecoveryArtifactExpired: true },
+      {
+        cleanupCloseoutOriginalArtifactExpiresAt:
+          "2026-08-29T10:20:00.000Z",
+      },
+    ]) {
+      await expect(harness({
+        operation: CLEANUP_CLOSEOUT_OPERATION,
+        ...options,
+      }).verify()).rejects.toThrow(
+        "github_reviewed_candidate_authority_cleanup_successor_closeout_artifact_invalid",
+      );
+    }
+  });
+
+  it("rejects unaccounted provider history, a prior closeout, and an expired closeout dispatch", async () => {
+    const unrelated = workflowRun({
+      id: 499,
+      path: PROVIDER_PATH,
+      displayTitle:
+        `Permanent staging provider mutation | provider-openai-api-key | ${"d".repeat(40)}`,
+      createdAt: "2026-08-29T10:12:00.000Z",
+      headSha: "d".repeat(40),
+    });
+    await expect(harness({
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+      cleanupCloseoutExtraProviderRuns: [unrelated],
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cleanup_successor_closeout_history_invalid",
+    );
+
+    const priorCloseout = workflowRun({
+      id: 499,
+      path: PROVIDER_PATH,
+      displayTitle: title(CLEANUP_CLOSEOUT_OPERATION),
+      createdAt: "2026-08-29T10:12:00.000Z",
+    });
+    await expect(harness({
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+      cleanupCloseoutExtraProviderRuns: [priorCloseout],
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cleanup_successor_closeout_history_invalid",
+    );
+
+    await expect(harness({
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+      mergedAt: "2026-08-30T09:30:00.000Z",
+      current: {
+        created_at: "2026-08-30T09:49:29.000Z",
+        run_started_at: "2026-08-30T09:49:29.000Z",
+        updated_at: "2026-08-30T09:49:29.000Z",
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cleanup_successor_closeout_history_invalid",
+    );
+  });
+
   it("authorizes only the direct-child incident cancellation bound to the retained failed run", async () => {
     const authority = await harness({ operation: INCIDENT_OPERATION }).verify();
     expect(authority).toMatchObject({
@@ -1379,13 +1675,17 @@ describe("reviewed candidate mutation authority", () => {
         conclusion: "failure",
         createdAt: "2026-08-14T01:00:00.000Z",
       });
-      await expect(harness({
+      const generated = await harness({
         operation,
         priorRunId: "450",
         providerRuns: [priorCleanup, current],
         jobEvidence: { 450: jobs(priorCleanup, "failure") },
-      }).verify()).resolves.toMatchObject({
+      }).verify();
+      expect(generated).toMatchObject({
         operation,
+        candidateSha: CANDIDATE,
+        reviewedPrHeadSha: REVIEWED_HEAD,
+        reviewedTreeExact: true,
         priorCleanupRunId: "450",
         priorCleanupPatchSha256:
           "3650174bf695aaebb3b9ba7f91a4f2a724a0806b30511578448964c36eebfb91",
@@ -1395,6 +1695,17 @@ describe("reviewed candidate mutation authority", () => {
         offsiteCleanupRecoveryGraceHours: 24,
         offsiteCleanupRecoveryWithinGraceExact: true,
       });
+      expect(protectedPermanentStagingVariableMutationInternals
+        .reviewedCleanupRecoveryAuthorityValueExact({
+          command: "verify-github-reviewed-candidate-authority",
+          ok: true,
+          ...generated,
+        }, {
+          candidateSha: CANDIDATE,
+          operation,
+          priorCleanupRunId: "450",
+          currentRunId: "500",
+        })).toBe(true);
 
       const priorSameModeRecovery = workflowRun({
         id: 440,

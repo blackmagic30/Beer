@@ -13,6 +13,9 @@ import {
 const CANDIDATE = "a".repeat(40);
 const REVIEWED_PR_HEAD = "b".repeat(40);
 const REVIEWED_TREE = "c".repeat(40);
+const CLEANUP_CLOSEOUT_PREDECESSOR =
+  "0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const DEFAULT_CLEANUP_CLOSEOUT_RUN_ID = 8_800;
 const POLICY = fs.readFileSync(
   path.resolve(".github/release-required-checks.json"),
   "utf8",
@@ -288,6 +291,49 @@ function providerMutationJobs(
   };
 }
 
+function cleanupSuccessorCloseoutJobs(
+  run: ReturnType<typeof mutationRun>,
+  overrides: {
+    writerConclusion?: string;
+    closeoutConclusion?: string;
+    boundaryConclusion?: string;
+    uploadConclusion?: string;
+  } = {},
+) {
+  return {
+    total_count: 1,
+    jobs: [{
+      run_id: run.id,
+      run_attempt: 1,
+      name: "One protected variable mutation plan",
+      status: "completed",
+      conclusion: run.conclusion,
+      steps: [
+        {
+          name: "Execute one reviewed protected Railway mutation plan",
+          status: "completed",
+          conclusion: overrides.writerConclusion ?? "skipped",
+        },
+        {
+          name: "Reconcile the completed cleanup with metadata only",
+          status: "completed",
+          conclusion: overrides.closeoutConclusion ?? "success",
+        },
+        {
+          name: "Reconcile the Railway mutation boundary after every attempt",
+          status: "completed",
+          conclusion: overrides.boundaryConclusion ?? "success",
+        },
+        {
+          name: "Upload secret-free terminal evidence",
+          status: "completed",
+          conclusion: overrides.uploadConclusion ?? "success",
+        },
+      ],
+    }],
+  };
+}
+
 function harness(
   options: {
     phase?: "staging" | "production" | "close" | "activation" | "promotion-recovery" | "open" | "release";
@@ -318,6 +364,7 @@ function harness(
     candidateTreeSha?: string;
     reviewedTreeSha?: string;
     candidateParentCount?: number;
+    candidateParentSha?: string;
     additionalStagingDeployments?: Array<{
       runId: number;
       startedAt: string;
@@ -325,6 +372,7 @@ function harness(
       runStartedAt: string;
     }>;
     providerMutationRuns?: Array<Record<string, unknown>>;
+    omitCleanupSuccessorCloseout?: boolean;
     runtimeMutationRuns?: Array<Record<string, unknown>>;
     workerFenceRuns?: Array<Record<string, unknown>>;
     stagingBootstrapRuns?: Array<Record<string, unknown>>;
@@ -469,6 +517,29 @@ function harness(
   }
   const hasStagingChain = requiredChecks.some((item) =>
       item.name === "Deploy permanent staging");
+  const defaultCleanupSuccessorCloseout = mutationRun({
+    id: DEFAULT_CLEANUP_CLOSEOUT_RUN_ID,
+    workflowPath:
+      ".github/workflows/permanent-staging-provider-mutation.yml",
+    displayTitle:
+      `Permanent staging provider mutation | reconcile-completed-forbidden-offsite-backup-deletion | ${CANDIDATE}`,
+    createdAt: "2026-08-14T01:00:01.000Z",
+    startedAt: "2026-08-14T01:00:02.000Z",
+    updatedAt: "2026-08-14T01:00:30.000Z",
+  });
+  const explicitProviderMutationRuns = options.providerMutationRuns ?? [];
+  const hasExplicitCleanupSuccessorCloseout =
+    explicitProviderMutationRuns.some((run) =>
+      run?.display_title ===
+        defaultCleanupSuccessorCloseout.display_title);
+  const providerMutationRuns = [
+    ...explicitProviderMutationRuns,
+    ...(hasStagingChain &&
+        !options.omitCleanupSuccessorCloseout &&
+        !hasExplicitCleanupSuccessorCloseout
+      ? [defaultCleanupSuccessorCloseout]
+      : []),
+  ];
   const stagingBootstrapPath = options.stagingBootstrapPath ?? "normal";
   const defaultWorkerFenceRuns = hasStagingChain
     ? stagingBootstrapPath === "normal"
@@ -608,7 +679,11 @@ function harness(
         tree: { sha: options.candidateTreeSha ?? REVIEWED_TREE },
         parents: Array.from(
           { length: options.candidateParentCount ?? 1 },
-          (_, index) => ({ sha: String(index + 1).repeat(40) }),
+          (_, index) => ({
+            sha: index === 0
+              ? options.candidateParentSha ?? CLEANUP_CLOSEOUT_PREDECESSOR
+              : String(index + 1).repeat(40),
+          }),
         ),
       });
     }
@@ -632,7 +707,7 @@ function harness(
     if (url.includes(
       "/actions/workflows/permanent-staging-provider-mutation.yml/runs?",
     )) {
-      const workflowRuns = options.providerMutationRuns ?? [];
+      const workflowRuns = providerMutationRuns;
       return jsonResponse({
         total_count: workflowRuns.length,
         workflow_runs: workflowRuns,
@@ -675,7 +750,13 @@ function harness(
     }
     const jobsMatch = /\/actions\/runs\/(\d+)\/jobs\?/.exec(url);
     if (jobsMatch) {
-      return jsonResponse(options.mutationJobs?.[Number(jobsMatch[1])] ?? {
+      const runId = Number(jobsMatch[1]);
+      if (runId === DEFAULT_CLEANUP_CLOSEOUT_RUN_ID) {
+        return jsonResponse(cleanupSuccessorCloseoutJobs(
+          defaultCleanupSuccessorCloseout,
+        ));
+      }
+      return jsonResponse(options.mutationJobs?.[runId] ?? {
         total_count: 0,
         jobs: [],
       });
@@ -1300,6 +1381,122 @@ describe("GitHub release-candidate verifier", () => {
         writeOutput: () => undefined,
       },
     )).resolves.toBe(0);
+  });
+
+  it("requires one exact metadata-only cleanup closeout on the pinned direct successor", async () => {
+    const predecessor = CLEANUP_CLOSEOUT_PREDECESSOR;
+    const closeout = mutationRun({
+      id: 725,
+      workflowPath:
+        ".github/workflows/permanent-staging-provider-mutation.yml",
+      displayTitle:
+        `Permanent staging provider mutation | reconcile-completed-forbidden-offsite-backup-deletion | ${CANDIDATE}`,
+      createdAt: "2026-08-14T01:03:01.000Z",
+      startedAt: "2026-08-14T01:03:02.000Z",
+      updatedAt: "2026-08-14T01:04:00.000Z",
+    });
+    const verify = async (fixture: ReturnType<typeof harness>) => {
+      let summary = "";
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      return { code, summary: JSON.parse(summary) as Record<string, unknown> };
+    };
+    const valid = harness({
+      candidateParentSha: predecessor,
+      providerMutationRuns: [closeout],
+      mutationJobs: { 725: cleanupSuccessorCloseoutJobs(closeout) },
+    });
+    await expect(verify(valid)).resolves.toMatchObject({
+      code: 0,
+      summary: { ok: true },
+    });
+
+    const duplicate = mutationRun({
+      ...{
+        id: 726,
+        workflowPath:
+          ".github/workflows/permanent-staging-provider-mutation.yml",
+        displayTitle:
+          `Permanent staging provider mutation | reconcile-completed-forbidden-offsite-backup-deletion | ${CANDIDATE}`,
+        createdAt: "2026-08-14T01:04:01.000Z",
+        startedAt: "2026-08-14T01:04:02.000Z",
+        updatedAt: "2026-08-14T01:05:00.000Z",
+      },
+    });
+    const failed = {
+      ...closeout,
+      conclusion: "failure",
+      status: "completed",
+    };
+    const late = {
+      ...closeout,
+      created_at: "2026-08-14T01:08:36.000Z",
+      run_started_at: "2026-08-14T01:08:37.000Z",
+      updated_at: "2026-08-14T01:08:45.000Z",
+    };
+    const rejected = [
+      harness({
+        candidateParentSha: predecessor,
+        omitCleanupSuccessorCloseout: true,
+      }),
+      harness({
+        candidateParentSha: predecessor,
+        providerMutationRuns: [closeout, duplicate],
+        mutationJobs: {
+          725: cleanupSuccessorCloseoutJobs(closeout),
+          726: cleanupSuccessorCloseoutJobs(duplicate),
+        },
+      }),
+      harness({
+        candidateParentSha: predecessor,
+        providerMutationRuns: [failed],
+      }),
+      harness({
+        candidateParentSha: predecessor,
+        providerMutationRuns: [closeout],
+        mutationJobs: {
+          725: cleanupSuccessorCloseoutJobs(closeout, {
+            writerConclusion: "success",
+          }),
+        },
+      }),
+      harness({
+        candidateParentSha: "f".repeat(40),
+        providerMutationRuns: [closeout],
+        mutationJobs: { 725: cleanupSuccessorCloseoutJobs(closeout) },
+      }),
+      harness({
+        candidateParentSha: "e".repeat(40),
+        omitCleanupSuccessorCloseout: true,
+      }),
+    ];
+    for (const fixture of rejected) {
+      await expect(verify(fixture)).resolves.toMatchObject({
+        code: 1,
+        summary: { failureCode: "staging_mutation_history_invalid" },
+      });
+    }
+    await expect(verify(harness({
+      candidateParentSha: predecessor,
+      providerMutationRuns: [late],
+      mutationJobs: { 725: cleanupSuccessorCloseoutJobs(late) },
+    }))).resolves.toMatchObject({
+      code: 1,
+      summary: {
+        failureCode: "staging_mutation_after_closeout_deployment",
+      },
+    });
   });
 
   it("accepts only a strictly converged incident-cancel history before staging closeout", async () => {
