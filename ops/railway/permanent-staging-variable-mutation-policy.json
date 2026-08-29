@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v7",
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v8",
   "policyId": "pintpath-permanent-staging-protected-variable-mutations",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -66,7 +66,8 @@
     "stagingForbiddenVariableDeletionRecoveryOperations": [
       "resume-forbidden-offsite-backup-deletion-patch",
       "cancel-forbidden-offsite-backup-deletion-patch",
-      "cancel-masked-forbidden-offsite-backup-deletion-patch"
+      "cancel-masked-forbidden-offsite-backup-deletion-patch",
+      "reconcile-completed-forbidden-offsite-backup-deletion"
     ],
     "stagedDeletionProof": {
       "attestationPath": "docs/incident-evidence/railway-staged-deletion-proof-2026-08-29/attestation.json",
@@ -137,6 +138,28 @@
           "resumeAllowed": false,
           "providerCasOrLockVerified": false,
           "residualRisk": "OUT_OF_BAND_STAGED_PATCH_REPLACEMENT_CAN_BE_DISCARDED_BETWEEN_FINAL_READ_AND_CANCEL"
+        },
+        "successorReadOnlyCloseout": {
+          "operation": "reconcile-completed-forbidden-offsite-backup-deletion",
+          "originalCandidateSha": "0eadad05ce6c313ed3c12492d3095609ce5872d5",
+          "originalReviewedPrHeadSha": "b8d0d0e44cf63e996388a223ba4ee2ff02ab02e5",
+          "originalTreeSha": "2f624d697d97f5682d7b69231ed4d0ec66a21e6d",
+          "currentCandidateMustBeDirectChild": true,
+          "originalCleanupRunId": "33246243698",
+          "originalCleanupArtifactId": "9712963222",
+          "originalCleanupArtifactDigest": "sha256:aeb28aef046845e9f8ce830c2ae4a2eee762ce79810c69a1727fbef07f121ad3",
+          "failedRecoveryRunId": "33246655561",
+          "failedRecoveryArtifactId": "9713096183",
+          "failedRecoveryArtifactDigest": "sha256:e1a4e7017298b49df7c0afb3fcc8a354740248c5333cb21248d3bbd80d65c0b8",
+              "expectedPostCleanupMetadataSha256": "54fae04fd4dda1688bae3080a2c9c2220fb257f7b5c3ea1ce8677685cc4b18dc",
+              "committedPatchId": "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae",
+              "committedPatchMessage": "pintpath:staging-offsite-cleanup:0eadad05ce6c313ed3c12492d3095609ce5872d5",
+              "committedPatchReadback": "ACTIVE_EMPTY_AND_SELECTED_COMMITTED_MASKED_DECRYPTED_EXACT",
+              "minimumObservationMinutes": 10,
+              "recoveryDeadline": "2026-08-30T09:49:29.000Z",
+          "metadataOnly": true,
+          "mutationCredentialAllowed": false,
+          "maximumAttempts": 0
         }
       }
     },

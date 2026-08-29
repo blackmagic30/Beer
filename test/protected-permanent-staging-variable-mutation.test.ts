@@ -42,6 +42,11 @@ const INCIDENT_STAGED_PATCH_CREATED_AT = "2026-08-28T10:51:38.861Z";
 const INCIDENT_PRIOR_RUN_ID = "33164687424";
 const INCIDENT_OPERATION =
   "cancel-masked-forbidden-offsite-backup-deletion-patch";
+const CLEANUP_CLOSEOUT_OPERATION =
+  "reconcile-completed-forbidden-offsite-backup-deletion";
+const CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID = "33246243698";
+const CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA =
+  "0eadad05ce6c313ed3c12492d3095609ce5872d5";
 const EMPTY_STAGED_PATCH_ID = "<empty>";
 const FREEZE_ATTESTATION =
   "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN";
@@ -254,6 +259,7 @@ function deletionPatchNode(input: {
   id: string;
   status: "COMMITTED" | "STAGED";
   patch: Record<string, unknown>;
+  commitCandidateSha?: string;
 }): Record<string, unknown> {
   const committed = input.status === "COMMITTED";
   return {
@@ -261,7 +267,9 @@ function deletionPatchNode(input: {
     environmentId: ENVIRONMENT_ID,
     status: input.status,
     message: committed
-      ? `pintpath:staging-offsite-cleanup:${CANDIDATE_SHA}`
+      ? `pintpath:staging-offsite-cleanup:${
+        input.commitCandidateSha ?? CANDIDATE_SHA
+      }`
       : null,
     createdAt: input.id === EMPTY_STAGED_PATCH_ID
       ? null
@@ -281,6 +289,7 @@ function committedDeletionPatch(
   patch: Record<string, unknown>,
   id = STAGED_PATCH_ID,
   status: "APPLYING" | "COMMITTED" | "STAGED" = "COMMITTED",
+  commitCandidateSha = CANDIDATE_SHA,
 ): Response {
   const selectedStatus = status === "APPLYING" ? "STAGED" : status;
   const maskedPatch = protectedPermanentStagingVariableMutationInternals
@@ -301,11 +310,13 @@ function committedDeletionPatch(
         id,
         status: selectedStatus,
         patch: maskedPatch,
+        commitCandidateSha,
       }),
       selectedDecrypted: deletionPatchNode({
         id,
         status: selectedStatus,
         patch,
+        commitCandidateSha,
       }),
     },
   });
@@ -399,6 +410,23 @@ function incidentArgv(): string[] {
   ];
 }
 
+function cleanupCloseoutArgv(): string[] {
+  return [
+    "--operation",
+    CLEANUP_CLOSEOUT_OPERATION,
+    "--evidence-dir",
+    "/private/evidence",
+    "--prior-cleanup-run-id",
+    CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+    "--prior-cleanup-evidence-dir",
+    "/private/successor-closeout-original-evidence",
+    "--failed-recovery-evidence-dir",
+    "/private/successor-closeout-failed-recovery-evidence",
+    "--reviewed-authority-file",
+    "/private/reviewed-authority.json",
+  ];
+}
+
 type ProviderSnapshotFixture = {
   environmentId: string;
   variables: Array<Record<string, unknown>>;
@@ -423,6 +451,17 @@ function incidentBaselineFixture(): ProviderSnapshotFixture {
     import.meta.dirname,
     "fixtures/permanent-staging-offsite-cleanup-preflight-provider-snapshot.json",
   ), "utf8")) as ProviderSnapshotFixture;
+}
+
+function completedCleanupFixture(): ProviderSnapshotFixture {
+  const fixture = incidentBaselineFixture();
+  fixture.variables = fixture.variables.filter((row) =>
+    !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+  );
+  fixture.stagedPatchId = EMPTY_STAGED_PATCH_ID;
+  fixture.stagedPatchStatus = "STAGED";
+  fixture.stagedPatchEmpty = true;
+  return fixture;
 }
 
 function metadataFromSnapshot(
@@ -2231,6 +2270,313 @@ describe("protected permanent-staging variable mutation", () => {
     });
   });
 
+  it("seals the exact successor cleanup state with metadata only and zero attempts", async () => {
+    const snapshot = completedCleanupFixture();
+    const deletionPatch = protectedPermanentStagingVariableMutationInternals
+      .cleanupDeletionPatch();
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupCompletedSnapshotExact(snapshot)).toBe(true);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        snapshot,
+        {},
+        EMPTY_STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(snapshot))
+      .mockResolvedValueOnce(committedDeletionPatch(
+        deletionPatch,
+        INCIDENT_STAGED_PATCH_ID,
+        "COMMITTED",
+        CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      ))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        snapshot,
+        {},
+        EMPTY_STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(snapshot))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        snapshot,
+        {},
+        EMPTY_STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(snapshot))
+      .mockResolvedValueOnce(committedDeletionPatch(
+        deletionPatch,
+        INCIDENT_STAGED_PATCH_ID,
+        "COMMITTED",
+        CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      ));
+    const boundaryCheck = vi.fn().mockResolvedValue(0);
+    const writes: Array<{ leaf: string; source: string }> = [];
+    const outputs: string[] = [];
+    const verifyEvidence = vi.fn().mockReturnValue(true);
+    const verifyAuthority = vi.fn().mockReturnValue(true);
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: cleanupCloseoutArgv(),
+      env: environment(CLEANUP_CLOSEOUT_OPERATION, {
+        PINTPATH_MUTATION_CONFIRMATION:
+          "RECONCILE_RECONCILE_COMPLETED_FORBIDDEN_OFFSITE_BACKUP_DELETION_IN_PERMANENT_STAGING",
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+        PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN: undefined,
+      }),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck,
+      verifyCleanupSuccessorCloseoutEvidence: verifyEvidence,
+      verifyReviewedCleanupSuccessorCloseoutAuthority: verifyAuthority,
+      now: () => Date.parse("2026-08-29T10:20:00Z"),
+      hashPrivateFile: () => "f".repeat(64),
+      writeDurable: (_directory, leaf, source) => {
+        writes.push({ leaf, source });
+        return sha256(source);
+      },
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result, outputs[0]).toBe(0);
+    expect(boundaryCheck).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(9);
+    expect(fetchImpl.mock.calls.every((call) =>
+      new Headers((call[1] as RequestInit).headers)
+        .get("Project-Access-Token") ===
+          "metadata-token-that-is-long-enough")).toBe(true);
+    expect(fetchImpl.mock.calls.some((call) => {
+      const request = JSON.parse(String((call[1] as RequestInit).body)) as {
+        query: string;
+      };
+      return request.query.trimStart().startsWith("mutation ");
+    })).toBe(false);
+    const closeoutQueries = fetchImpl.mock.calls.map((call) =>
+      (JSON.parse(String((call[1] as RequestInit).body)) as { query: string })
+        .query);
+    expect(closeoutQueries.filter((query) =>
+      query === PROTECTED_STAGING_VARIABLE_TOKEN_SCOPE_QUERY)).toHaveLength(1);
+    expect(closeoutQueries.filter((query) =>
+      query === PROTECTED_STAGING_VARIABLE_METADATA_QUERY)).toHaveLength(3);
+    expect(closeoutQueries.filter((query) =>
+      query === PROTECTED_STAGING_VARIABLE_DEPLOYMENT_QUERY)).toHaveLength(3);
+    expect(closeoutQueries.filter((query) =>
+      query === PROTECTED_STAGING_VARIABLE_PATCH_QUERY)).toHaveLength(2);
+    expect(verifyEvidence).toHaveBeenCalledWith(
+      "/private/successor-closeout-original-evidence",
+      "/private/successor-closeout-failed-recovery-evidence",
+    );
+    expect(verifyAuthority).toHaveBeenCalledWith(
+      "/private/reviewed-authority.json",
+      {
+        candidateSha: CANDIDATE_SHA,
+        priorCleanupRunId: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+        currentRunId: "500",
+      },
+    );
+    expect(JSON.parse(writes[0]!.source)).toMatchObject({
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+      mutationPlan: {
+        readOnlyCloseout: {
+          mutation: null,
+          maximumAttempts: 0,
+          mutationCredentialAvailable: false,
+          expectedPostCleanupMetadataSha256:
+            "54fae04fd4dda1688bae3080a2c9c2220fb257f7b5c3ea1ce8677685cc4b18dc",
+        },
+        originalCleanupRunId: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+        failedRecoveryRunId: "33246655561",
+        committedPatch: {
+          id: INCIDENT_STAGED_PATCH_ID,
+          status: "COMMITTED",
+          commitMessage:
+            `pintpath:staging-offsite-cleanup:${
+              CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
+            }`,
+          activePatchEmpty: true,
+          maskedAndDecryptedDeletionExact: true,
+        },
+        reviewedAuthoritySha256: "f".repeat(64),
+      },
+      preflightMetadataSha256:
+        "54fae04fd4dda1688bae3080a2c9c2220fb257f7b5c3ea1ce8677685cc4b18dc",
+    });
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      operation: CLEANUP_CLOSEOUT_OPERATION,
+      outcome: "cleanup_completed_read_only_reconciled",
+      attempts: 0,
+      retryAllowed: false,
+      stagedDeletionPatchId: INCIDENT_STAGED_PATCH_ID,
+      checks: {
+        githubAuthorityExact: true,
+        tokenScopesExact: true,
+        boundaryPreflightExact: true,
+        boundaryPrecommitExact: false,
+        targetPreflightExact: true,
+        stagedDeletionPatchExact: false,
+        committedDeletionPatchExact: true,
+        targetPostflightExact: true,
+        deploymentUnchanged: true,
+        boundaryPostflightExact: true,
+        terminalEvidenceExact: true,
+      },
+    });
+  });
+
+  it("rejects any mutation credential or post-cleanup snapshot drift in successor closeout", async () => {
+    const mutationCredentialFetch = vi.fn();
+    const mutationCredentialOutput: string[] = [];
+    const common = {
+      argv: cleanupCloseoutArgv(),
+      cwd: process.cwd(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      verifyCleanupSuccessorCloseoutEvidence: vi.fn().mockReturnValue(true),
+      verifyReviewedCleanupSuccessorCloseoutAuthority:
+        vi.fn().mockReturnValue(true),
+      now: () => Date.parse("2026-08-29T10:20:00Z"),
+      hashPrivateFile: () => "f".repeat(64),
+      writeDurable: vi.fn(),
+    };
+    const credentialResult = await runProtectedPermanentStagingVariableMutation({
+      ...common,
+      env: environment(CLEANUP_CLOSEOUT_OPERATION, {
+        PINTPATH_MUTATION_CONFIRMATION:
+          "RECONCILE_RECONCILE_COMPLETED_FORBIDDEN_OFFSITE_BACKUP_DELETION_IN_PERMANENT_STAGING",
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+      }),
+      fetchImpl: mutationCredentialFetch,
+      writeOutput: (source) => mutationCredentialOutput.push(source),
+    });
+    expect(credentialResult).toBe(1);
+    expect(mutationCredentialFetch).not.toHaveBeenCalled();
+    expect(JSON.parse(mutationCredentialOutput[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: { tokenScopesExact: false },
+    });
+
+    const drifted = completedCleanupFixture();
+    drifted.variables[0]!.isSealed = !drifted.variables[0]!.isSealed;
+    const driftFetch = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        drifted,
+        {},
+        EMPTY_STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(drifted));
+    const driftOutput: string[] = [];
+    const driftResult = await runProtectedPermanentStagingVariableMutation({
+      ...common,
+      env: environment(CLEANUP_CLOSEOUT_OPERATION, {
+        PINTPATH_MUTATION_CONFIRMATION:
+          "RECONCILE_RECONCILE_COMPLETED_FORBIDDEN_OFFSITE_BACKUP_DELETION_IN_PERMANENT_STAGING",
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+        PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN: undefined,
+      }),
+      fetchImpl: driftFetch,
+      writeOutput: (source) => driftOutput.push(source),
+    });
+    expect(driftResult).toBe(1);
+    expect(driftFetch.mock.calls.some((call) =>
+      String((call[1] as RequestInit).body).includes("mutation "))).toBe(false);
+    expect(JSON.parse(driftOutput[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: { targetPreflightExact: false },
+    });
+
+    const exact = completedCleanupFixture();
+    const deletionPatch = protectedPermanentStagingVariableMutationInternals
+      .cleanupDeletionPatch();
+    const patchDriftFetch = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        exact,
+        {},
+        EMPTY_STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(exact))
+      .mockResolvedValueOnce(committedDeletionPatch(
+        deletionPatch,
+        INCIDENT_STAGED_PATCH_ID,
+        "COMMITTED",
+        CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA,
+      ))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        exact,
+        {},
+        EMPTY_STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(exact))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        exact,
+        {},
+        EMPTY_STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(exact))
+      .mockResolvedValueOnce(committedDeletionPatch(
+        deletionPatch,
+        INCIDENT_STAGED_PATCH_ID,
+      ));
+    const patchDriftOutput: string[] = [];
+    const patchDriftResult = await runProtectedPermanentStagingVariableMutation({
+      ...common,
+      env: environment(CLEANUP_CLOSEOUT_OPERATION, {
+        PINTPATH_MUTATION_CONFIRMATION:
+          "RECONCILE_RECONCILE_COMPLETED_FORBIDDEN_OFFSITE_BACKUP_DELETION_IN_PERMANENT_STAGING",
+        PINTPATH_PRIOR_CLEANUP_RUN_ID: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
+        PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN: undefined,
+      }),
+      fetchImpl: patchDriftFetch,
+      writeDurable: (_directory, _leaf, source) => sha256(source),
+      writeOutput: (source) => patchDriftOutput.push(source),
+    });
+    expect(patchDriftResult).toBe(1);
+    expect(patchDriftFetch.mock.calls.some((call) =>
+      String((call[1] as RequestInit).body).includes("mutation "))).toBe(false);
+    expect(JSON.parse(patchDriftOutput[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      stagedDeletionPatchId: INCIDENT_STAGED_PATCH_ID,
+      checks: {
+        targetPostflightExact: true,
+        committedDeletionPatchExact: false,
+      },
+    });
+  });
+
+  it("accepts only the four exact retained cleanup closeout evidence leaves", () => {
+    const fixtureRoot = path.join(
+      import.meta.dirname,
+      "fixtures/permanent-staging-cleanup-closeout",
+    );
+    const original = path.join(fixtureRoot, "original");
+    const failedRecovery = path.join(fixtureRoot, "failed-recovery");
+    const exact = protectedPermanentStagingVariableMutationInternals
+      .cleanupSuccessorCloseoutEvidenceExact;
+    expect(exact(original, failedRecovery)).toBe(true);
+
+    const temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(
+      os.tmpdir(),
+      "pintpath-cleanup-closeout-evidence-",
+    )));
+    try {
+      const copiedOriginal = path.join(temporaryRoot, "original");
+      const copiedRecovery = path.join(temporaryRoot, "failed-recovery");
+      fs.cpSync(original, copiedOriginal, { recursive: true });
+      fs.cpSync(failedRecovery, copiedRecovery, { recursive: true });
+      const terminal = path.join(copiedOriginal, "terminal.json");
+      fs.writeFileSync(
+        terminal,
+        fs.readFileSync(terminal, "utf8").replace(
+          '"attempts": 2',
+          '"attempts": 3',
+        ),
+      );
+      expect(exact(copiedOriginal, copiedRecovery)).toBe(false);
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
   it("retries one exact cleanup after the prior run provably had no effect", async () => {
     const beforeRows = [
       variable("DATABASE_URL", SERVICE_ID, true),
@@ -2920,7 +3266,7 @@ describe("protected permanent-staging variable mutation", () => {
       kind: "pintpath-github-reviewed-candidate-authority",
       repository: "blackmagic30/Beer",
       candidateSha: CANDIDATE_SHA,
-      reviewedPrHeadSha: CANDIDATE_SHA,
+      reviewedPrHeadSha: "b".repeat(40),
       reviewedPullRequestNumber: 321,
       operation: "resume-forbidden-offsite-backup-deletion-patch",
       workflowPath:
@@ -2929,6 +3275,7 @@ describe("protected permanent-staging variable mutation", () => {
       workflowRunAttempt: 1,
       workflowRunCreatedAt: "2026-08-28T01:00:00.000Z",
       reviewedPullRequestMergedAt: "2026-08-28T00:30:00.000Z",
+      reviewedTreeExact: true,
       candidateHistoryMaximumAgeHours: 168,
       completeRetainedHistoryExact: true,
       safePriorSkippedWriteRunIds: [],
@@ -2958,6 +3305,9 @@ describe("protected permanent-staging variable mutation", () => {
       .reviewedCleanupRecoveryAuthorityValueExact;
     expect(exact(authority, expected)).toBe(true);
     expect(exact({ ...authority, workflowRunId: "501" }, expected)).toBe(false);
+    expect(exact({ ...authority, reviewedPrHeadSha: "not-a-sha" }, expected))
+      .toBe(false);
+    expect(exact({ ...authority, reviewedTreeExact: false }, expected)).toBe(false);
     expect(exact({ ...authority, priorCleanupRunId: "449" }, expected)).toBe(false);
     expect(exact({ ...authority, priorCleanupPatchSha256: "0".repeat(64) }, expected))
       .toBe(false);

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-intent/v4",
+  "operation": "remove-forbidden-offsite-backup-variables",
+  "candidateSha": "0eadad05ce6c313ed3c12492d3095609ce5872d5",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "externalMutationFreeze": {
+    "attestation": "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    "enforcement": "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+    "providerCasOrLockVerified": false
+  },
+  "authorizedBaseline": "cold-dead-null",
+  "variableNames": [
+    "OFFSITE_BACKUP_BUCKET",
+    "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    "OFFSITE_BACKUP_SUPABASE_URL"
+  ],
+  "mutationPlan": {
+    "stage": {
+      "mutation": "environmentStageChanges",
+      "merge": false,
+      "maximumAttempts": 1,
+      "patch": {
+        "services": {
+          "6816c4a2-e392-4ee5-826f-2584cb599ec0": {
+            "variables": {
+              "OFFSITE_BACKUP_BUCKET": null,
+              "OFFSITE_BACKUP_SERVICE_ROLE_KEY": null,
+              "OFFSITE_BACKUP_SUPABASE_URL": null
+            }
+          }
+        }
+      }
+    },
+    "commit": {
+      "mutation": "environmentPatchCommitStaged",
+      "skipDeploys": true,
+      "maximumAttempts": 1,
+      "commitMessage": "pintpath:staging-offsite-cleanup:0eadad05ce6c313ed3c12492d3095609ce5872d5"
+    }
+  },
+  "retryAllowed": false,
+  "privateInputCount": 0,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false,
+  "preflightMetadataSha256": "1a3b868b81d9e263941d92b919f31f6ab6a98ade1da1bc8d8c0f524e6374706f"
+}

@@ -44,6 +44,9 @@ describe("protected provider mutation workflows", () => {
       "cancel-masked-forbidden-offsite-backup-deletion-patch",
     );
     expect(workflow).toContain(
+      "reconcile-completed-forbidden-offsite-backup-deletion",
+    );
+    expect(workflow).toContain(
       "test \"$PRIOR_CLEANUP_RUN_ID\" = '33164687424'",
     );
     expect(workflow).toContain('--prior-run-id "$PRIOR_CLEANUP_RUN_ID"');
@@ -96,6 +99,21 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain(
       "Execute one reviewed protected Railway mutation plan",
     );
+    const closeoutStep = workflow.match(
+      /- name: Reconcile the completed cleanup with metadata only(?<body>[\s\S]*?)\n      - name:/,
+    )?.groups?.body ?? "";
+    expect(closeoutStep).toContain(
+      "if: inputs.operation == 'reconcile-completed-forbidden-offsite-backup-deletion'",
+    );
+    expect(closeoutStep).toContain(
+      "PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}",
+    );
+    expect(closeoutStep).not.toContain(
+      "PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN",
+    );
+    expect(closeoutStep).not.toContain("environmentStageChanges");
+    expect(closeoutStep).not.toContain("environmentPatchCommitStaged");
+    expect(closeoutStep).toContain("--failed-recovery-evidence-dir");
     expect(workflow).toContain("external_mutation_freeze_attestation:");
     expect(workflow).toContain(
       "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
@@ -189,6 +207,27 @@ describe("protected provider mutation workflows", () => {
               resumeAllowed: false,
               providerCasOrLockVerified: false,
             },
+            successorReadOnlyCloseout: {
+              operation:
+                "reconcile-completed-forbidden-offsite-backup-deletion",
+              originalCandidateSha:
+                "0eadad05ce6c313ed3c12492d3095609ce5872d5",
+              currentCandidateMustBeDirectChild: true,
+              originalCleanupRunId: "33246243698",
+              failedRecoveryRunId: "33246655561",
+              expectedPostCleanupMetadataSha256:
+                "54fae04fd4dda1688bae3080a2c9c2220fb257f7b5c3ea1ce8677685cc4b18dc",
+              committedPatchId: "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae",
+              committedPatchMessage:
+                "pintpath:staging-offsite-cleanup:0eadad05ce6c313ed3c12492d3095609ce5872d5",
+              committedPatchReadback:
+                "ACTIVE_EMPTY_AND_SELECTED_COMMITTED_MASKED_DECRYPTED_EXACT",
+              minimumObservationMinutes: 10,
+              recoveryDeadline: "2026-08-30T09:49:29.000Z",
+              metadataOnly: true,
+              mutationCredentialAllowed: false,
+              maximumAttempts: 0,
+            },
           },
         },
         automaticRetriesAllowed: false,
@@ -203,7 +242,7 @@ describe("protected provider mutation workflows", () => {
       },
     });
     expect(policy).toMatchObject({
-      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v7",
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v8",
       operations: {
         legacyStagedDeletionDispatchState:
           "ENABLED_AFTER_SEALED_DISPOSABLE_PROOF",
