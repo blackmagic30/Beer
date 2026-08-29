@@ -18,6 +18,9 @@ on:
           - provider-google-places-api-key
           - provider-openai-api-key
           - supabase-key-replacement
+          - remove-forbidden-offsite-backup-variables
+          - resume-forbidden-offsite-backup-deletion-patch
+          - cancel-forbidden-offsite-backup-deletion-patch
           - cancel-masked-forbidden-offsite-backup-deletion-patch
       prior_cleanup_run_id:
         description: Exact failed cleanup run selected by the reviewed recovery operation
@@ -82,12 +85,6 @@ jobs:
           test "$CONFIRMATION" = "$expected"
           test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
             'I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN'
-          case "$OPERATION" in
-            remove-forbidden-offsite-backup-variables|resume-forbidden-offsite-backup-deletion-patch|cancel-forbidden-offsite-backup-deletion-patch)
-              echo 'Legacy staged deletion operations are disabled pending provider-verifiable deletion semantics.' >&2
-              exit 1
-              ;;
-          esac
           case "$OPERATION" in
             resume-forbidden-offsite-backup-deletion-patch|cancel-forbidden-offsite-backup-deletion-patch)
               [[ "$PRIOR_CLEANUP_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]

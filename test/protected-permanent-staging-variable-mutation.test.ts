@@ -45,6 +45,11 @@ const INCIDENT_OPERATION =
 const EMPTY_STAGED_PATCH_ID = "<empty>";
 const FREEZE_ATTESTATION =
   "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN";
+const OFFSITE_VARIABLE_IDS = Object.freeze({
+  OFFSITE_BACKUP_BUCKET: "a43db07e-1152-4ce1-8eb5-f03c0df9c665",
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: "0f0ba362-34a0-4afd-afc0-ca59447cda32",
+  OFFSITE_BACKUP_SUPABASE_URL: "671c431d-15cf-4879-b2fa-8595004ad8ef",
+} as const);
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -73,8 +78,12 @@ function variable(
   isSealed = false,
   references: readonly string[] = [],
 ): Record<string, unknown> {
+  const pinnedId = serviceId === SERVICE_ID
+      && Object.hasOwn(OFFSITE_VARIABLE_IDS, name)
+    ? OFFSITE_VARIABLE_IDS[name as keyof typeof OFFSITE_VARIABLE_IDS]
+    : null;
   return {
-    id: `row-${name}-${serviceId ?? "shared"}`,
+    id: pinnedId ?? `row-${name}-${serviceId ?? "shared"}`,
     name,
     environmentId: ENVIRONMENT_ID,
     serviceId,
@@ -219,20 +228,53 @@ function coldDeployment(
   });
 }
 
-function stageDeletion(
-  patch: Record<string, unknown>,
-  id = STAGED_PATCH_ID,
-): Response {
+function stageDeletion(id = STAGED_PATCH_ID): Response {
   return json({
     data: {
       environmentStageChanges: {
         id,
         environmentId: ENVIRONMENT_ID,
         status: "STAGED",
-        patch,
+        message: null,
+        createdAt: "2026-08-29T06:29:00.109Z",
+        updatedAt: "2026-08-29T06:29:00.109Z",
+        appliedAt: null,
+        lastAppliedError: null,
       },
     },
   });
+}
+
+function maskedCleanupDeletionPatch(): Record<string, unknown> {
+  return protectedPermanentStagingVariableMutationInternals
+    .incidentMaskedCleanupPatch();
+}
+
+function deletionPatchNode(input: {
+  id: string;
+  status: "COMMITTED" | "STAGED";
+  patch: Record<string, unknown>;
+}): Record<string, unknown> {
+  const committed = input.status === "COMMITTED";
+  return {
+    id: input.id,
+    environmentId: ENVIRONMENT_ID,
+    status: input.status,
+    message: committed
+      ? `pintpath:staging-offsite-cleanup:${CANDIDATE_SHA}`
+      : null,
+    createdAt: input.id === EMPTY_STAGED_PATCH_ID
+      ? null
+      : "2026-08-29T06:29:00.109Z",
+    updatedAt: input.id === EMPTY_STAGED_PATCH_ID
+      ? null
+      : committed
+        ? "2026-08-29T06:29:06.529Z"
+        : "2026-08-29T06:29:00.109Z",
+    appliedAt: committed ? "2026-08-29T06:29:06.528Z" : null,
+    lastAppliedError: null,
+    patch: input.patch,
+  };
 }
 
 function committedDeletionPatch(
@@ -240,9 +282,47 @@ function committedDeletionPatch(
   id = STAGED_PATCH_ID,
   status: "APPLYING" | "COMMITTED" | "STAGED" = "COMMITTED",
 ): Response {
+  const selectedStatus = status === "APPLYING" ? "STAGED" : status;
+  const maskedPatch = protectedPermanentStagingVariableMutationInternals
+      .cleanupDeletionPatchExact(patch)
+    ? maskedCleanupDeletionPatch()
+    : patch;
+  const activeMasked = selectedStatus === "COMMITTED"
+    ? deletionPatchNode({ id: EMPTY_STAGED_PATCH_ID, status: "STAGED", patch: {} })
+    : deletionPatchNode({ id, status: "STAGED", patch: maskedPatch });
+  const activeDecrypted = selectedStatus === "COMMITTED"
+    ? structuredClone(activeMasked)
+    : deletionPatchNode({ id, status: "STAGED", patch });
   return json({
     data: {
-      environmentPatch: { id, environmentId: ENVIRONMENT_ID, status, patch },
+      activeMasked,
+      activeDecrypted,
+      selectedMasked: deletionPatchNode({
+        id,
+        status: selectedStatus,
+        patch: maskedPatch,
+      }),
+      selectedDecrypted: deletionPatchNode({
+        id,
+        status: selectedStatus,
+        patch,
+      }),
+    },
+  });
+}
+
+function stagedDeletionPatchReadback(
+  patch: Record<string, unknown>,
+  id = STAGED_PATCH_ID,
+): Response {
+  return committedDeletionPatch(patch, id, "STAGED");
+}
+
+function commitDeletionAcknowledgement(id = STAGED_PATCH_ID): Response {
+  return json({
+    data: {
+      environmentPatchCommitStaged:
+        `commitChanges/${ENVIRONMENT_ID}/${id}`,
     },
   });
 }
@@ -537,7 +617,7 @@ describe("protected permanent-staging variable mutation", () => {
     expect(PROTECTED_STAGING_VARIABLE_STAGE_DELETION_QUERY)
       .toContain("environmentStageChanges");
     expect(PROTECTED_STAGING_VARIABLE_STAGE_DELETION_QUERY)
-      .toContain("patch(decryptVariables: false)");
+      .not.toContain("patch(");
     expect(PROTECTED_STAGING_VARIABLE_COMMIT_DELETION_QUERY)
       .toContain("environmentPatchCommitStaged");
     expect(PROTECTED_STAGING_VARIABLE_CANCEL_DELETION_QUERY)
@@ -546,6 +626,26 @@ describe("protected permanent-staging variable mutation", () => {
       .toContain("$skipDeploys");
     expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY)
       .toContain("environmentPatch(id: $patchId)");
+    expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY)
+      .toContain("environmentStagedChanges(environmentId: $environmentId)");
+    expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY)
+      .toContain("patch(decryptVariables: false)");
+    expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY)
+      .toContain("patch(decryptVariables: true)");
+    expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY.match(
+      /environmentStagedChanges\(environmentId: \$environmentId\)/g,
+    )).toHaveLength(2);
+    expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY.match(
+      /environmentPatch\(id: \$patchId\)/g,
+    )).toHaveLength(2);
+    for (const alias of [
+      "activeMasked",
+      "activeDecrypted",
+      "selectedMasked",
+      "selectedDecrypted",
+    ]) {
+      expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY).toContain(`${alias}:`);
+    }
     expect(PROTECTED_STAGING_VARIABLE_PATCH_QUERY).not.toMatch(/mutation\s/i);
     expect(PROTECTED_STAGING_VARIABLE_INCIDENT_PATCH_QUERY).toContain(
       "environmentStagedChanges(environmentId:",
@@ -626,7 +726,7 @@ describe("protected permanent-staging variable mutation", () => {
     expect(protectedPermanentStagingVariableMutationInternals.parseMetadata(
       incidentMetadata,
       "cleanup-deletion",
-    )).toBeNull();
+    )).not.toBeNull();
     expect(protectedPermanentStagingVariableMutationInternals
       .incidentOriginalBaselineMetadataExact({
         ...parsed!,
@@ -1112,24 +1212,175 @@ describe("protected permanent-staging variable mutation", () => {
   it("accepts only the captured patch identity in exact committed state", async () => {
     const patch = protectedPermanentStagingVariableMutationInternals
       .cleanupDeletionPatch();
+    const commitMessage = `pintpath:staging-offsite-cleanup:${CANDIDATE_SHA}`;
     const parse = protectedPermanentStagingVariableMutationInternals
       .parseCommittedDeletionPatch;
     expect(parse(
       await committedDeletionPatch(patch).json(),
       STAGED_PATCH_ID,
+      commitMessage,
     )).toBe(true);
     expect(parse(
       await committedDeletionPatch(patch, EMPTY_STAGED_PATCH_ID).json(),
       STAGED_PATCH_ID,
+      commitMessage,
     )).toBe(false);
     expect(parse(
       await committedDeletionPatch(patch, STAGED_PATCH_ID, "STAGED").json(),
       STAGED_PATCH_ID,
+      commitMessage,
     )).toBe(false);
     expect(parse(
       await committedDeletionPatch({}, STAGED_PATCH_ID).json(),
       STAGED_PATCH_ID,
+      commitMessage,
     )).toBe(false);
+
+    const liveEmptyAliasSkew = await committedDeletionPatch(patch).json() as {
+      data: Record<string, Record<string, unknown>>;
+    };
+    liveEmptyAliasSkew.data.activeMasked!.createdAt =
+      "2026-08-29T06:29:06.027Z";
+    liveEmptyAliasSkew.data.activeMasked!.updatedAt =
+      "2026-08-29T06:29:06.027Z";
+    liveEmptyAliasSkew.data.activeDecrypted!.createdAt =
+      "2026-08-29T06:29:06.026Z";
+    liveEmptyAliasSkew.data.activeDecrypted!.updatedAt =
+      "2026-08-29T06:29:06.026Z";
+    expect(parse(liveEmptyAliasSkew, STAGED_PATCH_ID, commitMessage)).toBe(true);
+
+    const exact = await committedDeletionPatch(patch).json() as {
+      data: Record<string, Record<string, unknown>>;
+    };
+    const corruptions = [
+      (value: typeof exact) => {
+        value.data.selectedMasked!.patch = patch;
+      },
+      (value: typeof exact) => {
+        value.data.selectedDecrypted!.patch = maskedCleanupDeletionPatch();
+      },
+      (value: typeof exact) => {
+        value.data.selectedDecrypted!.message = "wrong-commit";
+      },
+      (value: typeof exact) => {
+        value.data.selectedMasked!.lastAppliedError = "provider-error";
+      },
+      (value: typeof exact) => {
+        delete value.data.activeDecrypted;
+      },
+      (value: typeof exact) => {
+        value.data.extra = {};
+      },
+    ];
+    for (const corrupt of corruptions) {
+      const value = structuredClone(exact);
+      corrupt(value);
+      expect(parse(value, STAGED_PATCH_ID, commitMessage)).toBe(false);
+    }
+  });
+
+  it("binds the commit acknowledgement to the exact environment and patch", async () => {
+    const parse = protectedPermanentStagingVariableMutationInternals
+      .parseCommitDeletionAcknowledgement;
+    expect(parse(
+      await commitDeletionAcknowledgement().json(),
+      STAGED_PATCH_ID,
+    )).toBe(true);
+    for (const acknowledgement of [
+      STAGED_PATCH_ID,
+      `commitChanges/${PROJECT_ID}/${STAGED_PATCH_ID}`,
+      `commitChanges/${ENVIRONMENT_ID}/${OTHER_DEPLOYMENT_ID}`,
+      "66666666-6666-4666-8666-666666666666",
+    ]) {
+      expect(parse(await json({
+        data: { environmentPatchCommitStaged: acknowledgement },
+      }).json(), STAGED_PATCH_ID)).toBe(false);
+    }
+    expect(parse({
+      data: {
+        environmentPatchCommitStaged:
+          `commitChanges/${ENVIRONMENT_ID}/${STAGED_PATCH_ID}`,
+        extra: true,
+      },
+    }, STAGED_PATCH_ID)).toBe(false);
+  });
+
+  it("accepts only the exact metadata-only stage acknowledgement", async () => {
+    const parse = protectedPermanentStagingVariableMutationInternals
+      .parseStageDeletionAcknowledgement;
+    const exact = await stageDeletion().json() as {
+      data: { environmentStageChanges: Record<string, unknown> };
+    };
+    expect(parse(exact)).toBe(STAGED_PATCH_ID);
+    const corruptions = [
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.patch = maskedCleanupDeletionPatch();
+      },
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.environmentId = PROJECT_ID;
+      },
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.status = "COMMITTED";
+      },
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.message = "unexpected";
+      },
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.appliedAt =
+          "2026-08-29T06:29:01.000Z";
+      },
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.lastAppliedError = "provider-error";
+      },
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.createdAt = "not-a-timestamp";
+      },
+      (value: typeof exact) => {
+        value.data.environmentStageChanges.updatedAt =
+          "2026-08-29T06:28:59.000Z";
+      },
+    ];
+    for (const corrupt of corruptions) {
+      const value = structuredClone(exact);
+      corrupt(value);
+      expect(parse(value)).toBeNull();
+    }
+  });
+
+  it("requires all four authoritative staged deletion views", async () => {
+    const patch = protectedPermanentStagingVariableMutationInternals
+      .cleanupDeletionPatch();
+    const parse = protectedPermanentStagingVariableMutationInternals
+      .parseStagedDeletionPatchReadback;
+    const exact = await stagedDeletionPatchReadback(patch).json() as {
+      data: Record<string, Record<string, unknown>>;
+    };
+    expect(parse(exact, STAGED_PATCH_ID)).toBe(true);
+    const corruptions = [
+      (value: typeof exact) => {
+        value.data.activeMasked!.patch = patch;
+      },
+      (value: typeof exact) => {
+        value.data.activeDecrypted!.patch = maskedCleanupDeletionPatch();
+      },
+      (value: typeof exact) => {
+        value.data.selectedMasked!.status = "COMMITTED";
+      },
+      (value: typeof exact) => {
+        value.data.selectedDecrypted!.lastAppliedError = "provider-error";
+      },
+      (value: typeof exact) => {
+        delete value.data.selectedMasked;
+      },
+      (value: typeof exact) => {
+        value.data.extra = {};
+      },
+    ];
+    for (const corrupt of corruptions) {
+      const value = structuredClone(exact);
+      corrupt(value);
+      expect(parse(value, STAGED_PATCH_ID)).toBe(false);
+    }
   });
 
   it("reconciles one existing provider row on the exact dead/null baseline", async () => {
@@ -1539,33 +1790,33 @@ describe("protected permanent-staging variable mutation", () => {
   });
 
   it("deletes only the three Beer off-site rows from the exact dead/null baseline", async () => {
-    const beforeRows = [
-      variable("DATABASE_URL", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_SUPABASE_URL"),
-    ];
-    const afterRows = [variable("DATABASE_URL", SERVICE_ID, true)];
+    const before = incidentBaselineFixture();
+    const after = structuredClone(before);
+    after.variables = after.variables.filter((row) =>
+      !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+    );
     const patch = protectedPermanentStagingVariableMutationInternals
       .cleanupDeletionPatch();
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(stageDeletion(patch))
-      .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(json({
-        data: {
-          environmentPatchCommitStaged: "66666666-6666-4666-8666-666666666666",
-        },
-      }))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(stageDeletion())
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        before,
+        maskedCleanupDeletionPatch(),
+        STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(commitDeletionAcknowledgement())
       .mockResolvedValueOnce(committedDeletionPatch(patch))
-      .mockResolvedValueOnce(coldMetadata(afterRows))
-      .mockResolvedValueOnce(coldDeployment());
+      .mockResolvedValueOnce(metadataFromSnapshot(after, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(after));
     const boundaryCheck = vi.fn().mockResolvedValue(0);
     const outputs: string[] = [];
     const writes: string[] = [];
@@ -1587,7 +1838,7 @@ describe("protected permanent-staging variable mutation", () => {
     expect(result).toBe(0);
     expect(boundaryCheck).toHaveBeenCalledTimes(3);
     expect(boundaryCheck).toHaveBeenNthCalledWith(2, "cleanup-deletion");
-    expect(fetchImpl).toHaveBeenCalledTimes(13);
+    expect(fetchImpl).toHaveBeenCalledTimes(15);
     expect(JSON.parse(writes[0]!)).toMatchObject({
       schemaVersion: "pintpath-permanent-staging-variable-mutation-intent/v4",
       externalMutationFreeze: {
@@ -1605,16 +1856,17 @@ describe("protected permanent-staging variable mutation", () => {
       merge: false,
     });
     const commit = JSON.parse(
-      String((fetchImpl.mock.calls[9]![1] as RequestInit).body),
+      String((fetchImpl.mock.calls[11]![1] as RequestInit).body),
     ) as { variables: Record<string, unknown> };
     expect(commit.variables).toMatchObject({
       environmentId: ENVIRONMENT_ID,
       skipDeploys: true,
     });
     const committedPatchRead = JSON.parse(
-      String((fetchImpl.mock.calls[10]![1] as RequestInit).body),
+      String((fetchImpl.mock.calls[12]![1] as RequestInit).body),
     ) as { variables: Record<string, unknown> };
     expect(committedPatchRead.variables).toEqual({
+      environmentId: ENVIRONMENT_ID,
       patchId: STAGED_PATCH_ID,
     });
     expect(fetchImpl.mock.calls.filter((call) =>
@@ -1648,36 +1900,37 @@ describe("protected permanent-staging variable mutation", () => {
   });
 
   it("refuses to claim exact cleanup after the committed patch identity does not close", async () => {
-    const beforeRows = [
-      variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_SUPABASE_URL"),
-    ];
+    const before = incidentBaselineFixture();
+    const after = structuredClone(before);
+    after.variables = after.variables.filter((row) =>
+      !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+    );
     const patch = protectedPermanentStagingVariableMutationInternals
       .cleanupDeletionPatch();
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(coldMetadata(beforeRows))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(stageDeletion(patch))
-      .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
-      .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(json({
-        data: {
-          environmentPatchCommitStaged:
-            "66666666-6666-4666-8666-666666666666",
-        },
-      }))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(stageDeletion())
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        before,
+        maskedCleanupDeletionPatch(),
+        STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(commitDeletionAcknowledgement())
       .mockResolvedValueOnce(committedDeletionPatch(
         patch,
         STAGED_PATCH_ID,
         "STAGED",
       ))
-      .mockResolvedValueOnce(coldMetadata([]))
-      .mockResolvedValueOnce(coldDeployment());
+      .mockResolvedValueOnce(metadataFromSnapshot(after, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(after));
     const outputs: string[] = [];
 
     const result = await runProtectedPermanentStagingVariableMutation({
@@ -1696,9 +1949,12 @@ describe("protected permanent-staging variable mutation", () => {
       String((call[1] as RequestInit).body)
         .includes("environmentPatchCommitStaged"))).toHaveLength(1);
     const patchRead = JSON.parse(
-      String((fetchImpl.mock.calls[10]![1] as RequestInit).body),
+      String((fetchImpl.mock.calls[12]![1] as RequestInit).body),
     ) as { variables: Record<string, unknown> };
-    expect(patchRead.variables).toEqual({ patchId: STAGED_PATCH_ID });
+    expect(patchRead.variables).toEqual({
+      environmentId: ENVIRONMENT_ID,
+      patchId: STAGED_PATCH_ID,
+    });
     expect(JSON.parse(outputs[0]!)).toMatchObject({
       outcome: "mutation_uncertain",
       attempts: 2,
@@ -1758,7 +2014,7 @@ describe("protected permanent-staging variable mutation", () => {
       const beforeRows = [
         variable("DATABASE_URL", SERVICE_ID, true),
         variable("OFFSITE_BACKUP_BUCKET"),
-        variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+        variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
         variable("OFFSITE_BACKUP_SUPABASE_URL"),
       ];
       const afterRows = operation.startsWith("resume-")
@@ -1767,12 +2023,7 @@ describe("protected permanent-staging variable mutation", () => {
       const patch = protectedPermanentStagingVariableMutationInternals
         .cleanupDeletionPatch();
       const acknowledgement = operation.startsWith("resume-")
-        ? json({
-          data: {
-            environmentPatchCommitStaged:
-              "66666666-6666-4666-8666-666666666666",
-          },
-        })
+        ? commitDeletionAcknowledgement()
         : json({
           data: {
             environmentStageChanges: {
@@ -1784,10 +2035,18 @@ describe("protected permanent-staging variable mutation", () => {
       const fetchImpl = vi.fn()
         .mockResolvedValueOnce(scope())
         .mockResolvedValueOnce(scope())
-        .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
+        .mockResolvedValueOnce(coldMetadata(
+          beforeRows,
+          maskedCleanupDeletionPatch(),
+        ))
         .mockResolvedValueOnce(coldDeployment())
-        .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
+        .mockResolvedValueOnce(coldMetadata(
+          beforeRows,
+          maskedCleanupDeletionPatch(),
+        ))
         .mockResolvedValueOnce(coldDeployment())
+        .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+        .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
         .mockResolvedValueOnce(acknowledgement);
       if (operation.startsWith("resume-")) {
         fetchImpl.mockResolvedValueOnce(committedDeletionPatch(patch));
@@ -1844,7 +2103,7 @@ describe("protected permanent-staging variable mutation", () => {
     const beforeRows = [
       variable("DATABASE_URL", SERVICE_ID, true),
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const afterRows = [variable("DATABASE_URL", SERVICE_ID, true)];
@@ -1853,16 +2112,19 @@ describe("protected permanent-staging variable mutation", () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
+      .mockResolvedValueOnce(coldMetadata(
+        beforeRows,
+        maskedCleanupDeletionPatch(),
+      ))
       .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
+      .mockResolvedValueOnce(coldMetadata(
+        beforeRows,
+        maskedCleanupDeletionPatch(),
+      ))
       .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(json({
-        data: {
-          environmentPatchCommitStaged:
-            "66666666-6666-4666-8666-666666666666",
-        },
-      }))
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(commitDeletionAcknowledgement())
       .mockResolvedValueOnce(committedDeletionPatch(patch))
       .mockResolvedValueOnce(coldMetadata(afterRows))
       .mockResolvedValueOnce(coldDeployment());
@@ -1965,7 +2227,7 @@ describe("protected permanent-staging variable mutation", () => {
     const beforeRows = [
       variable("DATABASE_URL", SERVICE_ID, true),
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const afterRows = [variable("DATABASE_URL", SERVICE_ID, true)];
@@ -1978,15 +2240,15 @@ describe("protected permanent-staging variable mutation", () => {
       .mockResolvedValueOnce(coldDeployment())
       .mockResolvedValueOnce(coldMetadata(beforeRows))
       .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(stageDeletion(patch))
-      .mockResolvedValueOnce(coldMetadata(beforeRows, patch))
+      .mockResolvedValueOnce(stageDeletion())
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(coldMetadata(
+        beforeRows,
+        maskedCleanupDeletionPatch(),
+      ))
       .mockResolvedValueOnce(coldDeployment())
-      .mockResolvedValueOnce(json({
-        data: {
-          environmentPatchCommitStaged:
-            "66666666-6666-4666-8666-666666666666",
-        },
-      }))
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(commitDeletionAcknowledgement())
       .mockResolvedValueOnce(committedDeletionPatch(patch))
       .mockResolvedValueOnce(coldMetadata(afterRows))
       .mockResolvedValueOnce(coldDeployment());
@@ -2031,11 +2293,112 @@ describe("protected permanent-staging variable mutation", () => {
     });
   });
 
+  it.each([
+    {
+      mode: "resume-existing-stage",
+      expectedOutcome: "cleanup_patch_resume_reconciled_after_lost_ack",
+      expectedAttempts: 1,
+    },
+    {
+      mode: "restage-after-no-effect",
+      expectedOutcome: "cleanup_no_effect_retry_reconciled_after_lost_ack",
+      expectedAttempts: 2,
+    },
+  ] as const)(
+    "reconciles one lost recovery acknowledgement without redispatch: $mode",
+    async ({ mode, expectedOutcome, expectedAttempts }) => {
+      const beforeRows = [
+        variable("DATABASE_URL", SERVICE_ID, true),
+        variable("OFFSITE_BACKUP_BUCKET"),
+        variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
+        variable("OFFSITE_BACKUP_SUPABASE_URL"),
+      ];
+      const afterRows = [variable("DATABASE_URL", SERVICE_ID, true)];
+      const patch = protectedPermanentStagingVariableMutationInternals
+        .cleanupDeletionPatch();
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(scope());
+      if (mode === "resume-existing-stage") {
+        fetchImpl
+          .mockResolvedValueOnce(coldMetadata(
+            beforeRows,
+            maskedCleanupDeletionPatch(),
+          ))
+          .mockResolvedValueOnce(coldDeployment())
+          .mockResolvedValueOnce(coldMetadata(
+            beforeRows,
+            maskedCleanupDeletionPatch(),
+          ))
+          .mockResolvedValueOnce(coldDeployment())
+          .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+          .mockResolvedValueOnce(stagedDeletionPatchReadback(patch));
+      } else {
+        fetchImpl
+          .mockResolvedValueOnce(coldMetadata(beforeRows))
+          .mockResolvedValueOnce(coldDeployment())
+          .mockResolvedValueOnce(coldMetadata(beforeRows))
+          .mockResolvedValueOnce(coldDeployment())
+          .mockResolvedValueOnce(stageDeletion())
+          .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+          .mockResolvedValueOnce(coldMetadata(
+            beforeRows,
+            maskedCleanupDeletionPatch(),
+          ))
+          .mockResolvedValueOnce(coldDeployment())
+          .mockResolvedValueOnce(stagedDeletionPatchReadback(patch));
+      }
+      fetchImpl
+        .mockRejectedValueOnce(new Error("connection_lost_after_commit"))
+        .mockResolvedValueOnce(committedDeletionPatch(patch))
+        .mockResolvedValueOnce(coldMetadata(afterRows))
+        .mockResolvedValueOnce(coldDeployment());
+      const outputs: string[] = [];
+      const operation = "resume-forbidden-offsite-backup-deletion-patch";
+
+      const result = await runProtectedPermanentStagingVariableMutation({
+        argv: cleanupRecoveryArgv(operation, false),
+        env: environment(operation, {
+          PINTPATH_PRIOR_CLEANUP_RUN_ID: "450",
+        }),
+        cwd: process.cwd(),
+        fetchImpl,
+        boundaryCheck: vi.fn().mockResolvedValue(0),
+        verifyReviewedCleanupRecoveryAuthority: vi.fn().mockReturnValue(true),
+        verifyPriorCleanupEvidence: vi.fn(),
+        readSecretFile: vi.fn(),
+        writeDurable: (_directory, _leaf, source) => sha256(source),
+        writeOutput: (source) => outputs.push(source),
+      });
+
+      expect(result).toBe(0);
+      const mutationBodies = fetchImpl.mock.calls.map((call) =>
+        String((call[1] as RequestInit).body)
+      ).filter((body) => body.includes("mutation PintPathProtected"));
+      expect(mutationBodies.filter((body) =>
+        body.includes("CommitForbiddenVariableDeletion"))).toHaveLength(1);
+      expect(mutationBodies.filter((body) =>
+        body.includes("StageForbiddenVariableDeletion"))).toHaveLength(
+          mode === "restage-after-no-effect" ? 1 : 0,
+        );
+      expect(JSON.parse(outputs[0]!)).toMatchObject({
+        outcome: expectedOutcome,
+        attempts: expectedAttempts,
+        retryAllowed: false,
+        checks: {
+          commitAcknowledgementExact: false,
+          committedDeletionPatchExact: true,
+          targetPostflightExact: true,
+        },
+      });
+    },
+  );
+
   it("reconciles an exact already-cancelled cleanup without another write", async () => {
     const rows = [
       variable("DATABASE_URL", SERVICE_ID, true),
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const fetchImpl = vi.fn()
@@ -2143,27 +2506,33 @@ describe("protected permanent-staging variable mutation", () => {
   });
 
   it("accepts an exact cleanup transition after a lost commit acknowledgement without retry", async () => {
-    const beforeRows = [
-      variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
-      variable("OFFSITE_BACKUP_SUPABASE_URL"),
-    ];
+    const before = incidentBaselineFixture();
+    const after = structuredClone(before);
+    after.variables = after.variables.filter((row) =>
+      !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+    );
     const patch = protectedPermanentStagingVariableMutationInternals
       .cleanupDeletionPatch();
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(metadata(beforeRows))
-      .mockResolvedValueOnce(deployment())
-      .mockResolvedValueOnce(metadata(beforeRows))
-      .mockResolvedValueOnce(deployment())
-      .mockResolvedValueOnce(stageDeletion(patch))
-      .mockResolvedValueOnce(metadata(beforeRows, { stagedPatch: patch }))
-      .mockResolvedValueOnce(deployment())
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(stageDeletion())
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        before,
+        maskedCleanupDeletionPatch(),
+        STAGED_PATCH_ID,
+      ))
+      .mockResolvedValueOnce(deploymentFromSnapshot(before))
+      .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
       .mockRejectedValueOnce(new Error("connection_lost_after_commit"))
       .mockResolvedValueOnce(committedDeletionPatch(patch))
-      .mockResolvedValueOnce(metadata([]))
-      .mockResolvedValueOnce(deployment());
+      .mockResolvedValueOnce(metadataFromSnapshot(after, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(deploymentFromSnapshot(after));
     const outputs: string[] = [];
 
     const result = await runProtectedPermanentStagingVariableMutation({
@@ -2194,6 +2563,91 @@ describe("protected permanent-staging variable mutation", () => {
       },
     });
   });
+
+  it.each(["non-committed-readback", "readback-error"] as const)(
+    "does not retry an inconclusive lost commit acknowledgement: %s",
+    async (failureMode) => {
+      const before = incidentBaselineFixture();
+      const after = structuredClone(before);
+      after.variables = after.variables.filter((row) =>
+        !Object.hasOwn(OFFSITE_VARIABLE_IDS, String(row.name))
+      );
+      const patch = protectedPermanentStagingVariableMutationInternals
+        .cleanupDeletionPatch();
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(metadataFromSnapshot(
+          before,
+          {},
+          EMPTY_STAGED_PATCH_ID,
+        ))
+        .mockResolvedValueOnce(deploymentFromSnapshot(before))
+        .mockResolvedValueOnce(metadataFromSnapshot(
+          before,
+          {},
+          EMPTY_STAGED_PATCH_ID,
+        ))
+        .mockResolvedValueOnce(deploymentFromSnapshot(before))
+        .mockResolvedValueOnce(stageDeletion())
+        .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+        .mockResolvedValueOnce(metadataFromSnapshot(
+          before,
+          maskedCleanupDeletionPatch(),
+          STAGED_PATCH_ID,
+        ))
+        .mockResolvedValueOnce(deploymentFromSnapshot(before))
+        .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
+        .mockRejectedValueOnce(new Error("connection_lost_after_commit"));
+      if (failureMode === "readback-error") {
+        fetchImpl.mockRejectedValueOnce(new Error("postcommit_read_failed"));
+      } else {
+        fetchImpl.mockResolvedValueOnce(committedDeletionPatch(
+          patch,
+          STAGED_PATCH_ID,
+          "STAGED",
+        ));
+      }
+      fetchImpl
+        .mockResolvedValueOnce(metadataFromSnapshot(
+          after,
+          {},
+          EMPTY_STAGED_PATCH_ID,
+        ))
+        .mockResolvedValueOnce(deploymentFromSnapshot(after));
+      const outputs: string[] = [];
+
+      const result = await runProtectedPermanentStagingVariableMutation({
+        argv: cleanupArgv(),
+        env: environment("remove-forbidden-offsite-backup-variables"),
+        cwd: process.cwd(),
+        fetchImpl,
+        boundaryCheck: vi.fn().mockResolvedValue(0),
+        readSecretFile: vi.fn(),
+        writeDurable: (_directory, _leaf, source) => sha256(source),
+        writeOutput: (source) => outputs.push(source),
+      });
+
+      expect(result).toBe(1);
+      const mutationBodies = fetchImpl.mock.calls.map((call) =>
+        String((call[1] as RequestInit).body)
+      ).filter((body) => body.includes("mutation PintPathProtected"));
+      expect(mutationBodies.filter((body) =>
+        body.includes("StageForbiddenVariableDeletion"))).toHaveLength(1);
+      expect(mutationBodies.filter((body) =>
+        body.includes("CommitForbiddenVariableDeletion"))).toHaveLength(1);
+      expect(JSON.parse(outputs[0]!)).toMatchObject({
+        outcome: "mutation_uncertain",
+        attempts: 2,
+        retryAllowed: false,
+        checks: {
+          commitAcknowledgementExact: false,
+          committedDeletionPatchExact: false,
+          targetPostflightExact: true,
+        },
+      });
+    },
+  );
 
   it("blocks workflow reruns before reading input or contacting Railway", async () => {
     const fetchImpl = vi.fn();
@@ -2268,7 +2722,7 @@ describe("protected permanent-staging variable mutation", () => {
   it("accepts only exact Beer rows for in-place reconciliation and cleanup", () => {
     const offsiteRows = [
       variable("OFFSITE_BACKUP_BUCKET"),
-      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
       variable("OFFSITE_BACKUP_SUPABASE_URL"),
     ];
     const cleanupSnapshot = {
@@ -2291,6 +2745,21 @@ describe("protected permanent-staging variable mutation", () => {
           ...offsiteRows,
           variable("OFFSITE_BACKUP_BUCKET", null),
         ],
+      })).toBe(false);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .forbiddenOffsiteRowsExactForDeletion({
+        ...cleanupSnapshot,
+        variables: offsiteRows.map((row) => row.name === "OFFSITE_BACKUP_BUCKET"
+          ? { ...row, id: "unexpected-row-id" }
+          : row),
+      })).toBe(false);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .forbiddenOffsiteRowsExactForDeletion({
+        ...cleanupSnapshot,
+        variables: offsiteRows.map((row) =>
+          row.name === "OFFSITE_BACKUP_SERVICE_ROLE_KEY"
+            ? { ...row, isSealed: true }
+            : row),
       })).toBe(false);
 
     const providerSnapshot = {
@@ -2316,6 +2785,25 @@ describe("protected permanent-staging variable mutation", () => {
         ...providerSnapshot,
         variables: [...providerSnapshot.variables, ...offsiteRows],
       }, "GOOGLE_MAPS_API_KEY")).toBe(false);
+  });
+
+  it("pins cleanup to the complete reviewed 99-row dead baseline", () => {
+    const baseline = incidentBaselineFixture();
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(baseline as never)).toBe(true);
+
+    const unrelatedRowDrift = structuredClone(baseline);
+    unrelatedRowDrift.variables[0] = {
+      ...unrelatedRowDrift.variables[0],
+      id: "unexpected-unrelated-row-id",
+    };
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(unrelatedRowDrift as never)).toBe(false);
+
+    const missingUnrelatedRow = structuredClone(baseline);
+    missingUnrelatedRow.variables.pop();
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(missingUnrelatedRow as never)).toBe(false);
   });
 
   it("accepts only the fully pinned dead/null baseline", async () => {

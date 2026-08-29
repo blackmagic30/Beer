@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -20,6 +21,9 @@ describe("protected provider mutation workflows", () => {
     const policy = JSON.parse(
       read("ops/railway/permanent-staging-variable-mutation-policy.json"),
     ) as Record<string, unknown>;
+    const deletionProofAttestation = read(
+      "docs/incident-evidence/railway-staged-deletion-proof-2026-08-29/attestation.json",
+    );
 
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain(
@@ -173,7 +177,7 @@ describe("protected provider mutation workflows", () => {
               stagedPatchCreatedAt: "2026-08-28T10:51:38.861Z",
               maskedPatchShape:
                 "EXACT_THREE_OFFSITE_VARIABLE_WRAPPERS_WITH_FIVE_ASTERISK_VALUES",
-              deletionSemanticsProven: false,
+              deletionSemanticsProven: true,
               originalBaselineMetadataSha256:
                 "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd",
               recoveryDeadline: "2026-08-29T10:51:43.000Z",
@@ -198,6 +202,27 @@ describe("protected provider mutation workflows", () => {
         unconditionalPostflightRequired: true,
       },
     });
+    expect(policy).toMatchObject({
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v7",
+      operations: {
+        legacyStagedDeletionDispatchState:
+          "ENABLED_AFTER_SEALED_DISPOSABLE_PROOF",
+        stagedDeletionProof: {
+          attestationPath:
+            "docs/incident-evidence/railway-staged-deletion-proof-2026-08-29/attestation.json",
+          attestationSha256:
+            "e1faa9daff1ff4927c852ccf08b917f77b7893f77a04c20bbe192f556e276de2",
+          independentReviewOutcome: "GO_NO_P0_P1",
+        },
+      },
+    });
+    expect(crypto.createHash("sha256").update(deletionProofAttestation)
+      .digest("hex")).toBe(
+        "e1faa9daff1ff4927c852ccf08b917f77b7893f77a04c20bbe192f556e276de2",
+      );
+    expect(workflow).not.toContain(
+      "Legacy staged deletion operations are disabled pending provider-verifiable deletion semantics.",
+    );
     expect(
       executor.match(/PROTECTED_STAGING_VARIABLE_MUTATION_QUERY/g),
     ).toHaveLength(2);
