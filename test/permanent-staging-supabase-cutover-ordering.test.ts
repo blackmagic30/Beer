@@ -87,8 +87,8 @@ describe("permanent-staging Supabase cutover ordering", () => {
       "docs/launch-readiness-review-2026-08-27.md",
       "## Exact next staging chain",
       [
-        "If the three forbidden OFFSITE rows remain",
-        "All changes must keep deploys skipped",
+        "fixed permanent-staging-postgres runtime-URL repair",
+        "explicit no-deploy guarantee",
         "cold prepare",
         "cold quiesce",
         "phase fenced",
@@ -154,7 +154,7 @@ describe("permanent-staging Supabase cutover ordering", () => {
       ".github/workflows/configure-runtime-variable.yml",
     );
     expect(runtimeVariableWorkflow).toContain(
-      "inputs.target == 'permanent-staging' && 'pintpath-permanent-staging-key-rollout'",
+      "inputs.target != 'production' && 'pintpath-permanent-staging-key-rollout'",
     );
     expect(runtimeVariableWorkflow).toContain(
       "queue: max cancel-in-progress: false",

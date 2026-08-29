@@ -17,16 +17,34 @@ export const PROTECTED_RUNTIME_VARIABLE_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
-const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
+const APPLICATION_SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
+const POSTGRES_SERVICE_ID = "c454955f-263b-4599-aee0-dc447a4d3d15";
+const STAGING_POSTGRES_RUNTIME_VARIABLE =
+  "PINTPATH_RUNTIME_DATABASE_URL" as const;
+const STAGING_POSTGRES_RUNTIME_URL =
+  "postgresql://pintpath_staging_runtime_login:${{PINTPATH_RUNTIME_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:${{PGPORT}}/pintpath_staging?sslmode=verify-full" as const;
+const STAGING_POSTGRES_RUNTIME_REFERENCES = Object.freeze([
+  "PGPORT",
+  "PINTPATH_RUNTIME_PASSWORD",
+  "RAILWAY_PRIVATE_DOMAIN",
+] as const);
 const TARGETS = Object.freeze({
   "permanent-staging": Object.freeze({
     environmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     forbiddenEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
+    serviceId: APPLICATION_SERVICE_ID,
+    githubEnvironment: "permanent-staging-provider-mutation",
+  }),
+  "permanent-staging-postgres": Object.freeze({
+    environmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    forbiddenEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
+    serviceId: POSTGRES_SERVICE_ID,
     githubEnvironment: "permanent-staging-provider-mutation",
   }),
   production: Object.freeze({
     environmentId: "13dab015-df74-45c6-b26f-69323daea99a",
     forbiddenEnvironmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    serviceId: APPLICATION_SERVICE_ID,
     githubEnvironment: "production-runtime-configuration",
   }),
 } as const);
@@ -50,7 +68,7 @@ const ALLOWED_VARIABLES = Object.freeze([
 ] as const);
 const POLICY_PATH = "ops/railway/protected-runtime-variable-policy.json";
 const POLICY_SHA256 =
-  "0f4d958c85027433ae4747987f9e26499d022c5b2cc1543c765007346a2862fe";
+  "552e98b607613388314d5b18182cf2befbfaa993c11bc89348abc2dc8d29580f";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
@@ -73,6 +91,7 @@ export const PROTECTED_RUNTIME_VARIABLE_METADATA = `query PintPathProtectedRunti
   $projectId: String!
   $environmentId: String!
   $serviceId: String!
+  $applicationServiceId: String!
 ) {
   environment(id:$environmentId,projectId:$projectId) {
     id
@@ -85,7 +104,14 @@ export const PROTECTED_RUNTIME_VARIABLE_METADATA = `query PintPathProtectedRunti
     environmentId
     patch(decryptVariables:false)
   }
-  serviceInstance(environmentId:$environmentId,serviceId:$serviceId) {
+  targetServiceInstance: serviceInstance(environmentId:$environmentId,serviceId:$serviceId) {
+    id
+    serviceId
+    environmentId
+    latestDeployment { id status deploymentStopped snapshotId }
+    activeDeployments { id status deploymentStopped }
+  }
+  applicationServiceInstance: serviceInstance(environmentId:$environmentId,serviceId:$applicationServiceId) {
     id
     serviceId
     environmentId
@@ -96,7 +122,8 @@ export const PROTECTED_RUNTIME_VARIABLE_METADATA = `query PintPathProtectedRunti
 export const PROTECTED_RUNTIME_VARIABLE_SCOPE = `query PintPathProtectedRuntimeVariableScope { projectToken { projectId environmentId } }`;
 
 type TargetName = keyof typeof TARGETS;
-type AllowedVariable = (typeof ALLOWED_VARIABLES)[number];
+type ApplicationVariable = (typeof ALLOWED_VARIABLES)[number];
+type AllowedVariable = ApplicationVariable | typeof STAGING_POSTGRES_RUNTIME_VARIABLE;
 
 interface Row {
   readonly id: string;
@@ -185,6 +212,17 @@ function emptyChecks(): Checks {
   };
 }
 
+function targetVariableExact(
+  target: string | undefined,
+  variableName: string | undefined,
+): target is TargetName {
+  if (!target || !Object.hasOwn(TARGETS, target) || !variableName) return false;
+  if (target === "permanent-staging-postgres") {
+    return variableName === STAGING_POSTGRES_RUNTIME_VARIABLE;
+  }
+  return ALLOWED_VARIABLES.includes(variableName as ApplicationVariable);
+}
+
 function argumentsExact(argv: readonly string[]): {
   target: TargetName;
   variableName: AllowedVariable;
@@ -203,17 +241,22 @@ function argumentsExact(argv: readonly string[]): {
       return null;
     map.set(argv[index]!, argv[index + 1]!);
   }
-  const target = map.get("--target") as TargetName;
-  const variableName = map.get("--variable") as AllowedVariable;
+  const target = map.get("--target");
+  const variableName = map.get("--variable");
   const valueFile = map.get("--value-file") ?? "";
   const evidenceDirectory = map.get("--evidence-dir") ?? "";
   const candidateSha = map.get("--candidate-sha") ?? "";
-  return Object.hasOwn(TARGETS, target) &&
-    ALLOWED_VARIABLES.includes(variableName) &&
+  return targetVariableExact(target, variableName) &&
     path.isAbsolute(valueFile) &&
     path.isAbsolute(evidenceDirectory) &&
     SHA_PATTERN.test(candidateSha)
-    ? { target, variableName, valueFile, evidenceDirectory, candidateSha }
+    ? {
+      target,
+      variableName: variableName as AllowedVariable,
+      valueFile,
+      evidenceDirectory,
+      candidateSha,
+    }
     : null;
 }
 
@@ -310,15 +353,45 @@ function row(value: unknown, environmentId: string): Row | null {
   };
 }
 
-function snapshot(value: unknown, environmentId: string): Snapshot | null {
+function serviceInstanceExact(
+  value: unknown,
+  environmentId: string,
+  serviceId: string,
+): value is Record<string, unknown> {
+  return keys(value, [
+    "id",
+    "serviceId",
+    "environmentId",
+    "latestDeployment",
+    "activeDeployments",
+  ]) &&
+    typeof value.id === "string" &&
+    UUID_PATTERN.test(value.id) &&
+    value.serviceId === serviceId &&
+    value.environmentId === environmentId &&
+    record(value.latestDeployment) &&
+    Array.isArray(value.activeDeployments);
+}
+
+function snapshot(
+  value: unknown,
+  environmentId: string,
+  serviceId = APPLICATION_SERVICE_ID,
+): Snapshot | null {
   if (
     !keys(value, ["data"]) ||
-    !keys(value.data, ["environment", "staged", "serviceInstance"])
+    !keys(value.data, [
+      "environment",
+      "staged",
+      "targetServiceInstance",
+      "applicationServiceInstance",
+    ])
   )
     return null;
   const environment = value.data.environment;
   const staged = value.data.staged;
-  const instance = value.data.serviceInstance;
+  const targetServiceInstance = value.data.targetServiceInstance;
+  const applicationServiceInstance = value.data.applicationServiceInstance;
   if (
     !keys(environment, ["id", "variables"]) ||
     environment.id !== environmentId ||
@@ -331,19 +404,16 @@ function snapshot(value: unknown, environmentId: string): Snapshot | null {
     staged.environmentId !== environmentId ||
     !record(staged.patch) ||
     Object.keys(staged.patch).length !== 0 ||
-    !keys(instance, [
-      "id",
-      "serviceId",
-      "environmentId",
-      "latestDeployment",
-      "activeDeployments",
-    ]) ||
-    typeof instance.id !== "string" ||
-    !UUID_PATTERN.test(instance.id) ||
-    instance.serviceId !== SERVICE_ID ||
-    instance.environmentId !== environmentId ||
-    !record(instance.latestDeployment) ||
-    !Array.isArray(instance.activeDeployments)
+    !serviceInstanceExact(
+      targetServiceInstance,
+      environmentId,
+      serviceId,
+    ) ||
+    !serviceInstanceExact(
+      applicationServiceInstance,
+      environmentId,
+      APPLICATION_SERVICE_ID,
+    )
   )
     return null;
   const rows: Row[] = [];
@@ -367,16 +437,41 @@ function snapshot(value: unknown, environmentId: string): Snapshot | null {
     environmentId,
     rows,
     patchEmpty: true,
-    deploymentCanonical: canonical(instance),
+    deploymentCanonical: canonical({
+      targetServiceInstance,
+      applicationServiceInstance,
+    }),
   };
 }
 
-function targetBeforeExact(before: Snapshot, variableName: string): boolean {
-  const rows = before.rows.filter((item) => item.name === variableName);
+function isFixedStagingPostgresRepair(
+  serviceId: string,
+  variableName: string,
+): boolean {
+  return serviceId === POSTGRES_SERVICE_ID &&
+    variableName === STAGING_POSTGRES_RUNTIME_VARIABLE;
+}
+
+function targetBeforeExact(
+  before: Snapshot,
+  variableName: string,
+  serviceId = APPLICATION_SERVICE_ID,
+): boolean {
+  const rows = before.rows.filter((item) =>
+    item.name === variableName &&
+    (item.serviceId === serviceId || item.serviceId === null)
+  );
+  if (isFixedStagingPostgresRepair(serviceId, variableName)) {
+    return rows.length === 1 &&
+      rows[0]?.serviceId === POSTGRES_SERVICE_ID &&
+      rows[0].isSealed === false &&
+      JSON.stringify(rows[0].references) ===
+        JSON.stringify(STAGING_POSTGRES_RUNTIME_REFERENCES);
+  }
   return (
     rows.length === 0 ||
     (rows.length === 1 &&
-      rows[0]?.serviceId === SERVICE_ID &&
+      rows[0]?.serviceId === serviceId &&
       rows[0].references.length === 0)
   );
 }
@@ -385,15 +480,24 @@ function targetAfterExact(
   before: Snapshot,
   after: Snapshot,
   variableName: string,
+  serviceId = APPLICATION_SERVICE_ID,
 ): boolean {
-  const beforeTarget = before.rows.filter((item) => item.name === variableName);
-  const afterTarget = after.rows.filter((item) => item.name === variableName);
-  const beforeOthers = before.rows.filter((item) => item.name !== variableName);
-  const afterOthers = after.rows.filter((item) => item.name !== variableName);
+  const inTargetScope = (item: Row) =>
+    item.name === variableName &&
+    (item.serviceId === serviceId || item.serviceId === null);
+  const beforeTarget = before.rows.filter(inTargetScope);
+  const afterTarget = after.rows.filter(inTargetScope);
+  const beforeOthers = before.rows.filter((item) => !inTargetScope(item));
+  const afterOthers = after.rows.filter((item) => !inTargetScope(item));
+  if (isFixedStagingPostgresRepair(serviceId, variableName)) {
+    return beforeTarget.length === 1 &&
+      JSON.stringify(beforeTarget) === JSON.stringify(afterTarget) &&
+      JSON.stringify(beforeOthers) === JSON.stringify(afterOthers);
+  }
   return (
     beforeTarget.length <= 1 &&
     afterTarget.length === 1 &&
-    afterTarget[0]?.serviceId === SERVICE_ID &&
+    afterTarget[0]?.serviceId === serviceId &&
     afterTarget[0].references.length === 0 &&
     JSON.stringify(beforeOthers) === JSON.stringify(afterOthers)
   );
@@ -411,17 +515,30 @@ function policyExact(cwd: string): boolean {
         "activationState",
         "projectId",
         "serviceId",
+        "postgresServiceId",
         "targets",
         "allowedVariables",
+        "fixedStagingPostgresRepair",
         "mutation",
         "evidence",
       ]) &&
-      value.schemaVersion === "pintpath-protected-runtime-variable-policy/v1" &&
+      value.schemaVersion === "pintpath-protected-runtime-variable-policy/v2" &&
       value.activationState === PROTECTED_RUNTIME_VARIABLE_STATE &&
       value.projectId === PROJECT_ID &&
-      value.serviceId === SERVICE_ID &&
+      value.serviceId === APPLICATION_SERVICE_ID &&
+      value.postgresServiceId === POSTGRES_SERVICE_ID &&
       Array.isArray(value.allowedVariables) &&
-      JSON.stringify(value.allowedVariables) === JSON.stringify(ALLOWED_VARIABLES)
+      JSON.stringify(value.allowedVariables) === JSON.stringify(ALLOWED_VARIABLES) &&
+      canonical(value.fixedStagingPostgresRepair) === canonical({
+        variableName: STAGING_POSTGRES_RUNTIME_VARIABLE,
+        valueSource: "REVIEWED_COMPILE_TIME_CONSTANT",
+        runtimeLogin: "pintpath_staging_runtime_login",
+        database: "pintpath_staging",
+        query: "sslmode=verify-full",
+        exactReferences: STAGING_POSTGRES_RUNTIME_REFERENCES,
+        arbitraryValueInputAllowed: false,
+        productionTargetAllowed: false,
+      })
     );
   } catch {
     return false;
@@ -540,16 +657,24 @@ export async function runProtectedRuntimeVariableUpsert(
         {
           projectId: PROJECT_ID,
           environmentId: target.environmentId,
-          serviceId: SERVICE_ID,
+          serviceId: target.serviceId,
+          applicationServiceId: APPLICATION_SERVICE_ID,
         },
       ),
       target.environmentId,
+      target.serviceId,
     );
     checks.targetPreflightExact =
-      before !== null && targetBeforeExact(before, args.variableName);
+      before !== null &&
+      targetBeforeExact(before, args.variableName, target.serviceId);
     if (!before || !checks.targetPreflightExact)
       throw new Error("target_invalid");
-    held = dependencies.readValue(args.valueFile);
+    const fixedStagingPostgresRepair =
+      args.target === "permanent-staging-postgres" &&
+      args.variableName === STAGING_POSTGRES_RUNTIME_VARIABLE;
+    held = fixedStagingPostgresRepair
+      ? Buffer.from(STAGING_POSTGRES_RUNTIME_URL, "utf8")
+      : dependencies.readValue(args.valueFile);
     const decoded = new TextDecoder("utf-8", { fatal: true }).decode(held);
     const multilinePem = args.variableName === "PINTPATH_POSTGRES_ROOT_CA_PEM";
     const canonicalPem = multilinePem && decoded.endsWith("\n")
@@ -558,6 +683,7 @@ export async function runProtectedRuntimeVariableUpsert(
     if (
       decoded.length < 1 ||
       decoded.length > 65536 ||
+      (fixedStagingPostgresRepair && decoded !== STAGING_POSTGRES_RUNTIME_URL) ||
       (multilinePem
         ? canonicalPem !== canonicalPem.trim()
         : decoded !== decoded.trim()) ||
@@ -574,8 +700,11 @@ export async function runProtectedRuntimeVariableUpsert(
       candidateSha: args.candidateSha,
       projectId: PROJECT_ID,
       environmentId: target.environmentId,
-      serviceId: SERVICE_ID,
+      serviceId: target.serviceId,
       operationName: "variableCollectionUpsert",
+      valueSource: fixedStagingPostgresRepair
+        ? "REVIEWED_COMPILE_TIME_CONSTANT"
+        : "PROTECTED_GITHUB_SECRET_FILE",
       skipDeploys: true,
       maximumAttempts: 1,
       retryAllowed: false,
@@ -600,7 +729,7 @@ export async function runProtectedRuntimeVariableUpsert(
         PROTECTED_RUNTIME_VARIABLE_MUTATION,
         {
           projectId: PROJECT_ID,
-          serviceId: SERVICE_ID,
+          serviceId: target.serviceId,
           environmentId: target.environmentId,
           variables: { [args.variableName]: decoded },
           skipDeploys: true,
@@ -627,16 +756,24 @@ export async function runProtectedRuntimeVariableUpsert(
           {
             projectId: PROJECT_ID,
             environmentId: target.environmentId,
-            serviceId: SERVICE_ID,
+            serviceId: target.serviceId,
+            applicationServiceId: APPLICATION_SERVICE_ID,
           },
         ),
         target.environmentId,
+        target.serviceId,
       );
     } catch {
       after = null;
     }
     checks.targetPostflightExact =
-      after !== null && targetAfterExact(before, after, args.variableName);
+      after !== null &&
+      targetAfterExact(
+        before,
+        after,
+        args.variableName,
+        target.serviceId,
+      );
     checks.deploymentUnchanged =
       after !== null &&
       before.deploymentCanonical === after.deploymentCanonical;
@@ -679,16 +816,24 @@ export async function runProtectedRuntimeVariableUpsert(
             {
               projectId: PROJECT_ID,
               environmentId: activeTarget.environmentId,
-              serviceId: SERVICE_ID,
+              serviceId: activeTarget.serviceId,
+              applicationServiceId: APPLICATION_SERVICE_ID,
             },
           ),
           activeTarget.environmentId,
+          activeTarget.serviceId,
         );
       } catch {
         after = null;
       }
       checks.targetPostflightExact =
-        after !== null && targetAfterExact(before, after, args.variableName);
+        after !== null &&
+        targetAfterExact(
+          before,
+          after,
+          args.variableName,
+          activeTarget.serviceId,
+        );
       checks.deploymentUnchanged =
         after !== null &&
         before.deploymentCanonical === after.deploymentCanonical;
@@ -746,11 +891,13 @@ export async function runProtectedRuntimeVariableUpsert(
 
 export const protectedRuntimeVariableInternals = {
   argumentsExact,
+  targetVariableExact,
   scopeExact,
   snapshot,
   targetBeforeExact,
   targetAfterExact,
   policyExact,
+  stagingPostgresRuntimeUrl: STAGING_POSTGRES_RUNTIME_URL,
 };
 
 if (

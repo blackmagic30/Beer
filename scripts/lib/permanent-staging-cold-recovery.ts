@@ -386,7 +386,14 @@ function serviceRowExact(
   references: readonly string[],
   expectedSealed: boolean | null = null,
 ): boolean {
-  const matches = rows.filter((row) => row.name === name);
+  // Railway returns every service's variables in the environment inventory.
+  // A database service legitimately owns its own DATABASE_URL row, so rows on
+  // unrelated services are collateral state rather than target ambiguity. A
+  // same-name shared row still shadows the application service and must fail.
+  const matches = rows.filter((row) =>
+    row.name === name &&
+    (row.serviceId === COLD_RECOVERY_LOCK.serviceId || row.serviceId === null)
+  );
   return matches.length === 1 &&
     matches[0]?.serviceId === COLD_RECOVERY_LOCK.serviceId &&
     (expectedSealed === null || matches[0]?.isSealed === expectedSealed) &&
@@ -416,7 +423,10 @@ export function maintenanceRowsBeforeExact(
   rows: readonly ColdRecoveryVariableRow[],
 ): boolean {
   return TARGET_VARIABLES.every((name) => {
-    const matches = rows.filter((row) => row.name === name);
+    const matches = rows.filter((row) =>
+      row.name === name &&
+      (row.serviceId === COLD_RECOVERY_LOCK.serviceId || row.serviceId === null)
+    );
     return matches.length === 0 ||
       (matches.length === 1 &&
         matches[0]?.serviceId === COLD_RECOVERY_LOCK.serviceId &&
@@ -434,6 +444,7 @@ export function nonMaintenanceRows(
   rows: readonly ColdRecoveryVariableRow[],
 ): readonly ColdRecoveryVariableRow[] {
   return rows.filter((row) =>
+    row.serviceId !== COLD_RECOVERY_LOCK.serviceId ||
     !TARGET_VARIABLES.includes(nameAsTarget(row.name)));
 }
 

@@ -116,7 +116,11 @@ const INCIDENT_STAGED_PATCH_ID = "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae";
 const INCIDENT_STAGED_PATCH_CREATED_AT = "2026-08-28T10:51:38.861Z";
 const INCIDENT_ORIGINAL_BASELINE_METADATA_SHA256 =
   "c88c7915e91f391c4d40e4869d18b44783746a2b4e153c99637f34333c021abd";
-const RUNTIME_VARIABLE_TARGETS = new Set(["permanent-staging", "production"]);
+const RUNTIME_VARIABLE_TARGETS = new Set([
+  "permanent-staging",
+  "permanent-staging-postgres",
+  "production",
+]);
 const RUNTIME_VARIABLE_NAMES = new Set([
   "DATABASE_URL",
   "DATABASE_MAINTENANCE_URL",
@@ -134,7 +138,16 @@ const RUNTIME_VARIABLE_NAMES = new Set([
   "RESEND_WEBHOOK_SIGNING_SECRET",
   "SOURCE_EVIDENCE_SIGNING_SECRET",
   "ACCOUNT_DELETION_NOTICE_KEYRING_JSON",
+  "PINTPATH_RUNTIME_DATABASE_URL",
 ]);
+
+function runtimeVariableCombinationExact(target, variableName) {
+  return target === "permanent-staging-postgres"
+    ? variableName === "PINTPATH_RUNTIME_DATABASE_URL"
+    : (target === "permanent-staging" || target === "production") &&
+      variableName !== "PINTPATH_RUNTIME_DATABASE_URL" &&
+      RUNTIME_VARIABLE_NAMES.has(variableName);
+}
 
 function fail(code = "invalid") {
   throw new Error(`github_reviewed_candidate_authority_${code}`);
@@ -225,7 +238,9 @@ function parseArguments(argv) {
       ? !RUN_ID.test(prepareRunId ?? "") || prepareRunId === priorRunId
       : prepareRunId !== null) ||
     (runtimeVariable
-      ? !RUNTIME_VARIABLE_TARGETS.has(target) || !RUNTIME_VARIABLE_NAMES.has(variableName)
+      ? !RUNTIME_VARIABLE_TARGETS.has(target) ||
+        !RUNTIME_VARIABLE_NAMES.has(variableName) ||
+        !runtimeVariableCombinationExact(target, variableName)
       : target !== null || variableName !== null)
   ) fail("arguments_invalid");
   return Object.freeze({
@@ -1583,6 +1598,7 @@ function providerConfigurationForTitle(displayTitle, candidateSha) {
 function runtimeConfigurationForTitle(displayTitle, candidateSha) {
   for (const target of RUNTIME_VARIABLE_TARGETS) {
     for (const variableName of RUNTIME_VARIABLE_NAMES) {
+      if (!runtimeVariableCombinationExact(target, variableName)) continue;
       const configuration = operationConfiguration(
         "runtime-variable",
         candidateSha,
@@ -1647,7 +1663,7 @@ async function verifyNoPostDeploymentStagingWrites(input, deployment) {
       input.candidateSha,
     );
     if (classified === null) fail("stale_deployment_history_invalid");
-    if (classified.target !== "permanent-staging") continue;
+    if (classified.target === "production") continue;
     validateRunIdentity(observed, {
       runId: observed?.id,
       candidateSha: input.candidateSha,
@@ -1911,7 +1927,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     PROVIDER_OPERATIONS.has(input.operation) ||
       COLD_RECOVERY_OPERATIONS.has(input.operation) ||
       RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation) ||
-      (input.operation === "runtime-variable" && input.target === "permanent-staging")
+      (input.operation === "runtime-variable" && input.target !== "production")
       ? await verifyStagingLifecycleNotSealed(historyInput)
       : null;
   const replacementHistory =

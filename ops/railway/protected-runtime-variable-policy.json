@@ -1,18 +1,27 @@
 {
-  "schemaVersion": "pintpath-protected-runtime-variable-policy/v1",
+  "schemaVersion": "pintpath-protected-runtime-variable-policy/v2",
   "policyId": "pintpath-protected-runtime-variable-upsert",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
   "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "postgresServiceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
   "targets": {
     "permanent-staging": {
       "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
       "forbiddenEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "githubEnvironment": "permanent-staging-provider-mutation"
+    },
+    "permanent-staging-postgres": {
+      "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "forbiddenEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+      "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
       "githubEnvironment": "permanent-staging-provider-mutation"
     },
     "production": {
       "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
       "forbiddenEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
       "githubEnvironment": "production-runtime-configuration"
     }
   },
@@ -34,6 +43,20 @@
     "SOURCE_EVIDENCE_SIGNING_SECRET",
     "ACCOUNT_DELETION_NOTICE_KEYRING_JSON"
   ],
+  "fixedStagingPostgresRepair": {
+    "variableName": "PINTPATH_RUNTIME_DATABASE_URL",
+    "valueSource": "REVIEWED_COMPILE_TIME_CONSTANT",
+    "runtimeLogin": "pintpath_staging_runtime_login",
+    "database": "pintpath_staging",
+    "query": "sslmode=verify-full",
+    "exactReferences": [
+      "PGPORT",
+      "PINTPATH_RUNTIME_PASSWORD",
+      "RAILWAY_PRIVATE_DOMAIN"
+    ],
+    "arbitraryValueInputAllowed": false,
+    "productionTargetAllowed": false
+  },
   "mutation": {
     "operationName": "variableCollectionUpsert",
     "exactlyOneVariable": true,

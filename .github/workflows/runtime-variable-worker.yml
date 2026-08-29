@@ -140,9 +140,15 @@ jobs:
           if test "$TARGET" = production; then
             test "$PROTECTED_ENVIRONMENT" = production-runtime-configuration
             test "$VALUE_SECRET_NAME" = "PINTPATH_PRODUCTION_${VARIABLE_NAME}"
+            test "$VARIABLE_NAME" != PINTPATH_RUNTIME_DATABASE_URL
+          elif test "$TARGET" = permanent-staging-postgres; then
+            test "$PROTECTED_ENVIRONMENT" = permanent-staging-provider-mutation
+            test "$VARIABLE_NAME" = PINTPATH_RUNTIME_DATABASE_URL
+            test "$VALUE_SECRET_NAME" = PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL
           else
             test "$TARGET" = permanent-staging
             test "$PROTECTED_ENVIRONMENT" = permanent-staging-provider-mutation
+            test "$VARIABLE_NAME" != PINTPATH_RUNTIME_DATABASE_URL
             test "$VALUE_SECRET_NAME" = "PINTPATH_STAGING_${VARIABLE_NAME}"
           fi
 
@@ -201,14 +207,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$RUNTIME_VALUE"
-          mkdir -m 700 "$RUNNER_TEMP/pintpath-runtime-input"
           mkdir -m 700 "$RUNNER_TEMP/pintpath-runtime-evidence"
           umask 077
-          printf '%s' "$RUNTIME_VALUE" > "$RUNNER_TEMP/pintpath-runtime-input/value"
+          if test "$TARGET" = permanent-staging-postgres; then
+            test "$VARIABLE_NAME" = PINTPATH_RUNTIME_DATABASE_URL
+            test "$VALUE_SECRET_NAME" = PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL
+            test -z "$RUNTIME_VALUE"
+          else
+            test -n "$RUNTIME_VALUE"
+            mkdir -m 700 "$RUNNER_TEMP/pintpath-runtime-input"
+            printf '%s' "$RUNTIME_VALUE" > "$RUNNER_TEMP/pintpath-runtime-input/value"
+          fi
           jq -n --arg candidateSha "$CANDIDATE_SHA" --arg target "$TARGET" \
             --arg variableName "$VARIABLE_NAME" --arg secretName "$VALUE_SECRET_NAME" \
-            '{schemaVersion:"pintpath-runtime-variable-dispatch/v1",candidateSha:$candidateSha,target:$target,variableName:$variableName,secretName:$secretName,secretMaterialIncluded:false}' \
+            '{schemaVersion:"pintpath-runtime-variable-dispatch/v2",candidateSha:$candidateSha,target:$target,variableName:$variableName,valueSource:(if $target == "permanent-staging-postgres" then "REVIEWED_COMPILE_TIME_CONSTANT" else "PROTECTED_GITHUB_SECRET" end),secretName:(if $target == "permanent-staging-postgres" then null else $secretName end),secretMaterialIncluded:false}' \
             > "$RUNNER_TEMP/pintpath-runtime-evidence/dispatch.json"
 
       - name: Reassert exact current main immediately before the provider write
