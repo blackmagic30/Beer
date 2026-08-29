@@ -1789,7 +1789,7 @@ describe("protected permanent-staging variable mutation", () => {
     expect(outputs[0]).not.toContain(secret);
   });
 
-  it("deletes only the three Beer off-site rows from the exact dead/null baseline", async () => {
+  it("deletes only the three Beer off-site rows after the reviewed cancellation leaves its empty patch id", async () => {
     const before = incidentBaselineFixture();
     const after = structuredClone(before);
     after.variables = after.variables.filter((row) =>
@@ -1800,9 +1800,17 @@ describe("protected permanent-staging variable mutation", () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
-      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        before,
+        {},
+        INCIDENT_STAGED_PATCH_ID,
+      ))
       .mockResolvedValueOnce(deploymentFromSnapshot(before))
-      .mockResolvedValueOnce(metadataFromSnapshot(before, {}, EMPTY_STAGED_PATCH_ID))
+      .mockResolvedValueOnce(metadataFromSnapshot(
+        before,
+        {},
+        INCIDENT_STAGED_PATCH_ID,
+      ))
       .mockResolvedValueOnce(deploymentFromSnapshot(before))
       .mockResolvedValueOnce(stageDeletion())
       .mockResolvedValueOnce(stagedDeletionPatchReadback(patch))
@@ -2791,6 +2799,21 @@ describe("protected permanent-staging variable mutation", () => {
     const baseline = incidentBaselineFixture();
     expect(protectedPermanentStagingVariableMutationInternals
       .cleanupBaselineMetadataExact(baseline as never)).toBe(true);
+
+    const retainedReviewedCancellationId = {
+      ...baseline,
+      stagedPatchId: INCIDENT_STAGED_PATCH_ID,
+    };
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(retainedReviewedCancellationId as never))
+      .toBe(true);
+
+    const unrelatedEmptyPatchId = {
+      ...baseline,
+      stagedPatchId: STAGED_PATCH_ID,
+    };
+    expect(protectedPermanentStagingVariableMutationInternals
+      .cleanupBaselineMetadataExact(unrelatedEmptyPatchId as never)).toBe(false);
 
     const unrelatedRowDrift = structuredClone(baseline);
     unrelatedRowDrift.variables[0] = {
