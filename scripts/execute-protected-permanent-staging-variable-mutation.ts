@@ -1820,7 +1820,16 @@ function forbiddenOffsiteRowsExactForDeletion(snapshot: MetadataSnapshot): boole
 }
 
 function cleanupBaselineMetadataExact(snapshot: ProviderSnapshot): boolean {
-  return sha256(canonical(snapshot)) === CLEANUP_BASELINE_METADATA_SHA256;
+  const normalizedStagedPatchId = snapshot.stagedPatchEmpty
+      && snapshot.stagedPatchStatus === "STAGED"
+      && (snapshot.stagedPatchId === "<empty>"
+        || snapshot.stagedPatchId === INCIDENT_STAGED_PATCH_ID)
+    ? "<empty>"
+    : snapshot.stagedPatchId;
+  return sha256(canonical({
+    ...snapshot,
+    stagedPatchId: normalizedStagedPatchId,
+  })) === CLEANUP_BASELINE_METADATA_SHA256;
 }
 
 function maintenanceMetadataExact(snapshot: MetadataSnapshot): boolean {
