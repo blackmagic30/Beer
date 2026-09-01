@@ -30,9 +30,9 @@ const CUSTOM_ROUTE = "44444444-4444-4444-8444-444444444444";
 const OTHER_ROUTE = "55555555-5555-4555-8555-555555555555";
 const temporaryRoots: string[] = [];
 const RELEASE_POLICY_SHA256 =
-  "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd";
+  "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90";
 const ROUTE_POLICY_SHA256 =
-  "848504e20c7c67edcc25c69f3be6c7168047faeb5e3a997344a69aba74bdcae1";
+  "047a742e63c69ebb57fb8230a1efd2d27ae3dfd307f5a087b35a095c4839f348";
 const PROMOTION_RECOVERY_POLICY_SHA256 =
   "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988";
 
@@ -299,8 +299,8 @@ function writePredecessorAuthority(
     outcome: "deployed",
     failureCode: null,
     candidateSha: CANDIDATE,
-    startedAt: "1970-01-01T00:11:05.000Z",
-    completedAt: "1970-01-01T00:11:20.000Z",
+    startedAt: "1970-01-01T00:12:05.000Z",
+    completedAt: "1970-01-01T00:12:20.000Z",
     writeAttempts: 1,
     acknowledgement: "received",
     previousDeploymentIdSha256: "1".repeat(64),
@@ -361,8 +361,8 @@ function writePredecessorAuthority(
     direction: "converge-production-two",
     outcome: "scaled",
     candidateSha: CANDIDATE,
-    startedAt: "1970-01-01T00:12:05.000Z",
-    completedAt: "1970-01-01T00:12:20.000Z",
+    startedAt: "1970-01-01T00:13:05.000Z",
+    completedAt: "1970-01-01T00:13:20.000Z",
     desiredReplicas: 2,
     deploymentIdSha256,
     attempts: 1,
@@ -420,8 +420,8 @@ function writePredecessorAuthority(
     outcome: "closed",
     operation: "close",
     candidateSha: CANDIDATE,
-    startedAt: "1970-01-01T00:13:05.000Z",
-    completedAt: "1970-01-01T00:13:20.000Z",
+    startedAt: "1970-01-01T00:14:05.000Z",
+    completedAt: "1970-01-01T00:14:20.000Z",
     githubEnvironment: "production-route-close",
     policySha256: ROUTE_POLICY_SHA256,
     projectIdSha256: sha256(PROJECT),
@@ -523,7 +523,7 @@ function writePredecessorAuthority(
     applyAuthorizationReceiptSha256: "6".repeat(64),
     applyOperationReceiptSha256: "7".repeat(64),
     promotionOperationId: "66666666-6666-4666-8666-666666666666",
-    promotionCommittedAt: "1970-01-01T00:13:45.000Z",
+    promotionCommittedAt: "1970-01-01T00:14:45.000Z",
     quarantineReceiptSha256: null,
     pitrReceiptSha256: "8".repeat(64),
     pitrObservedAt: "1970-01-01T00:12:01.000Z",
@@ -558,7 +558,7 @@ function writePredecessorAuthority(
     cleanupSeconds: 1,
     reviewerApprovalSetSha256: "3".repeat(64),
     reviewerIdSha256s: ["4".repeat(64), "5".repeat(64)],
-    attestedAt: "1970-01-01T00:15:15.000Z",
+    attestedAt: "1970-01-01T00:16:15.000Z",
     chronologySha256: "6".repeat(64),
     checks: {
       authorityExact: true,

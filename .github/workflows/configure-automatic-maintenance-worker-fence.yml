@@ -44,6 +44,10 @@ on:
         description: Staging activate only; successful candidate upload at zero replicas
         required: false
         type: string
+      venue_directory_run_id:
+        description: Staging activate only; successful same-candidate venue-directory proof
+        required: false
+        type: string
       restore_run_id:
         description: Staging activate only; successful candidate restore run
         required: false
@@ -99,6 +103,7 @@ jobs:
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
           FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
           RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
           ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -130,6 +135,7 @@ jobs:
             test -z "$PREPARE_RUN_ID"
             test -z "$QUIESCE_RUN_ID"
             test -z "$FENCED_DEPLOYMENT_RUN_ID"
+            test -z "$VENUE_DIRECTORY_RUN_ID"
             test -z "$RESTORE_RUN_ID"
             test -z "$ROLE_LIMIT_RUN_ID"
           fi
@@ -138,6 +144,7 @@ jobs:
             test -z "$PREPARE_RUN_ID"
             test -z "$QUIESCE_RUN_ID"
             test -z "$FENCED_DEPLOYMENT_RUN_ID"
+            test -z "$VENUE_DIRECTORY_RUN_ID"
             test -z "$RESTORE_RUN_ID"
             test -z "$ROLE_LIMIT_RUN_ID"
           fi
@@ -148,18 +155,20 @@ jobs:
                 "$PREPARE_RUN_ID"
                 "$QUIESCE_RUN_ID"
                 "$FENCED_DEPLOYMENT_RUN_ID"
+                "$VENUE_DIRECTORY_RUN_ID"
                 "$RESTORE_RUN_ID"
               )
               for prerequisite_run_id in "${provided[@]}"; do
                 [[ "$prerequisite_run_id" =~ ^[1-9][0-9]{0,19}$ ]]
                 test "$prerequisite_run_id" != "$RUN_ID"
               done
-              test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = '4'
+              test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = '5'
             else
               test "$TARGET" = production
               test -z "$PREPARE_RUN_ID"
               test -z "$QUIESCE_RUN_ID"
               test -z "$FENCED_DEPLOYMENT_RUN_ID"
+              test -z "$VENUE_DIRECTORY_RUN_ID"
               test -z "$RESTORE_RUN_ID"
               [[ "$ROLE_LIMIT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
               test "$ROLE_LIMIT_RUN_ID" != "$RUN_ID"
@@ -195,6 +204,7 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
           RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
           ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
           TARGET: ${{ inputs.target }}
@@ -207,6 +217,7 @@ jobs:
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/prepare" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/quiesce" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/fenced-deployment" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/venue-directory" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/restore" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/role-limit" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/sealed"
@@ -218,10 +229,11 @@ jobs:
             --arg operation "$OPERATION" \
             --arg prepareRunId "$PREPARE_RUN_ID" \
             --arg quiesceRunId "$QUIESCE_RUN_ID" \
+            --arg venueDirectoryRunId "$VENUE_DIRECTORY_RUN_ID" \
             --arg restoreRunId "$RESTORE_RUN_ID" \
             --arg roleLimitRunId "$ROLE_LIMIT_RUN_ID" \
             --arg target "$TARGET" \
-            '{schemaVersion:"pintpath-automatic-maintenance-worker-fence-dispatch/v1",candidateSha:$candidateSha,bootstrapPath:$bootstrapPath,target:$target,operation:$operation,prerequisiteRunIds:{prepare:$prepareRunId,quiesce:$quiesceRunId,fencedDeployment:$fencedDeploymentRunId,restore:$restoreRunId,roleLimit:$roleLimitRunId},secretMaterialIncluded:false}' \
+            '{schemaVersion:"pintpath-automatic-maintenance-worker-fence-dispatch/v1",candidateSha:$candidateSha,bootstrapPath:$bootstrapPath,target:$target,operation:$operation,prerequisiteRunIds:{prepare:$prepareRunId,quiesce:$quiesceRunId,fencedDeployment:$fencedDeploymentRunId,venueDirectory:$venueDirectoryRunId,restore:$restoreRunId,roleLimit:$roleLimitRunId},secretMaterialIncluded:false}' \
             > "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence/dispatch.json"
 
       - name: Retrieve the exact staging prepare artifact
@@ -274,6 +286,16 @@ jobs:
           name: pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/fenced-deployment
 
+      - name: Retrieve the exact staging venue-directory artifact
+        if: inputs.target == 'permanent-staging' && inputs.operation == 'activate'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.venue_directory_run_id }}
+          name: pintpath-permanent-staging-venue-directory-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/venue-directory
+
       - name: Retrieve the exact staging restore artifact
         if: inputs.target == 'permanent-staging' && inputs.operation == 'activate'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -296,6 +318,7 @@ jobs:
           PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: activate
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
           RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
         shell: bash
         run: |
@@ -317,6 +340,7 @@ jobs:
             "$sealed/prepare" \
             "$sealed/quiesce" \
             "$sealed/fenced-deployment" \
+            "$sealed/venue-directory" \
             "$sealed/restore"
           if test "$BOOTSTRAP_PATH" = cold-dead; then
             seal_unique "$root/prepare" cold-prepare-terminal.json \
@@ -334,6 +358,17 @@ jobs:
             "$sealed/quiesce/prerequisites-verification.json"
           seal_unique "$root/fenced-deployment" deployment-receipt.json \
             "$sealed/fenced-deployment/deployment-receipt.json"
+          for leaf in \
+            venue-directory-plan.json \
+            venue-import-terminal.json \
+            constraint-preflight.json \
+            migration-prewrite.json \
+            migration-apply.json \
+            constraint-postflight.json \
+            venue-directory-terminal.json; do
+            seal_unique "$root/venue-directory" "$leaf" \
+              "$sealed/venue-directory/$leaf"
+          done
           seal_unique "$root/restore" bootstrap-staging-one-receipt.json \
             "$sealed/restore/bootstrap-staging-one-receipt.json"
           seal_unique "$root/restore" prerequisites-verification.json \
@@ -359,6 +394,8 @@ jobs:
           args+=(
             --fenced-deployment-run-id "$FENCED_DEPLOYMENT_RUN_ID"
             --fenced-deployment-receipt-file "$sealed/fenced-deployment/deployment-receipt.json"
+            --venue-directory-run-id "$VENUE_DIRECTORY_RUN_ID"
+            --venue-directory-receipt-file "$sealed/venue-directory/venue-directory-terminal.json"
             --restore-run-id "$RESTORE_RUN_ID"
             --restore-receipt-file "$sealed/restore/bootstrap-staging-one-receipt.json"
             --restore-verification-file "$sealed/restore/prerequisites-verification.json"
@@ -538,6 +575,7 @@ jobs:
           FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
           RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
           ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -559,6 +597,7 @@ jobs:
             "$PREPARE_RUN_ID"
             "$QUIESCE_RUN_ID"
             "$FENCED_DEPLOYMENT_RUN_ID"
+            "$VENUE_DIRECTORY_RUN_ID"
             "$RESTORE_RUN_ID"
           )
           for prerequisite_run_id in "${provided[@]}"; do
@@ -566,7 +605,7 @@ jobs:
             test "$prerequisite_run_id" != "$RUN_ID"
             test "$prerequisite_run_id" != "$AMBIGUOUS_ACTIVATE_RUN_ID"
           done
-          test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = 4
+          test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = 5
           test "$CONFIRMATION" = \
             "RECONCILE_ACTIVATE_AUTOMATIC_MAINTENANCE_IN_PERMANENT_STAGING_FOR_${CANDIDATE_SHA}"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
@@ -601,6 +640,7 @@ jobs:
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/prepare" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/quiesce" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/fenced-deployment" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/venue-directory" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/restore" \
             "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/sealed"
 
@@ -667,6 +707,15 @@ jobs:
           name: pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/fenced-deployment
 
+      - name: Retrieve the exact staging venue-directory artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.venue_directory_run_id }}
+          name: pintpath-permanent-staging-venue-directory-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/venue-directory
+
       - name: Retrieve the exact staging restore artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -687,6 +736,7 @@ jobs:
           PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: reconcile-activate
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
           RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
         shell: bash
         run: |
@@ -706,7 +756,8 @@ jobs:
           }
           install -d -m 700 \
             "$sealed/prepare" "$sealed/quiesce" \
-            "$sealed/fenced-deployment" "$sealed/restore"
+            "$sealed/fenced-deployment" "$sealed/venue-directory" \
+            "$sealed/restore"
           if test "$BOOTSTRAP_PATH" = cold-dead; then
             seal_unique "$root/prepare" cold-prepare-terminal.json \
               "$sealed/prepare/cold-prepare-terminal.json"
@@ -723,6 +774,17 @@ jobs:
             "$sealed/quiesce/prerequisites-verification.json"
           seal_unique "$root/fenced-deployment" deployment-receipt.json \
             "$sealed/fenced-deployment/deployment-receipt.json"
+          for leaf in \
+            venue-directory-plan.json \
+            venue-import-terminal.json \
+            constraint-preflight.json \
+            migration-prewrite.json \
+            migration-apply.json \
+            constraint-postflight.json \
+            venue-directory-terminal.json; do
+            seal_unique "$root/venue-directory" "$leaf" \
+              "$sealed/venue-directory/$leaf"
+          done
           seal_unique "$root/restore" bootstrap-staging-one-receipt.json \
             "$sealed/restore/bootstrap-staging-one-receipt.json"
           seal_unique "$root/restore" prerequisites-verification.json \
@@ -748,6 +810,8 @@ jobs:
           args+=(
             --fenced-deployment-run-id "$FENCED_DEPLOYMENT_RUN_ID"
             --fenced-deployment-receipt-file "$sealed/fenced-deployment/deployment-receipt.json"
+            --venue-directory-run-id "$VENUE_DIRECTORY_RUN_ID"
+            --venue-directory-receipt-file "$sealed/venue-directory/venue-directory-terminal.json"
             --restore-run-id "$RESTORE_RUN_ID"
             --restore-receipt-file "$sealed/restore/bootstrap-staging-one-receipt.json"
             --restore-verification-file "$sealed/restore/prerequisites-verification.json"

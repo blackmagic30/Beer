@@ -1,0 +1,6 @@
+{
+  "schemaVersion": "pintpath-provider-mutation-dispatch/v1",
+  "candidateSha": "d939a77d0950b27466f3b9ecd26643a2416059a7",
+  "operation": "reconcile-completed-forbidden-offsite-backup-deletion",
+  "secretMaterialIncluded": false
+}

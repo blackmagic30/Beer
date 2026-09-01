@@ -185,7 +185,7 @@ const FENCE_CHECKS = {
 function fenceTerminal(overrides: Record<string, unknown> = {}): string {
   const binding = {
     policySha256:
-      "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27",
+      "3178685f32c9d49e359d089d5afd7c2d8c62860899a0cc70b25760155c8d7236",
     candidateSha: CANDIDATE,
     target: "production",
     operation: "fence",
@@ -475,7 +475,7 @@ function roleLimitFiles(prerequisitesSource: string): {
 function activateTerminal(deploymentBeforeIdSha256: string): string {
   const binding = {
     policySha256:
-      "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27",
+      "3178685f32c9d49e359d089d5afd7c2d8c62860899a0cc70b25760155c8d7236",
     candidateSha: CANDIDATE,
     target: "production",
     operation: "activate",

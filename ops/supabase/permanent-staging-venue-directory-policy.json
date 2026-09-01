@@ -1,0 +1,300 @@
+{
+  "schemaVersion": "pintpath-protected-permanent-staging-venue-directory-policy/v1",
+  "policyId": "pintpath-permanent-staging-venue-directory",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "permanent-staging-venue-directory",
+  "workflow": {
+    "path": ".github/workflows/permanent-staging-venue-directory.yml",
+    "name": "Apply and prove permanent-staging venue directory",
+    "runNamePrefix": "Permanent staging venue directory | apply-refresh-validate | ",
+    "jobName": "Apply and prove permanent-staging venue directory",
+    "mutationStepName": "Apply the exact venue plan and validate constraints",
+    "artifactNamePrefix": "pintpath-permanent-staging-venue-directory-",
+    "terminalFilename": "venue-directory-terminal.json"
+  },
+  "target": {
+    "projectRef": "bbfibbadwjxzrcdncavy",
+    "origin": "https://bbfibbadwjxzrcdncavy.supabase.co",
+    "forbiddenProjectRefs": [
+      "hfbmhdxrwtihukmixxta",
+      "jxpubqlmqnnqwadmjgyk"
+    ],
+    "forbiddenOrigins": [
+      "https://auth.pintpath.au",
+      "https://hfbmhdxrwtihukmixxta.supabase.co",
+      "https://jxpubqlmqnnqwadmjgyk.supabase.co"
+    ]
+  },
+  "databaseContract": {
+    "migrationVersion": "20260901032339",
+    "migrationPath": "supabase/migrations/20260901032339_validate_external_venue_directory_constraints.sql",
+    "migrationSha256": "5068c2a678813e57fde83b29d3cb5e438ce9070705f246827b7ee8e2a70ee96c",
+    "migrationBytes": 161,
+    "application": {
+      "mode": "REPEATABLE_EXACT_LEDGER_AWARE_PUSH_OR_PROVEN_NO_WRITE",
+      "firstRunMaximumPushInvocations": 1,
+      "steadyStateMaximumPushInvocations": 0,
+      "automaticRetriesAllowed": false,
+      "successfulFirstRunAcknowledgement": "received",
+      "ambiguousOrFailedPushAction": "STOP_BEFORE_IMPORT_APPLY_NO_RETRY",
+      "expectedFirstRunStateTransition": "EXACT_FIRST_RUN_TO_STEADY_STATE_BY_THIS_RUN_ONLY",
+      "unexpectedOrExternalStateTransitionsAllowed": false,
+      "dbPushFlags": [
+        "--linked",
+        "--password",
+        "<redacted>",
+        "--yes"
+      ],
+      "forbiddenDbPushFlags": [
+        "--include-all",
+        "--include-roles",
+        "--include-seed"
+      ],
+      "dryRunEvidence": {
+        "cliVersion": "2.109.1",
+        "exitCode": 0,
+        "command": [
+          "supabase",
+          "db",
+          "push",
+          "--linked",
+          "--password",
+          "<redacted>",
+          "--dry-run",
+          "--yes"
+        ],
+        "stdoutAndStderrSha256Required": true
+      },
+      "sha256AndBytesMustBeVerifiedBeforeApply": true,
+      "preflightVerifierPath": "scripts/ci/supabase-venue-directory-preflight-verify.sql",
+      "preflightVerifierSha256": "9ae8804c03f7f515beaa80b6fb99ae886f200712482c21ae5eae11f9709b8c6a",
+      "preflightVerifierBytes": 6189,
+      "verifyAfterApplyPath": "scripts/ci/supabase-venue-directory-schema-verify.sql"
+    },
+    "validatedConstraints": [
+      "venues_australian_postcode_check",
+      "venues_business_status_check"
+    ]
+  },
+  "importer": {
+    "path": "scripts/import-melbourne-venues.ts",
+    "planMode": "plan",
+    "applyMode": "apply",
+    "operation": "directory-discovery-and-status-refresh",
+    "planSchemaVersion": "pintpath-permanent-staging-venue-import-plan/v1",
+    "terminalSchemaVersion": "pintpath-permanent-staging-venue-import-terminal/v1",
+    "planTopLevelKeys": [
+      "schemaVersion",
+      "planSha256",
+      "candidateSha",
+      "supabaseProjectRef",
+      "databaseContract",
+      "operation",
+      "startedAt",
+      "completedAt",
+      "checkedAt",
+      "inputSnapshot",
+      "collection",
+      "projected",
+      "transitions"
+    ],
+    "terminalTopLevelKeys": [
+      "schemaVersion",
+      "status",
+      "outcome",
+      "candidateSha",
+      "supabaseProjectRef",
+      "databaseContract",
+      "planSha256",
+      "startedAt",
+      "completedAt",
+      "preflightSnapshot",
+      "finalSnapshot",
+      "attemptedWriteCount",
+      "successfulWriteCount",
+      "insertedCount",
+      "updatedCount",
+      "excludedCount",
+      "partialWrite",
+      "samePlanRetryAllowed",
+      "failure"
+    ]
+  },
+  "authority": {
+    "requiredRepository": "blackmagic30/Beer",
+    "requiredGitRef": "refs/heads/main",
+    "requiredRunAttempt": 1,
+    "confirmationPrefix": "APPLY_REFRESH_VALIDATE_PERMANENT_STAGING_VENUE_DIRECTORY_bbfibbadwjxzrcdncavy_FOR_",
+    "confirmationFenceInfix": "_AFTER_FENCED_RUN_",
+    "externalMutationFreezeAttestation": "I_ATTEST_EXTERNAL_PERMANENT_STAGING_VENUE_ROW_AND_SCHEMA_MIGRATION_WRITERS_ARE_FROZEN_FOR_THIS_RUN",
+    "fencedDeployment": {
+      "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+      "workflowId": "deploy-permanent-staging.yml",
+      "workflowName": "Deploy Pint Path permanent staging",
+      "runNamePrefix": "Deploy permanent staging | fenced | ",
+      "artifactNamePrefix": "pintpath-permanent-staging-fenced-deployment-",
+      "receiptSchemaVersion": "pintpath-railway-application-deployment-executor/v5",
+      "receiptOperation": "pintpath-railway-application-source-upload",
+      "receiptExecutorState": "GITHUB_ENVIRONMENT_PROTECTED",
+      "requiredReplicaCount": 0,
+      "latestDeploymentRunRequired": true
+    }
+  },
+  "toolchain": {
+    "supabaseCliVersion": "2.109.1",
+    "setupCliAction": "supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520"
+  },
+  "mutation": {
+    "maximumApplyInvocations": 1,
+    "automaticRetriesAllowed": false,
+    "samePlanRetryAllowed": false,
+    "planMustBeReadOnly": true,
+    "requiredSequence": "PREFLIGHT_THEN_SEALED_PLAN_THEN_LEDGER_GUARD_THEN_MIGRATION_PROOF_THEN_IMPORT_APPLY",
+    "googleCredentialAllowedDuringApply": false,
+    "unconditionalConstraintPostflightRequired": true,
+    "ambiguousOutcomeAction": "STOP_NO_RETRY_REQUIRE_NEW_REVIEWED_RUN"
+  },
+  "evidence": {
+    "fencedAuthoritySchemaVersion": "pintpath-permanent-staging-venue-fenced-authority/v1",
+    "intentSchemaVersion": "pintpath-permanent-staging-venue-directory-intent/v1",
+    "canonicalization": "RECURSIVE_KEY_SORTED_WHITESPACE_FREE_JSON_PLUS_ONE_LF",
+    "files": {
+      "plan": "venue-directory-plan.json",
+      "importTerminal": "venue-import-terminal.json",
+      "constraintPreflight": "constraint-preflight.json",
+      "migrationPrewrite": "migration-prewrite.json",
+      "migrationApply": "migration-apply.json",
+      "constraintPostflight": "constraint-postflight.json",
+      "boundaryTerminal": "venue-directory-terminal.json"
+    },
+    "schemas": {
+      "constraintPreflight": "pintpath-permanent-staging-venue-constraint-preflight/v1",
+      "migrationPrewrite": "pintpath-permanent-staging-venue-migration-prewrite/v1",
+      "migrationApply": "pintpath-permanent-staging-venue-migration-apply/v1",
+      "constraintPostflight": "pintpath-permanent-staging-venue-constraint-postflight/v1",
+      "boundaryTerminal": "pintpath-permanent-staging-venue-directory-terminal/v1"
+    },
+    "migrationModes": {
+      "firstRun": {
+        "literal": "first_run",
+        "remoteLedger": "EXACT_LOCAL_VERSIONS_EXCLUDING_TARGET",
+        "constraintsValidated": false,
+        "dryRunPendingFilenames": [
+          "20260901032339_validate_external_venue_directory_constraints.sql"
+        ],
+        "migrationWriteAttempts": 1
+      },
+      "steadyState": {
+        "literal": "steady_state",
+        "remoteLedger": "EXACT_ALL_LOCAL_VERSIONS",
+        "constraintsValidated": true,
+        "dryRunPendingFilenames": [],
+        "migrationWriteAttempts": 0
+      }
+    },
+    "companionTopLevelKeys": {
+      "constraintPreflight": [
+        "schemaVersion",
+        "candidateSha",
+        "supabaseProjectRef",
+        "databaseContract",
+        "migrationMode",
+        "localMigrationVersions",
+        "remoteMigrationVersions",
+        "constraints",
+        "violationCounts",
+        "targetLedger",
+        "dryRun",
+        "preflightVerifier",
+        "checkedAt",
+        "checks",
+        "secretMaterialIncluded",
+        "secretDerivedCommitmentsIncluded"
+      ],
+      "migrationPrewrite": [
+        "schemaVersion",
+        "candidateSha",
+        "supabaseProjectRef",
+        "databaseContract",
+        "migrationMode",
+        "planSha256",
+        "localMigrationVersions",
+        "remoteMigrationVersions",
+        "constraints",
+        "violationCounts",
+        "targetLedger",
+        "dryRun",
+        "checkedAt",
+        "checks",
+        "secretMaterialIncluded",
+        "secretDerivedCommitmentsIncluded"
+      ],
+      "migrationApply": [
+        "schemaVersion",
+        "candidateSha",
+        "supabaseProjectRef",
+        "databaseContract",
+        "migrationMode",
+        "planSha256",
+        "startedAt",
+        "completedAt",
+        "writeAttempts",
+        "acknowledgement",
+        "exitCode",
+        "command",
+        "cliStdoutSha256",
+        "cliStderrSha256",
+        "samePlanRetryAllowed",
+        "secretMaterialIncluded",
+        "secretDerivedCommitmentsIncluded"
+      ],
+      "constraintPostflight": [
+        "schemaVersion",
+        "candidateSha",
+        "supabaseProjectRef",
+        "databaseContract",
+        "migrationMode",
+        "planSha256",
+        "migrationApplySha256",
+        "localMigrationVersions",
+        "remoteMigrationVersions",
+        "constraints",
+        "violationCounts",
+        "targetLedger",
+        "dryRun",
+        "strictVerifier",
+        "checkedAt",
+        "checks",
+        "secretMaterialIncluded",
+        "secretDerivedCommitmentsIncluded"
+      ],
+      "boundaryTerminal": [
+        "schemaVersion",
+        "status",
+        "outcome",
+        "candidateSha",
+        "supabaseProjectRef",
+        "databaseContract",
+        "migrationMode",
+        "planSha256",
+        "importTerminalSha256",
+        "constraintPreflightSha256",
+        "migrationPrewriteSha256",
+        "migrationApplySha256",
+        "constraintPostflightSha256",
+        "startedAt",
+        "completedAt",
+        "migrationWriteAttempts",
+        "samePlanRetryAllowed",
+        "secretMaterialIncluded",
+        "secretDerivedCommitmentsIncluded",
+        "checks",
+        "failure"
+      ]
+    },
+    "durableIntentRequiredBeforeApply": true,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false,
+    "retentionDays": 90
+  }
+}

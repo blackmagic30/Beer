@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
@@ -11,11 +12,11 @@ import {
 } from "./lib/trusted-filesystem.js";
 
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
-  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2" as const;
+  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v4" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "51d9a84eeaa3e0e23437efb1556af6198009f19bb7980ca376722ae67ff6b88c" as const;
+  "f027dba09f0ddbd24da2cd1e7b217f973103b45537cbfff20071fb57011e5c56" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -25,7 +26,7 @@ const POLICY_PATH =
 const WORKER_POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json";
 const WORKER_POLICY_SHA256 =
-  "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27";
+  "3178685f32c9d49e359d089d5afd7c2d8c62860899a0cc70b25760155c8d7236";
 const SCALE_POLICY_PATH =
   "ops/railway/permanent-staging-scale-evidence-policy.json";
 const SCALE_POLICY_SHA256 =
@@ -42,6 +43,10 @@ const COLD_RECOVERY_POLICY_PATH =
   "ops/railway/permanent-staging-cold-recovery-policy.json";
 const COLD_RECOVERY_POLICY_SHA256 =
   "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd";
+const VENUE_DIRECTORY_POLICY_PATH =
+  "ops/supabase/permanent-staging-venue-directory-policy.json";
+const VENUE_DIRECTORY_POLICY_SHA256 =
+  "ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
@@ -52,6 +57,20 @@ const SCALE_RECEIPT_SCHEMA =
   "pintpath-permanent-staging-scale-operation/v2";
 const DEPLOYMENT_RECEIPT_SCHEMA =
   "pintpath-railway-application-deployment-executor/v5";
+const VENUE_DIRECTORY_RECEIPT_SCHEMA =
+  "pintpath-permanent-staging-venue-directory-terminal/v1";
+const VENUE_DIRECTORY_PLAN_SCHEMA =
+  "pintpath-permanent-staging-venue-import-plan/v1";
+const VENUE_DIRECTORY_IMPORT_TERMINAL_SCHEMA =
+  "pintpath-permanent-staging-venue-import-terminal/v1";
+const VENUE_DIRECTORY_CONSTRAINT_PREFLIGHT_SCHEMA =
+  "pintpath-permanent-staging-venue-constraint-preflight/v1";
+const VENUE_DIRECTORY_MIGRATION_PREWRITE_SCHEMA =
+  "pintpath-permanent-staging-venue-migration-prewrite/v1";
+const VENUE_DIRECTORY_MIGRATION_APPLY_SCHEMA =
+  "pintpath-permanent-staging-venue-migration-apply/v1";
+const VENUE_DIRECTORY_CONSTRAINT_POSTFLIGHT_SCHEMA =
+  "pintpath-permanent-staging-venue-constraint-postflight/v1";
 const COLD_PREPARE_RECEIPT_SCHEMA =
   "pintpath-permanent-staging-cold-prepare/v1";
 const COLD_PREPARE_RECONCILIATION_RECEIPT_SCHEMA =
@@ -69,6 +88,7 @@ const RUN_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
 const MAXIMUM_GITHUB_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAXIMUM_ARTIFACT_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_EVIDENCE_BYTES = 1024 * 1024;
+const MAXIMUM_VENUE_EVIDENCE_BYTES = 32 * 1024 * 1024;
 const MAXIMUM_RECEIPT_AGE_MS = 86_400_000;
 const MAXIMUM_VERIFICATION_AGE_MS = 900_000;
 const MAXIMUM_CLOCK_SKEW_MS = 300_000;
@@ -92,6 +112,7 @@ type ProducerKind =
   | "quiesce"
   | "cold-quiesce"
   | "fenced-deployment"
+  | "venue-directory"
   | "restore"
   | "activate"
   | "active-deployment";
@@ -186,6 +207,17 @@ const PRODUCERS: Readonly<Record<ProducerKind, ProducerSpec>> = Object.freeze({
     receiptFilename: "deployment-receipt.json",
     receiptSchema: DEPLOYMENT_RECEIPT_SCHEMA,
   },
+  "venue-directory": {
+    workflowPath:
+      ".github/workflows/permanent-staging-venue-directory.yml",
+    workflowName: "Apply and prove permanent-staging venue directory",
+    title: (sha) =>
+      `Permanent staging venue directory | apply-refresh-validate | ${sha}`,
+    artifact: (sha) =>
+      `pintpath-permanent-staging-venue-directory-${sha}`,
+    receiptFilename: "venue-directory-terminal.json",
+    receiptSchema: VENUE_DIRECTORY_RECEIPT_SCHEMA,
+  },
   restore: {
     workflowPath:
       ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
@@ -253,10 +285,10 @@ const HEALTHY_REQUIRED_PRODUCERS: Readonly<
   "cold-quiesce": [],
   "cold-reconcile-quiesce": [],
   "fenced-deploy": ["prepare", "quiesce"],
-  restore: ["prepare", "quiesce", "fenced-deployment"],
-  "reconcile-restore": ["prepare", "quiesce", "fenced-deployment"],
-  activate: ["prepare", "quiesce", "fenced-deployment", "restore"],
-  "reconcile-activate": ["prepare", "quiesce", "fenced-deployment", "restore"],
+  restore: ["prepare", "quiesce", "fenced-deployment", "venue-directory"],
+  "reconcile-restore": ["prepare", "quiesce", "fenced-deployment", "venue-directory"],
+  activate: ["prepare", "quiesce", "fenced-deployment", "venue-directory", "restore"],
+  "reconcile-activate": ["prepare", "quiesce", "fenced-deployment", "venue-directory", "restore"],
   "active-deploy": ["activate"],
   "scale-evidence": ["activate", "active-deployment"],
 });
@@ -268,10 +300,10 @@ const COLD_REQUIRED_PRODUCERS: Readonly<
   "cold-quiesce": ["cold-prepare"],
   "cold-reconcile-quiesce": ["cold-prepare"],
   "fenced-deploy": ["cold-prepare", "cold-quiesce"],
-  restore: ["cold-prepare", "cold-quiesce", "fenced-deployment"],
-  "reconcile-restore": ["cold-prepare", "cold-quiesce", "fenced-deployment"],
-  activate: ["cold-prepare", "cold-quiesce", "fenced-deployment", "restore"],
-  "reconcile-activate": ["cold-prepare", "cold-quiesce", "fenced-deployment", "restore"],
+  restore: ["cold-prepare", "cold-quiesce", "fenced-deployment", "venue-directory"],
+  "reconcile-restore": ["cold-prepare", "cold-quiesce", "fenced-deployment", "venue-directory"],
+  activate: ["cold-prepare", "cold-quiesce", "fenced-deployment", "venue-directory", "restore"],
+  "reconcile-activate": ["cold-prepare", "cold-quiesce", "fenced-deployment", "venue-directory", "restore"],
   "active-deploy": ["activate"],
   "scale-evidence": ["activate", "active-deployment"],
 });
@@ -387,6 +419,10 @@ const ARGUMENT_FLAGS: Readonly<Record<ProducerKind, {
   "fenced-deployment": {
     run: "--fenced-deployment-run-id",
     receipt: "--fenced-deployment-receipt-file",
+  },
+  "venue-directory": {
+    run: "--venue-directory-run-id",
+    receipt: "--venue-directory-receipt-file",
   },
   restore: {
     run: "--restore-run-id",
@@ -511,7 +547,7 @@ interface Dependencies {
   readonly cwd: string;
   readonly fetchImpl: typeof fetch;
   readonly now: () => Date;
-  readonly readPrivateFile: (filename: string) => Buffer;
+  readonly readPrivateFile: (filename: string, maximumBytes?: number) => Buffer;
   readonly writeEvidence: (filename: string, source: string) => void;
   readonly writeOutput: (source: string) => void;
   readonly requestTimeoutMs: number;
@@ -523,6 +559,20 @@ function sha256(value: string | Buffer): string {
 
 function canonical(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function canonicalCompactValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalCompactValue);
+  if (!record(value)) return value;
+  const result: JsonRecord = {};
+  for (const key of Object.keys(value).sort()) {
+    result[key] = canonicalCompactValue(value[key]);
+  }
+  return result;
+}
+
+function canonicalCompact(value: unknown): string {
+  return `${JSON.stringify(canonicalCompactValue(value))}\n`;
 }
 
 function record(value: unknown): value is JsonRecord {
@@ -684,6 +734,7 @@ function validatePolicies(cwd: string): void {
     [FENCED_DEPLOYMENT_POLICY_PATH, FENCED_DEPLOYMENT_POLICY_SHA256],
     [ACTIVE_DEPLOYMENT_POLICY_PATH, ACTIVE_DEPLOYMENT_POLICY_SHA256],
     [COLD_RECOVERY_POLICY_PATH, COLD_RECOVERY_POLICY_SHA256],
+    [VENUE_DIRECTORY_POLICY_PATH, VENUE_DIRECTORY_POLICY_SHA256],
   ] as const;
   try {
     for (const [relative, expected] of policies) {
@@ -972,13 +1023,18 @@ async function verifyReviewedCandidate(
 function parseCanonicalPrivateJson(
   filename: string,
   readPrivateFile: Dependencies["readPrivateFile"],
+  compact = false,
+  maximumBytes = MAXIMUM_EVIDENCE_BYTES,
 ): { readonly source: string; readonly value: JsonRecord } {
   let bytes: Buffer | null = null;
   try {
-    bytes = readPrivateFile(filename);
+    bytes = readPrivateFile(filename, maximumBytes);
     const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const value = JSON.parse(source) as unknown;
-    if (!record(value) || canonical(value) !== source) fail("receipt_invalid");
+    if (
+      !record(value)
+      || (compact ? canonicalCompact(value) : canonical(value)) !== source
+    ) fail("receipt_invalid");
     return { source, value };
   } catch (error) {
     if (error instanceof BootstrapPrerequisiteError) throw error;
@@ -2206,6 +2262,473 @@ function validateDeploymentReceipt(
   };
 }
 
+const VENUE_PROJECT_REF = "bbfibbadwjxzrcdncavy" as const;
+const VENUE_MIGRATION_VERSION = "20260901032339" as const;
+const VENUE_MIGRATION_FILENAME =
+  "20260901032339_validate_external_venue_directory_constraints.sql" as const;
+const VENUE_MIGRATION_PATH =
+  `supabase/migrations/${VENUE_MIGRATION_FILENAME}` as const;
+const VENUE_MIGRATION_SHA256 =
+  "5068c2a678813e57fde83b29d3cb5e438ce9070705f246827b7ee8e2a70ee96c" as const;
+const VENUE_MIGRATION_BYTES = 161 as const;
+const VENUE_CONSTRAINTS = Object.freeze([
+  "venues_australian_postcode_check",
+  "venues_business_status_check",
+] as const);
+const VENUE_PREFLIGHT_VERIFIER = Object.freeze({
+  path: "scripts/ci/supabase-venue-directory-preflight-verify.sql",
+  sha256: "9ae8804c03f7f515beaa80b6fb99ae886f200712482c21ae5eae11f9709b8c6a",
+  bytes: 6189,
+});
+const VENUE_STRICT_VERIFIER = Object.freeze({
+  path: "scripts/ci/supabase-venue-directory-schema-verify.sql",
+  sha256: "e2a6d9cd5a5dcbc14c6932d2ac4c44f81814249c0338e9eb54e72a1a985a6130",
+  bytes: 3956,
+});
+const VENUE_PLAN_KEYS = Object.freeze([
+  "schemaVersion", "planSha256", "candidateSha", "supabaseProjectRef",
+  "databaseContract", "operation", "startedAt", "completedAt", "checkedAt",
+  "inputSnapshot", "collection", "projected", "transitions",
+] as const);
+const VENUE_IMPORT_TERMINAL_KEYS = Object.freeze([
+  "schemaVersion", "status", "outcome", "candidateSha", "supabaseProjectRef",
+  "databaseContract", "planSha256", "startedAt", "completedAt",
+  "preflightSnapshot", "finalSnapshot", "attemptedWriteCount",
+  "successfulWriteCount", "insertedCount", "updatedCount", "excludedCount",
+  "partialWrite", "samePlanRetryAllowed", "failure",
+] as const);
+const VENUE_PREFLIGHT_KEYS = Object.freeze([
+  "schemaVersion", "candidateSha", "supabaseProjectRef", "databaseContract",
+  "migrationMode", "localMigrationVersions", "remoteMigrationVersions",
+  "constraints", "violationCounts", "targetLedger", "dryRun",
+  "preflightVerifier", "checkedAt", "checks", "secretMaterialIncluded",
+  "secretDerivedCommitmentsIncluded",
+] as const);
+const VENUE_PREWRITE_KEYS = Object.freeze([
+  "schemaVersion", "candidateSha", "supabaseProjectRef", "databaseContract",
+  "migrationMode", "planSha256", "localMigrationVersions",
+  "remoteMigrationVersions", "constraints", "violationCounts", "targetLedger",
+  "dryRun", "checkedAt", "checks", "secretMaterialIncluded",
+  "secretDerivedCommitmentsIncluded",
+] as const);
+const VENUE_MIGRATION_APPLY_KEYS = Object.freeze([
+  "schemaVersion", "candidateSha", "supabaseProjectRef", "databaseContract",
+  "migrationMode", "planSha256", "startedAt", "completedAt", "writeAttempts",
+  "acknowledgement", "exitCode", "command", "cliStdoutSha256",
+  "cliStderrSha256", "samePlanRetryAllowed", "secretMaterialIncluded",
+  "secretDerivedCommitmentsIncluded",
+] as const);
+const VENUE_POSTFLIGHT_KEYS = Object.freeze([
+  "schemaVersion", "candidateSha", "supabaseProjectRef", "databaseContract",
+  "migrationMode", "planSha256", "migrationApplySha256",
+  "localMigrationVersions", "remoteMigrationVersions", "constraints",
+  "violationCounts", "targetLedger", "dryRun", "strictVerifier", "checkedAt",
+  "checks", "secretMaterialIncluded", "secretDerivedCommitmentsIncluded",
+] as const);
+const VENUE_BOUNDARY_TERMINAL_KEYS = Object.freeze([
+  "schemaVersion", "status", "outcome", "candidateSha", "supabaseProjectRef",
+  "databaseContract", "migrationMode", "planSha256", "importTerminalSha256",
+  "constraintPreflightSha256", "migrationPrewriteSha256",
+  "migrationApplySha256", "constraintPostflightSha256", "startedAt",
+  "completedAt", "migrationWriteAttempts", "samePlanRetryAllowed",
+  "secretMaterialIncluded", "secretDerivedCommitmentsIncluded", "checks",
+  "failure",
+] as const);
+const VENUE_PREFLIGHT_CHECKS = Object.freeze([
+  "structureExact", "zeroViolations", "constraintLedgerStateExact",
+  "migrationFileExact", "pendingSetExact", "remoteLedgerExact",
+] as const);
+const VENUE_PREWRITE_CHECKS = Object.freeze([
+  "planSealed", "repositoryMainExact", "stateUnchanged", "migrationFileExact",
+  "pendingSetExact", "remoteLedgerExact",
+] as const);
+const VENUE_POSTFLIGHT_CHECKS = Object.freeze([
+  "migrationLedgerRecorded", "noPendingMigrations", "constraintsValidated",
+  "strictSchemaExact", "migrationFileExact", "remoteLedgerExact",
+  "zeroViolations",
+] as const);
+const VENUE_BOUNDARY_CHECKS = Object.freeze([
+  "importApplied", "preflightStructureExact", "preflightZeroViolations",
+  "preflightConstraintLedgerStateExact", "pendingSetPreflightExact",
+  "pendingSetPrewriteExact", "migrationMutationExact", "migrationLedgerRecorded",
+  "noPendingMigrationsPostflight", "constraintsValidatedPostflight",
+] as const);
+const VENUE_MANAGED_ROW_KEYS = Object.freeze([
+  "id", "google_place_id", "name", "address", "suburb", "state", "postcode",
+  "phone", "website", "latitude", "longitude", "business_status",
+  "last_checked_at", "directory_eligible", "source",
+] as const);
+const VENUE_DESIRED_ROW_KEYS = Object.freeze(
+  VENUE_MANAGED_ROW_KEYS.filter((key) => key !== "id"),
+);
+
+function venueDatabaseContractExact(value: unknown): boolean {
+  return exactKeys(value, [
+    "migrationVersion", "migrationPath", "migrationSha256", "migrationBytes",
+    "validatedConstraints",
+  ]) && value.migrationVersion === VENUE_MIGRATION_VERSION
+    && value.migrationPath === VENUE_MIGRATION_PATH
+    && value.migrationSha256 === VENUE_MIGRATION_SHA256
+    && value.migrationBytes === VENUE_MIGRATION_BYTES
+    && Array.isArray(value.validatedConstraints)
+    && JSON.stringify(value.validatedConstraints) === JSON.stringify(VENUE_CONSTRAINTS);
+}
+
+function venueSnapshotExact(value: unknown): value is JsonRecord {
+  return exactKeys(value, ["rowCount", "sha256"])
+    && Number.isSafeInteger(value.rowCount) && Number(value.rowCount) >= 0
+    && SHA256_PATTERN.test(String(value.sha256));
+}
+
+function venueNonnegativeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function venueRepositoryContractsExact(cwd: string): readonly string[] {
+  try {
+    for (const contract of [
+      { path: VENUE_MIGRATION_PATH, sha256: VENUE_MIGRATION_SHA256, bytes: 161 },
+      VENUE_PREFLIGHT_VERIFIER,
+      VENUE_STRICT_VERIFIER,
+    ]) {
+      const source = fs.readFileSync(path.resolve(cwd, contract.path));
+      if (source.byteLength !== contract.bytes || sha256(source) !== contract.sha256) {
+        fail("receipt_invalid");
+      }
+    }
+    const versions = fs.readdirSync(path.resolve(cwd, "supabase/migrations"))
+      .filter((name) => /^[0-9]+_[a-z0-9_]+\.sql$/.test(name))
+      .sort()
+      .map((name) => name.slice(0, name.indexOf("_")));
+    if (versions.length < 2 || versions.at(-1) !== VENUE_MIGRATION_VERSION
+      || new Set(versions).size !== versions.length) fail("receipt_invalid");
+    return versions;
+  } catch (error) {
+    if (error instanceof BootstrapPrerequisiteError) throw error;
+    fail("receipt_invalid");
+  }
+}
+
+function venueTargetLedgerExact(value: unknown): boolean {
+  return exactKeys(value, ["version", "name", "statements"])
+    && value.version === VENUE_MIGRATION_VERSION
+    && value.name === "validate_external_venue_directory_constraints"
+    && Array.isArray(value.statements)
+    && JSON.stringify(value.statements) === JSON.stringify([
+      "alter table public.venues\n  validate constraint venues_business_status_check",
+      "alter table public.venues\n  validate constraint venues_australian_postcode_check",
+    ]);
+}
+
+function venueConstraintsExact(value: unknown, validated: boolean): boolean {
+  if (!Array.isArray(value) || value.length !== VENUE_CONSTRAINTS.length) return false;
+  return value.every((item, index) => exactKeys(item,
+    ["name", "type", "validated", "definition"])
+    && item.name === VENUE_CONSTRAINTS[index] && item.type === "c"
+    && item.validated === validated && typeof item.definition === "string")
+    && String((value[0] as JsonRecord).definition).includes("^[0-9]{4}$")
+    && ["OPERATIONAL", "CLOSED_TEMPORARILY", "CLOSED_PERMANENTLY", "FUTURE_OPENING"]
+      .every((status) => String((value[1] as JsonRecord).definition).includes(status));
+}
+
+function venueDryRunExact(value: unknown, pending: readonly string[]): boolean {
+  return exactKeys(value, ["pendingFilenames", "stdoutSha256", "stderrSha256"])
+    && Array.isArray(value.pendingFilenames)
+    && JSON.stringify(value.pendingFilenames) === JSON.stringify(pending)
+    && SHA256_PATTERN.test(String(value.stdoutSha256))
+    && SHA256_PATTERN.test(String(value.stderrSha256));
+}
+
+function validateVenuePlan(
+  source: string,
+  value: JsonRecord,
+  candidateSha: string,
+): { readonly startedAtMs: number; readonly completedAtMs: number } {
+  const withoutHash = { ...value };
+  delete withoutHash.planSha256;
+  const computedHash = sha256(canonicalCompact(withoutHash).slice(0, -1));
+  const started = timestamp(value.startedAt, "receipt_invalid");
+  const completed = timestamp(value.completedAt, "receipt_invalid");
+  timestamp(value.checkedAt, "receipt_invalid");
+  const collection = record(value.collection) ? value.collection : null;
+  const projected = record(value.projected) ? value.projected : null;
+  const collectionKeys = [
+    "discoveryCellAttemptedCount", "discoveryCellSuccessfulCount",
+    "discoveryCellFailureCount", "discoveryQueryAttemptedCount",
+    "discoveryQuerySuccessfulCount", "discoveryQueryFailureCount",
+    "existingPlaceIdAttemptedCount", "existingPlaceIdSuccessfulCount",
+    "existingPlaceIdFailureCount", "existingPlaceIdSatisfiedByDiscoveryCount",
+    "existingRowMissingPlaceIdCount", "quarantinedVenueCount",
+  ];
+  if (source !== canonicalCompact(value) || !exactKeys(value, VENUE_PLAN_KEYS)
+    || value.schemaVersion !== VENUE_DIRECTORY_PLAN_SCHEMA
+    || value.planSha256 !== computedHash || value.candidateSha !== candidateSha
+    || value.supabaseProjectRef !== VENUE_PROJECT_REF
+    || !venueDatabaseContractExact(value.databaseContract)
+    || value.operation !== "directory-discovery-and-status-refresh"
+    || completed.milliseconds < started.milliseconds
+    || !venueSnapshotExact(value.inputSnapshot)
+    || !exactKeys(collection, collectionKeys)
+    || Object.values(collection).some((item) => !venueNonnegativeInteger(item))
+    || !exactKeys(projected,
+      ["insertCount", "updateCount", "exclusionCount", "totalTransitionCount"])
+    || Object.values(projected).some((item) => !venueNonnegativeInteger(item))
+    || !Array.isArray(value.transitions)
+    || value.transitions.length !== projected.totalTransitionCount
+    || projected.totalTransitionCount !== Number(projected.insertCount)
+      + Number(projected.updateCount) + Number(projected.exclusionCount)) {
+    fail("receipt_invalid");
+  }
+  const counts = { insert: 0, update: 0, exclude: 0 };
+  value.transitions.forEach((transition, index) => {
+    if (!exactKeys(transition,
+      ["ordinal", "operation", "identity", "expectedBefore", "desiredAfter"])
+      || transition.ordinal !== index + 1
+      || !Object.hasOwn(counts, String(transition.operation))
+      || !exactKeys(transition.identity,
+        ["venueId", "googlePlaceId", "normalizedNameAddressSha256"])
+      || typeof transition.identity.googlePlaceId !== "string"
+      || !SHA256_PATTERN.test(String(transition.identity.normalizedNameAddressSha256))
+      || !exactKeys(transition.desiredAfter, VENUE_DESIRED_ROW_KEYS)
+      || transition.desiredAfter.last_checked_at !== value.checkedAt) {
+      fail("receipt_invalid");
+    }
+    const operation = transition.operation as keyof typeof counts;
+    counts[operation] += 1;
+    if (operation === "insert") {
+      if (transition.expectedBefore !== null || transition.identity.venueId !== null) {
+        fail("receipt_invalid");
+      }
+    } else if (!exactKeys(transition.expectedBefore, VENUE_MANAGED_ROW_KEYS)
+      || typeof transition.identity.venueId !== "string"
+      || transition.expectedBefore.id !== transition.identity.venueId) {
+      fail("receipt_invalid");
+    }
+  });
+  if (counts.insert !== projected.insertCount || counts.update !== projected.updateCount
+    || counts.exclude !== projected.exclusionCount) fail("receipt_invalid");
+  return { startedAtMs: started.milliseconds, completedAtMs: completed.milliseconds };
+}
+
+function validateVenueImportTerminal(
+  source: string,
+  value: JsonRecord,
+  candidateSha: string,
+  plan: JsonRecord,
+): { readonly startedAtMs: number; readonly completedAtMs: number } {
+  const started = timestamp(value.startedAt, "receipt_invalid");
+  const completed = timestamp(value.completedAt, "receipt_invalid");
+  const projected = record(plan.projected) ? plan.projected : fail("receipt_invalid");
+  const input = record(plan.inputSnapshot) ? plan.inputSnapshot : fail("receipt_invalid");
+  const classified = Number(value.insertedCount) + Number(value.updatedCount)
+    + Number(value.excludedCount);
+  if (source !== canonicalCompact(value)
+    || !exactKeys(value, VENUE_IMPORT_TERMINAL_KEYS)
+    || value.schemaVersion !== VENUE_DIRECTORY_IMPORT_TERMINAL_SCHEMA
+    || value.status !== "succeeded" || value.outcome !== "applied"
+    || value.candidateSha !== candidateSha || value.supabaseProjectRef !== VENUE_PROJECT_REF
+    || !venueDatabaseContractExact(value.databaseContract)
+    || value.planSha256 !== plan.planSha256 || completed.milliseconds < started.milliseconds
+    || !venueSnapshotExact(value.preflightSnapshot)
+    || !venueSnapshotExact(value.finalSnapshot)
+    || value.preflightSnapshot.rowCount !== input.rowCount
+    || value.preflightSnapshot.sha256 !== input.sha256
+    || value.finalSnapshot.rowCount !== Number(input.rowCount) + Number(projected.insertCount)
+    || [value.attemptedWriteCount, value.successfulWriteCount, value.insertedCount,
+      value.updatedCount, value.excludedCount].some((item) => !venueNonnegativeInteger(item))
+    || value.attemptedWriteCount !== value.successfulWriteCount
+    || value.successfulWriteCount !== classified
+    || value.insertedCount !== projected.insertCount
+    || value.updatedCount !== projected.updateCount
+    || value.excludedCount !== projected.exclusionCount
+    || value.partialWrite !== false || value.samePlanRetryAllowed !== false
+    || value.failure !== null) fail("receipt_invalid");
+  return { startedAtMs: started.milliseconds, completedAtMs: completed.milliseconds };
+}
+
+function validateVenueDatabaseObservation(
+  value: JsonRecord,
+  phase: "preflight" | "prewrite" | "postflight",
+  candidateSha: string,
+  localVersions: readonly string[],
+  planSha256: string,
+  migrationApplySha256: string,
+): { readonly mode: "first_run" | "steady_state"; readonly checkedAtMs: number } {
+  const keys = phase === "preflight" ? VENUE_PREFLIGHT_KEYS
+    : phase === "prewrite" ? VENUE_PREWRITE_KEYS : VENUE_POSTFLIGHT_KEYS;
+  const schema = phase === "preflight" ? VENUE_DIRECTORY_CONSTRAINT_PREFLIGHT_SCHEMA
+    : phase === "prewrite" ? VENUE_DIRECTORY_MIGRATION_PREWRITE_SCHEMA
+      : VENUE_DIRECTORY_CONSTRAINT_POSTFLIGHT_SCHEMA;
+  const mode = value.migrationMode;
+  if (!exactKeys(value, keys) || value.schemaVersion !== schema
+    || value.candidateSha !== candidateSha || value.supabaseProjectRef !== VENUE_PROJECT_REF
+    || !venueDatabaseContractExact(value.databaseContract)
+    || (mode !== "first_run" && mode !== "steady_state")
+    || value.secretMaterialIncluded !== false
+    || value.secretDerivedCommitmentsIncluded !== false) fail("receipt_invalid");
+  const checked = timestamp(value.checkedAt, "receipt_invalid");
+  const before = mode === "first_run" ? localVersions.slice(0, -1) : localVersions;
+  const postflight = phase === "postflight";
+  const validated = postflight || mode === "steady_state";
+  const expectedRemote = postflight ? localVersions : before;
+  const expectedPending = validated ? [] : [VENUE_MIGRATION_FILENAME];
+  if (!Array.isArray(value.localMigrationVersions)
+    || JSON.stringify(value.localMigrationVersions) !== JSON.stringify(localVersions)
+    || !Array.isArray(value.remoteMigrationVersions)
+    || JSON.stringify(value.remoteMigrationVersions) !== JSON.stringify(expectedRemote)
+    || !venueConstraintsExact(value.constraints, validated)
+    || !exactKeys(value.violationCounts, ["businessStatus", "postcode"])
+    || value.violationCounts.businessStatus !== 0 || value.violationCounts.postcode !== 0
+    || (validated ? !venueTargetLedgerExact(value.targetLedger) : value.targetLedger !== null)
+    || !venueDryRunExact(value.dryRun, expectedPending)) fail("receipt_invalid");
+  if (phase === "preflight") {
+    if (!exactKeys(value.preflightVerifier, ["path", "sha256", "bytes", "passed"])
+      || value.preflightVerifier.path !== VENUE_PREFLIGHT_VERIFIER.path
+      || value.preflightVerifier.sha256 !== VENUE_PREFLIGHT_VERIFIER.sha256
+      || value.preflightVerifier.bytes !== VENUE_PREFLIGHT_VERIFIER.bytes
+      || value.preflightVerifier.passed !== true
+      || !exactTrueChecks(value.checks, VENUE_PREFLIGHT_CHECKS)) fail("receipt_invalid");
+  } else if (phase === "prewrite") {
+    if (value.planSha256 !== planSha256
+      || !exactTrueChecks(value.checks, VENUE_PREWRITE_CHECKS)) fail("receipt_invalid");
+  } else if (value.planSha256 !== planSha256
+    || value.migrationApplySha256 !== migrationApplySha256
+    || !exactKeys(value.strictVerifier, ["path", "sha256", "bytes", "passed"])
+    || value.strictVerifier.path !== VENUE_STRICT_VERIFIER.path
+    || value.strictVerifier.sha256 !== VENUE_STRICT_VERIFIER.sha256
+    || value.strictVerifier.bytes !== VENUE_STRICT_VERIFIER.bytes
+    || value.strictVerifier.passed !== true
+    || !exactTrueChecks(value.checks, VENUE_POSTFLIGHT_CHECKS)) fail("receipt_invalid");
+  return { mode, checkedAtMs: checked.milliseconds };
+}
+
+function validateVenueMigrationApply(
+  value: JsonRecord,
+  candidateSha: string,
+  planSha256: string,
+  mode: "first_run" | "steady_state",
+): { readonly startedAtMs: number; readonly completedAtMs: number; readonly attempts: number } {
+  const started = timestamp(value.startedAt, "receipt_invalid");
+  const completed = timestamp(value.completedAt, "receipt_invalid");
+  if (!exactKeys(value, VENUE_MIGRATION_APPLY_KEYS)
+    || value.schemaVersion !== VENUE_DIRECTORY_MIGRATION_APPLY_SCHEMA
+    || value.candidateSha !== candidateSha || value.supabaseProjectRef !== VENUE_PROJECT_REF
+    || !venueDatabaseContractExact(value.databaseContract)
+    || value.migrationMode !== mode || value.planSha256 !== planSha256
+    || completed.milliseconds < started.milliseconds
+    || value.samePlanRetryAllowed !== false || value.secretMaterialIncluded !== false
+    || value.secretDerivedCommitmentsIncluded !== false
+    || !Array.isArray(value.command)
+    || JSON.stringify(value.command) !== JSON.stringify([
+      "supabase", "db", "push", "--linked", "--password", "<redacted>", "--yes",
+    ])) fail("receipt_invalid");
+  if (mode === "first_run") {
+    if (value.writeAttempts !== 1 || value.exitCode !== 0
+      || value.acknowledgement !== "received"
+      || !SHA256_PATTERN.test(String(value.cliStdoutSha256))
+      || !SHA256_PATTERN.test(String(value.cliStderrSha256))) fail("receipt_invalid");
+  } else if (value.writeAttempts !== 0 || value.acknowledgement !== "not_attempted"
+    || value.exitCode !== null || value.cliStdoutSha256 !== null
+    || value.cliStderrSha256 !== null) fail("receipt_invalid");
+  return {
+    startedAtMs: started.milliseconds,
+    completedAtMs: completed.milliseconds,
+    attempts: Number(value.writeAttempts),
+  };
+}
+
+function validateVenueDirectoryEvidence(
+  terminalFilename: string,
+  candidateSha: string,
+  dependencies: Dependencies,
+): ReceiptSummary {
+  const directory = path.dirname(terminalFilename);
+  const read = (leaf: string) => parseCanonicalPrivateJson(
+    path.join(directory, leaf), dependencies.readPrivateFile, true,
+    MAXIMUM_VENUE_EVIDENCE_BYTES,
+  );
+  const terminal = read("venue-directory-terminal.json");
+  const plan = read("venue-directory-plan.json");
+  const importTerminal = read("venue-import-terminal.json");
+  const preflight = read("constraint-preflight.json");
+  const prewrite = read("migration-prewrite.json");
+  const migrationApply = read("migration-apply.json");
+  const postflight = read("constraint-postflight.json");
+  const localVersions = venueRepositoryContractsExact(dependencies.cwd);
+  const planTimes = validateVenuePlan(plan.source, plan.value, candidateSha);
+  const importTimes = validateVenueImportTerminal(
+    importTerminal.source, importTerminal.value, candidateSha, plan.value,
+  );
+  const planSha256 = String(plan.value.planSha256);
+  const preflightState = validateVenueDatabaseObservation(
+    preflight.value, "preflight", candidateSha, localVersions, planSha256, "",
+  );
+  const prewriteState = validateVenueDatabaseObservation(
+    prewrite.value, "prewrite", candidateSha, localVersions, planSha256, "",
+  );
+  if (prewriteState.mode !== preflightState.mode) fail("receipt_invalid");
+  for (const key of ["localMigrationVersions", "remoteMigrationVersions", "constraints",
+    "violationCounts", "targetLedger", "dryRun"] as const) {
+    if (JSON.stringify(preflight.value[key]) !== JSON.stringify(prewrite.value[key])) {
+      fail("receipt_invalid");
+    }
+  }
+  const migrationTimes = validateVenueMigrationApply(
+    migrationApply.value, candidateSha, planSha256, preflightState.mode,
+  );
+  const postflightState = validateVenueDatabaseObservation(
+    postflight.value, "postflight", candidateSha, localVersions, planSha256,
+    sha256(migrationApply.source),
+  );
+  if (postflightState.mode !== preflightState.mode) fail("receipt_invalid");
+  const boundary = terminal.value;
+  const boundaryStarted = timestamp(boundary.startedAt, "receipt_invalid");
+  const boundaryCompleted = timestamp(boundary.completedAt, "receipt_invalid");
+  if (!exactKeys(boundary, VENUE_BOUNDARY_TERMINAL_KEYS)
+    || boundary.schemaVersion !== VENUE_DIRECTORY_RECEIPT_SCHEMA
+    || boundary.status !== "succeeded" || boundary.outcome !== "applied_and_validated"
+    || boundary.candidateSha !== candidateSha
+    || boundary.supabaseProjectRef !== VENUE_PROJECT_REF
+    || !venueDatabaseContractExact(boundary.databaseContract)
+    || boundary.migrationMode !== preflightState.mode
+    || boundary.planSha256 !== planSha256
+    || boundary.importTerminalSha256 !== sha256(importTerminal.source)
+    || boundary.constraintPreflightSha256 !== sha256(preflight.source)
+    || boundary.migrationPrewriteSha256 !== sha256(prewrite.source)
+    || boundary.migrationApplySha256 !== sha256(migrationApply.source)
+    || boundary.constraintPostflightSha256 !== sha256(postflight.source)
+    || boundary.startedAt !== plan.value.startedAt
+    || boundary.migrationWriteAttempts !== migrationTimes.attempts
+    || boundary.samePlanRetryAllowed !== false
+    || boundary.secretMaterialIncluded !== false
+    || boundary.secretDerivedCommitmentsIncluded !== false
+    || !exactTrueChecks(boundary.checks, VENUE_BOUNDARY_CHECKS)
+    || boundary.failure !== null
+    || !(preflightState.checkedAtMs <= planTimes.startedAtMs
+      && planTimes.startedAtMs <= planTimes.completedAtMs
+      && planTimes.completedAtMs <= prewriteState.checkedAtMs
+      && prewriteState.checkedAtMs <= migrationTimes.startedAtMs
+      && migrationTimes.startedAtMs <= migrationTimes.completedAtMs
+      && migrationTimes.completedAtMs <= postflightState.checkedAtMs
+      && postflightState.checkedAtMs <= importTimes.startedAtMs
+      && importTimes.startedAtMs <= importTimes.completedAtMs
+      && importTimes.completedAtMs <= boundaryCompleted.milliseconds)
+    || boundaryStarted.milliseconds !== planTimes.startedAtMs) fail("receipt_invalid");
+  return {
+    filename: "venue-directory-terminal.json",
+    schemaVersion: VENUE_DIRECTORY_RECEIPT_SCHEMA,
+    sha256: sha256(terminal.source),
+    outcome: "applied_and_validated",
+    candidateSha,
+    sourceSha: candidateSha,
+    deploymentIdSha256: planSha256,
+    replicasBefore: null,
+    replicasAfter: null,
+    startedAtMs: boundaryStarted.milliseconds,
+    completedAtMs: boundaryCompleted.milliseconds,
+  };
+}
+
 const VERIFICATION_CHECK_KEYS = [
   "policiesExact",
   "currentMainExact",
@@ -2306,6 +2829,7 @@ function validateReceipt(
   if (kind === "quiesce" || kind === "restore") {
     return validateScaleReceipt(source, value, candidateSha, kind, sourceSha);
   }
+  if (kind === "venue-directory") fail("receipt_invalid");
   return validateDeploymentReceipt(source, value, candidateSha, kind);
 }
 
@@ -2550,23 +3074,27 @@ async function verify(
         quiescedSourceSha = prior.expectedDeploymentSha;
       }
     }
-    const receiptInput = parseCanonicalPrivateJson(
-      input.receiptFile,
-      dependencies.readPrivateFile,
-    );
-    const sourceSha = kind === "prepare" || kind === "cold-prepare"
+    const receiptInput = kind === "venue-directory"
+      ? null
+      : parseCanonicalPrivateJson(input.receiptFile, dependencies.readPrivateFile);
+    const sourceSha: string = kind === "prepare" || kind === "cold-prepare"
       ? args.expectedDeploymentSha ?? "0".repeat(40)
       : kind === "quiesce" || kind === "cold-quiesce"
         ? quiescedSourceSha ?? "0".repeat(40)
         : args.candidateSha;
-    const receipt = validateReceipt(
-      kind,
-      receiptInput.source,
-      receiptInput.value,
-      args.candidateSha,
-      sourceSha,
-    );
+    const receipt: ReceiptSummary = kind === "venue-directory"
+      ? validateVenueDirectoryEvidence(
+        input.receiptFile, args.candidateSha, dependencies,
+      )
+      : validateReceipt(
+        kind,
+        receiptInput!.source,
+        receiptInput!.value,
+        args.candidateSha,
+        sourceSha,
+      );
     if (kind === "cold-quiesce") {
+      if (!receiptInput) fail("receipt_invalid");
       const coldPrepare = args.inputs.get("cold-prepare");
       const boundPrepare = record(receiptInput.value.preparePrerequisite)
         ? receiptInput.value.preparePrerequisite
@@ -2586,6 +3114,7 @@ async function verify(
     ) fail("receipt_invalid");
     if (
       (kind === "fenced-deployment"
+        || kind === "venue-directory"
         || kind === "restore"
         || kind === "activate"
         || kind === "active-deployment")
@@ -2669,10 +3198,13 @@ async function verify(
   return verification;
 }
 
-function defaultReadPrivateFile(filename: string): Buffer {
+function defaultReadPrivateFile(
+  filename: string,
+  maximumBytes = MAXIMUM_EVIDENCE_BYTES,
+): Buffer {
   return readTrustedRegularFile(filename, {
     minBytes: 1,
-    maxBytes: MAXIMUM_EVIDENCE_BYTES,
+    maxBytes: maximumBytes,
     requireOwner: true,
     requirePrivate: true,
   });

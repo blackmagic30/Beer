@@ -114,8 +114,9 @@ select ok(
          'venues_australian_postcode_check'
        )
        and contype = 'c'
+       and convalidated
   ),
-  'directory status and Australian postcode checks exist'
+  'directory status and Australian postcode checks exist and are validated'
 );
 
 select ok(

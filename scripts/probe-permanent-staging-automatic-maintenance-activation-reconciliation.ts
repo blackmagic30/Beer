@@ -509,7 +509,7 @@ export async function runPermanentStagingActivationReconciliationProbe(
       },
     );
     checks.activationPrerequisitesExact =
-      prerequisites.prerequisites.length === 4 &&
+      prerequisites.prerequisites.length === 5 &&
       prerequisites.expectedDeploymentSha === null;
     if (!checks.activationPrerequisitesExact) throw new Error("prerequisites_invalid");
     const metadata = dependencies.env.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN ?? "";

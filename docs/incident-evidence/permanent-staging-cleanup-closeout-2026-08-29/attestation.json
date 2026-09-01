@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-cleanup-closeout-attestation/v1",
+  "operation": "reconcile-completed-forbidden-offsite-backup-deletion",
+  "originalCandidateSha": "0eadad05ce6c313ed3c12492d3095609ce5872d5",
+  "anchor": {
+    "candidateSha": "d939a77d0950b27466f3b9ecd26643a2416059a7",
+    "treeSha": "83b0b51efd2cf0ac5c2299c6cfd4c919d1973aff",
+    "parentSha": "0eadad05ce6c313ed3c12492d3095609ce5872d5",
+    "pullRequestNumber": 72,
+    "mergedAt": "2026-08-29T11:16:02Z"
+  },
+  "workflowRun": {
+    "id": 33249810569,
+    "workflowPath": ".github/workflows/permanent-staging-provider-mutation.yml",
+    "displayTitle": "Permanent staging provider mutation | reconcile-completed-forbidden-offsite-backup-deletion | d939a77d0950b27466f3b9ecd26643a2416059a7",
+    "headBranch": "main",
+    "headSha": "d939a77d0950b27466f3b9ecd26643a2416059a7",
+    "runAttempt": 1,
+    "status": "completed",
+    "conclusion": "success",
+    "createdAt": "2026-08-29T11:18:12Z",
+    "runStartedAt": "2026-08-29T11:18:12Z",
+    "updatedAt": "2026-08-29T11:22:43Z"
+  },
+  "workflowJob": {
+    "name": "One protected variable mutation plan",
+    "runId": 33249810569,
+    "runAttempt": 1,
+    "status": "completed",
+    "conclusion": "success",
+    "steps": [
+      {
+        "name": "Execute one reviewed protected Railway mutation plan",
+        "status": "completed",
+        "conclusion": "skipped"
+      },
+      {
+        "name": "Reconcile the completed cleanup with metadata only",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Reconcile the Railway mutation boundary after every attempt",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Upload secret-free terminal evidence",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "githubArtifact": {
+    "id": 9714046913,
+    "name": "pintpath-permanent-staging-provider-mutation-reconcile-completed-forbidden-offsite-backup-deletion-d939a77d0950b27466f3b9ecd26643a2416059a7",
+    "digest": "sha256:625fca28703f9c4c7897c6d52a3e54cef8caee6e68f66c3b26a1565d7e4f655d",
+    "sizeInBytes": 2583,
+    "createdAt": "2026-08-29T11:22:39Z",
+    "updatedAt": "2026-08-29T11:22:39Z",
+    "expiresAt": "2026-09-28T11:22:38Z"
+  },
+  "retainedEvidence": [
+    {
+      "path": "docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29/intent.json",
+      "sha256": "2f4aae0e84f714d0b9a1a9129d45f169270cdbde387a310fc323c248603aa180",
+      "sizeInBytes": 2443
+    },
+    {
+      "path": "docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29/dispatch.json",
+      "sha256": "4ac26e99c3d94d303c3c08f85f1a258e562d79f5e1edbec3100851a57db4844e",
+      "sizeInBytes": 233
+    },
+    {
+      "path": "docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29/terminal.json",
+      "sha256": "4d73f8a8455ed08d6538962c91718cc04259122550a1d0ee1ca9461aa4f8efd3",
+      "sizeInBytes": 1842
+    }
+  ],
+  "result": {
+    "outcome": "cleanup_completed_read_only_reconciled",
+    "mutationAttempts": 0,
+    "secretMaterialIncluded": false,
+    "secretDerivedCommitmentsIncluded": false,
+    "laterCandidateCloseoutRerunsAllowed": false
+  }
+}

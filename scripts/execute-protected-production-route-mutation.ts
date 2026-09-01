@@ -33,7 +33,7 @@ export const PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE =
 
 const POLICY_PATH = "ops/railway/production-route-mutation-policy.json";
 const POLICY_SHA256 =
-  "848504e20c7c67edcc25c69f3be6c7168047faeb5e3a997344a69aba74bdcae1";
+  "047a742e63c69ebb57fb8230a1efd2d27ae3dfd307f5a087b35a095c4839f348";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const BOUNDARY_POLICY_SHA256 =
@@ -55,7 +55,7 @@ const ISO_TIMESTAMP =
 const TOKEN = /^[^\r\n\0]{16,4096}$/;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const RELEASE_POLICY_SHA256 =
-  "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd";
+  "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90";
 const PROMOTION_RECOVERY_POLICY_SHA256 =
   "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988";
 const PRODUCTION_STAGE_CONTRACTS = Object.freeze({
@@ -650,8 +650,8 @@ function parseGithubPredecessorAuthority(
       || consumerStartedAt === null
       || env.GITHUB_RUN_ID !== String(value.consumer.runId)
       || env.GITHUB_WORKFLOW_REF !== expectedWorkflowRef) return null;
-    const expectedCheckCount = args.operation === "close" ? 13 : 16;
-    const expectedArtifactCount = args.operation === "close" ? 7 : 10;
+    const expectedCheckCount = args.operation === "close" ? 14 : 17;
+    const expectedArtifactCount = args.operation === "close" ? 8 : 11;
     if (!Array.isArray(value.checks) || value.checks.length !== expectedCheckCount
       || value.checks.some((item) => !genericCheckExact(item))
       || new Set(value.checks.map((item) => (item as { name: string }).name)).size

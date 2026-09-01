@@ -7,6 +7,10 @@ const MIGRATION_PATH = path.resolve(
   process.cwd(),
   "supabase/migrations/20260828010000_bootstrap_external_venue_directory.sql",
 );
+const CONSTRAINT_VALIDATION_MIGRATION_PATH = path.resolve(
+  process.cwd(),
+  "supabase/migrations/20260901032339_validate_external_venue_directory_constraints.sql",
+);
 const DRIFT_REHEARSAL_PATH = path.resolve(
   process.cwd(),
   "scripts/ci/supabase-venue-directory-drift.sql",
@@ -14,6 +18,10 @@ const DRIFT_REHEARSAL_PATH = path.resolve(
 const SCHEMA_VERIFIER_PATH = path.resolve(
   process.cwd(),
   "scripts/ci/supabase-venue-directory-schema-verify.sql",
+);
+const PG_TAP_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  "supabase/tests/004_external_venue_directory.test.sql",
 );
 const CI_WORKFLOW_PATH = path.resolve(process.cwd(), ".github/workflows/ci.yml");
 
@@ -62,9 +70,25 @@ describe("external venue-directory bootstrap migration", () => {
     expect(sql).not.toMatch(/update\s+public\.venues[\s\S]*set\s+business_status\s*=\s*'operational'/);
   });
 
+  it("validates both reviewed venue constraints without changing data or constraint definitions", () => {
+    const validationSql = fs
+      .readFileSync(CONSTRAINT_VALIDATION_MIGRATION_PATH, "utf8")
+      .toLowerCase();
+    const statements = validationSql
+      .split(";")
+      .map((statement) => statement.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    expect(statements).toEqual([
+      "alter table public.venues validate constraint venues_business_status_check",
+      "alter table public.venues validate constraint venues_australian_postcode_check",
+    ]);
+  });
+
   it("rehearses the observed missing-column drift, preserves legacy rows, and proves idempotency", () => {
     const rehearsal = fs.readFileSync(DRIFT_REHEARSAL_PATH, "utf8").toLowerCase();
     const verifier = fs.readFileSync(SCHEMA_VERIFIER_PATH, "utf8").toLowerCase();
+    const pgTapContract = fs.readFileSync(PG_TAP_CONTRACT_PATH, "utf8").toLowerCase();
     const ci = fs.readFileSync(CI_WORKFLOW_PATH, "utf8");
 
     expect(rehearsal).toContain("begin;");
@@ -81,11 +105,13 @@ describe("external venue-directory bootstrap migration", () => {
     expect(verifier).toContain("venue directory status columns do not match");
     expect(verifier).toContain("venues_business_status_check");
     expect(verifier).toContain("venues_australian_postcode_check");
+    expect(verifier.match(/and convalidated/g)).toHaveLength(2);
     expect(verifier).toContain("venues_operational_directory_name_id_idx");
     expect(verifier).toContain("row level security is disabled");
     expect(verifier).toContain("browser roles retain direct public.venues privileges");
     expect(verifier).toContain("venue updated_at trigger is absent or not invoker-safe");
     expect(verifier).not.toContain("\\set");
+    expect(pgTapContract).toContain("and convalidated");
     expect(ci).toContain("--file scripts/ci/supabase-venue-directory-drift.sql");
   });
 });

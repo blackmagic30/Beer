@@ -29,6 +29,7 @@ import {
   type ColdRecoveryVariableRow,
 } from "../scripts/lib/permanent-staging-cold-recovery.js";
 import {
+  STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA,
   STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
   stagingWorkerBootstrapPrerequisiteInternals,
 } from "../scripts/verify-permanent-staging-worker-bootstrap-prerequisites.js";
@@ -189,7 +190,7 @@ function coldPrepareVerification(
   operation: "cold-quiesce" | "cold-reconcile-quiesce" = "cold-quiesce",
 ): string {
   return canonical({
-    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2",
+    schemaVersion: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA,
     policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
     operation,
     bootstrapPath: "cold-dead",
