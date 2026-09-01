@@ -525,6 +525,8 @@ describe("Postgres schema generation", () => {
       const allGeneratedIndexNames = postgresIndexNames(generateSchema()).sort();
       const generatedSourceIndexNames = allGeneratedIndexNames
         .filter((name) => name !== "migration_runs_source_target_unique");
+      const expectedGeneratedSourceIndexNames = sourceIndexNames
+        .filter((name) => name !== "idx_accounts_public_account");
       const venueRequestSourceSubmissionIndexes = sourceIndexes.filter((index) => {
         if (index.tableName !== "venue_requests") return false;
         const columns = database
@@ -547,10 +549,17 @@ describe("Postgres schema generation", () => {
       expect(sourceIndexes).toHaveLength(
         venueRequestSourceSubmissionIndexes.length > 0 ? 185 : 184,
       );
-      expect(generatedSourceIndexNames).toEqual(sourceIndexNames);
-      expect(allGeneratedIndexNames.filter((name) => !sourceIndexNames.includes(name)))
+      // The explicit SQLite index remains required for upgraded source
+      // databases whose public_account_id column predates the table-level
+      // UNIQUE constraint. Postgres always receives that constraint from the
+      // canonical CREATE TABLE, so emitting this source index there would be
+      // redundant.
+      expect(sourceIndexNames).toContain("idx_accounts_public_account");
+      expect(generatedSourceIndexNames).toEqual(expectedGeneratedSourceIndexNames);
+      expect(allGeneratedIndexNames.filter((name) => !expectedGeneratedSourceIndexNames.includes(name)))
         .toEqual(["migration_runs_source_target_unique"]);
       expect(new Set(allGeneratedIndexNames).size).toBe(allGeneratedIndexNames.length);
+      expect(allGeneratedIndexNames).not.toContain("idx_accounts_public_account");
 
       for (const { name } of venueRequestSourceSubmissionIndexes) {
         expect(generatedSourceIndexNames).toContain(name);

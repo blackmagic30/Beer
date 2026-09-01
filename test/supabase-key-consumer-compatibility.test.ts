@@ -343,6 +343,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/execute-protected-permanent-staging-variable-mutation.ts",
       "scripts/execute-protected-permanent-staging-venue-directory.ts",
       "scripts/import-melbourne-venues.ts",
+      "scripts/lib/permanent-staging-account-deletion-rehearsal.ts",
       "scripts/lib/permanent-staging-cold-recovery.ts",
       "scripts/lib/permanent-staging-cost-policy.ts",
       "scripts/postgres-migration.ts",

@@ -50,6 +50,22 @@
         "--include-roles",
         "--include-seed"
       ],
+      "firstRunMigrationInventory": [
+        {
+          "version": "20260901032339",
+          "filename": "20260901032339_validate_external_venue_directory_constraints.sql",
+          "path": "supabase/migrations/20260901032339_validate_external_venue_directory_constraints.sql",
+          "sha256": "5068c2a678813e57fde83b29d3cb5e438ce9070705f246827b7ee8e2a70ee96c",
+          "bytes": 161
+        },
+        {
+          "version": "20260901122942",
+          "filename": "20260901122942_remove_redundant_accounts_public_account_index.sql",
+          "path": "supabase/migrations/20260901122942_remove_redundant_accounts_public_account_index.sql",
+          "sha256": "70ba85af2938a7356740b5216b6577ad311e961359aa72746dd6ac2d25ef46ee",
+          "bytes": 4709
+        }
+      ],
       "dryRunEvidence": {
         "cliVersion": "2.109.1",
         "exitCode": 0,
@@ -177,10 +193,11 @@
     "migrationModes": {
       "firstRun": {
         "literal": "first_run",
-        "remoteLedger": "EXACT_LOCAL_VERSIONS_EXCLUDING_TARGET",
+        "remoteLedger": "EXACT_LOCAL_VERSIONS_EXCLUDING_FIRST_RUN_MIGRATION_INVENTORY",
         "constraintsValidated": false,
         "dryRunPendingFilenames": [
-          "20260901032339_validate_external_venue_directory_constraints.sql"
+          "20260901032339_validate_external_venue_directory_constraints.sql",
+          "20260901122942_remove_redundant_accounts_public_account_index.sql"
         ],
         "migrationWriteAttempts": 1
       },

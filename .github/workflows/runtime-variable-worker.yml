@@ -60,7 +60,13 @@ on:
         required: false
       PINTPATH_PRODUCTION_SOURCE_EVIDENCE_SIGNING_SECRET:
         required: false
+      PINTPATH_PRODUCTION_ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID:
+        required: false
+      PINTPATH_PRODUCTION_ACCOUNT_DELETION_NOTICE_FROM:
+        required: false
       PINTPATH_PRODUCTION_ACCOUNT_DELETION_NOTICE_KEYRING_JSON:
+        required: false
+      PINTPATH_PRODUCTION_ACCOUNT_DELETION_NOTICE_REPLY_TO:
         required: false
       PINTPATH_STAGING_DATABASE_URL:
         required: false
@@ -92,7 +98,13 @@ on:
         required: false
       PINTPATH_STAGING_SOURCE_EVIDENCE_SIGNING_SECRET:
         required: false
+      PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID:
+        required: false
+      PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_FROM:
+        required: false
       PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_KEYRING_JSON:
+        required: false
+      PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_REPLY_TO:
         required: false
 
 permissions:

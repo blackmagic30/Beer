@@ -16,7 +16,7 @@ export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "f027dba09f0ddbd24da2cd1e7b217f973103b45537cbfff20071fb57011e5c56" as const;
+  "a7fe6184aa6849cc9b4f8f4652cf02608a21685153144812e9de0e2567bbb548" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -46,7 +46,7 @@ const COLD_RECOVERY_POLICY_SHA256 =
 const VENUE_DIRECTORY_POLICY_PATH =
   "ops/supabase/permanent-staging-venue-directory-policy.json";
 const VENUE_DIRECTORY_POLICY_SHA256 =
-  "ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd";
+  "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
@@ -2271,6 +2271,31 @@ const VENUE_MIGRATION_PATH =
 const VENUE_MIGRATION_SHA256 =
   "5068c2a678813e57fde83b29d3cb5e438ce9070705f246827b7ee8e2a70ee96c" as const;
 const VENUE_MIGRATION_BYTES = 161 as const;
+const VENUE_FIRST_RUN_MIGRATION_INVENTORY = Object.freeze([
+  Object.freeze({
+    version: VENUE_MIGRATION_VERSION,
+    filename: VENUE_MIGRATION_FILENAME,
+    path: VENUE_MIGRATION_PATH,
+    sha256: VENUE_MIGRATION_SHA256,
+    bytes: VENUE_MIGRATION_BYTES,
+  }),
+  Object.freeze({
+    version: "20260901122942",
+    filename:
+      "20260901122942_remove_redundant_accounts_public_account_index.sql",
+    path:
+      "supabase/migrations/20260901122942_remove_redundant_accounts_public_account_index.sql",
+    sha256:
+      "70ba85af2938a7356740b5216b6577ad311e961359aa72746dd6ac2d25ef46ee",
+    bytes: 4709,
+  }),
+] as const);
+const VENUE_FIRST_RUN_MIGRATION_VERSIONS = Object.freeze(
+  VENUE_FIRST_RUN_MIGRATION_INVENTORY.map((migration) => migration.version),
+);
+const VENUE_FIRST_RUN_MIGRATION_FILENAMES = Object.freeze(
+  VENUE_FIRST_RUN_MIGRATION_INVENTORY.map((migration) => migration.filename),
+);
 const VENUE_CONSTRAINTS = Object.freeze([
   "venues_australian_postcode_check",
   "venues_business_status_check",
@@ -2387,7 +2412,7 @@ function venueNonnegativeInteger(value: unknown): boolean {
 function venueRepositoryContractsExact(cwd: string): readonly string[] {
   try {
     for (const contract of [
-      { path: VENUE_MIGRATION_PATH, sha256: VENUE_MIGRATION_SHA256, bytes: 161 },
+      ...VENUE_FIRST_RUN_MIGRATION_INVENTORY,
       VENUE_PREFLIGHT_VERIFIER,
       VENUE_STRICT_VERIFIER,
     ]) {
@@ -2400,7 +2425,9 @@ function venueRepositoryContractsExact(cwd: string): readonly string[] {
       .filter((name) => /^[0-9]+_[a-z0-9_]+\.sql$/.test(name))
       .sort()
       .map((name) => name.slice(0, name.indexOf("_")));
-    if (versions.length < 2 || versions.at(-1) !== VENUE_MIGRATION_VERSION
+    if (versions.length <= VENUE_FIRST_RUN_MIGRATION_INVENTORY.length
+      || JSON.stringify(versions.slice(-VENUE_FIRST_RUN_MIGRATION_INVENTORY.length))
+        !== JSON.stringify(VENUE_FIRST_RUN_MIGRATION_VERSIONS)
       || new Set(versions).size !== versions.length) fail("receipt_invalid");
     return versions;
   } catch (error) {
@@ -2567,11 +2594,13 @@ function validateVenueDatabaseObservation(
     || value.secretMaterialIncluded !== false
     || value.secretDerivedCommitmentsIncluded !== false) fail("receipt_invalid");
   const checked = timestamp(value.checkedAt, "receipt_invalid");
-  const before = mode === "first_run" ? localVersions.slice(0, -1) : localVersions;
+  const before = mode === "first_run"
+    ? localVersions.slice(0, -VENUE_FIRST_RUN_MIGRATION_INVENTORY.length)
+    : localVersions;
   const postflight = phase === "postflight";
   const validated = postflight || mode === "steady_state";
   const expectedRemote = postflight ? localVersions : before;
-  const expectedPending = validated ? [] : [VENUE_MIGRATION_FILENAME];
+  const expectedPending = validated ? [] : VENUE_FIRST_RUN_MIGRATION_FILENAMES;
   if (!Array.isArray(value.localMigrationVersions)
     || JSON.stringify(value.localMigrationVersions) !== JSON.stringify(localVersions)
     || !Array.isArray(value.remoteMigrationVersions)

@@ -37,6 +37,9 @@ const schemaSql = fs.readFileSync(path.resolve("src/db/postgres-schema.sql"), "u
 const kernelSql = fs.readFileSync(path.resolve(
   "supabase/migrations/20260812022314_add_inert_reviewed_price_promotion_kernel.sql",
 ), "utf8");
+const redundantPublicAccountIndexMigrationSql = fs.readFileSync(path.resolve(
+  "supabase/migrations/20260901122942_remove_redundant_accounts_public_account_index.sql",
+), "utf8");
 
 if (configuredRequired !== "" && configuredRequired !== "true") {
   throw new Error(`${REQUIRED_ENV} must be true when set.`);
@@ -626,7 +629,7 @@ const FORBIDDEN_SQL = `WITH database AS (
       WHERE defaclnamespace IN (SELECT oid FROM private_namespaces)),
     'unexpectedPrivateObjects',(
       (SELECT pg_catalog.abs(count(*) FILTER (WHERE relkind='r') - 62)
-        + pg_catalog.abs(count(*) FILTER (WHERE relkind='i') - 271)
+        + pg_catalog.abs(count(*) FILTER (WHERE relkind='i') - 270)
         + count(*) FILTER (WHERE relkind NOT IN ('r','i')) FROM private_objects)
       + (SELECT pg_catalog.abs(count(*) - 10) FROM pg_catalog.pg_proc
           WHERE pronamespace IN (SELECT oid FROM private_namespaces))
@@ -662,7 +665,7 @@ const FORBIDDEN_SQL = `WITH database AS (
       + (SELECT count(*) FROM pg_catalog.pg_ts_template
           WHERE tmplnamespace IN (SELECT oid FROM all_pintpath_namespaces))
     ),
-    'unexpectedPrivateDependencies',(SELECT pg_catalog.abs(count - 1934) FROM private_dependency_count),
+    'unexpectedPrivateDependencies',(SELECT pg_catalog.abs(count - 1933) FROM private_dependency_count),
     'unexpectedSharedDependencies',(SELECT pg_catalog.abs(count - 384) FROM shared_dependency_count)
   ) AS counts`;
 
@@ -942,6 +945,87 @@ describe.skipIf(!configuredAdminUrl)("passive physical-schema V4 against disposa
       ...record,
       derived: { ...record.derived, portableSchemaSha256: "f".repeat(64) },
     })).toThrowError(expect.objectContaining({ code: "record_invalid" }));
+
+    await first.query("BEGIN");
+    try {
+      await first.query(`CREATE COLLATION pintpath_app.physical_v4_case_insensitive (
+        provider = icu,
+        locale = 'und-u-ks-level2',
+        deterministic = false
+      )`);
+      await first.query(`CREATE UNIQUE INDEX idx_accounts_public_account
+        ON pintpath_app.accounts (
+          public_account_id COLLATE pintpath_app.physical_v4_case_insensitive
+        )`);
+      await first.query(`INSERT INTO pintpath_app.accounts (
+        id, public_account_id, email, password_hash, created_at, updated_at
+      ) VALUES (
+        'physical-v4-semantic-index-one',
+        'PintPath-Semantic-Index',
+        'physical-v4-semantic-index-one@example.test',
+        'not-a-real-password-hash',
+        pg_catalog.now(),
+        pg_catalog.now()
+      )`);
+
+      await first.query("SAVEPOINT semantic_index_migration_guard");
+      const migrationError = await first.query(redundantPublicAccountIndexMigrationSql)
+        .catch((error: unknown) => error as { code?: string; message?: string });
+      expect(migrationError).toMatchObject({ code: "P0001" });
+      expect("message" in migrationError ? migrationError.message : undefined)
+        .toContain("existing object is not the exact redundant unique index");
+      await first.query("ROLLBACK TO SAVEPOINT semantic_index_migration_guard");
+      await first.query("RELEASE SAVEPOINT semantic_index_migration_guard");
+
+      const semanticIndex = await first.query<{
+        readonly targetCount: string;
+        readonly semanticVectorsMatch: boolean;
+      }>(`SELECT
+          pg_catalog.count(*)::pg_catalog.text AS "targetCount",
+          pg_catalog.bool_and(
+            target_definition.relam = constraint_definition.relam
+            AND target_index.indkey = constraint_index.indkey
+            AND target_index.indcollation = constraint_index.indcollation
+            AND target_index.indclass = constraint_index.indclass
+            AND target_index.indoption = constraint_index.indoption
+          ) AS "semanticVectorsMatch"
+        FROM pg_catalog.pg_class AS target_definition
+        JOIN pg_catalog.pg_index AS target_index
+          ON target_index.indexrelid = target_definition.oid
+        JOIN pg_catalog.pg_constraint AS unique_constraint
+          ON unique_constraint.conrelid = 'pintpath_app.accounts'::pg_catalog.regclass
+         AND unique_constraint.conname = 'accounts_public_account_id_key'
+        JOIN pg_catalog.pg_class AS constraint_definition
+          ON constraint_definition.oid = unique_constraint.conindid
+        JOIN pg_catalog.pg_index AS constraint_index
+          ON constraint_index.indexrelid = constraint_definition.oid
+        WHERE target_definition.oid =
+          pg_catalog.to_regclass('pintpath_app.idx_accounts_public_account')`);
+      expect(semanticIndex.rows).toEqual([{
+        targetCount: "1",
+        semanticVectorsMatch: false,
+      }]);
+
+      await first.query("SAVEPOINT semantic_index_invariant");
+      const duplicateError = await first.query(`INSERT INTO pintpath_app.accounts (
+        id, public_account_id, email, password_hash, created_at, updated_at
+      ) VALUES (
+        'physical-v4-semantic-index-two',
+        'pintpath-semantic-index',
+        'physical-v4-semantic-index-two@example.test',
+        'not-a-real-password-hash',
+        pg_catalog.now(),
+        pg_catalog.now()
+      )`).catch((error: unknown) => error as { code?: string; constraint?: string });
+      expect(duplicateError).toMatchObject({
+        code: "23505",
+        constraint: "idx_accounts_public_account",
+      });
+      await first.query("ROLLBACK TO SAVEPOINT semantic_index_invariant");
+      await first.query("RELEASE SAVEPOINT semantic_index_invariant");
+    } finally {
+      await first.query("ROLLBACK").catch(() => undefined);
+    }
 
     await first.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     await first.query("SELECT 1 FROM pg_catalog.pg_class LIMIT 1");

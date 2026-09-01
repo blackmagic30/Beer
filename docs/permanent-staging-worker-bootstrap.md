@@ -116,7 +116,7 @@ more than 24 hours old.
 ## Immutable policy bindings
 
 The prerequisite policy SHA is
-`f027dba09f0ddbd24da2cd1e7b217f973103b45537cbfff20071fb57011e5c56`.
+`a7fe6184aa6849cc9b4f8f4652cf02608a21685153144812e9de0e2567bbb548`.
 Its producer hashes are:
 
 - worker prepare/activate policy:
@@ -128,7 +128,7 @@ Its producer hashes are:
 - active one-replica deployment policy:
   `c73fe315f98c5736f4ac31963e11361b059881d7ec5774292e7e8048ff6f8986`;
 - venue-directory policy:
-  `ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd`.
+  `08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f`.
 
 Any producer policy change deliberately invalidates this verifier until all
 contracts are reviewed and the prerequisite policy and embedded digest are

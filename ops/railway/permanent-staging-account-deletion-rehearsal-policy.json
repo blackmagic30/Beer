@@ -1,0 +1,140 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-account-deletion-rehearsal-policy/v1",
+  "policyId": "pintpath-permanent-staging-account-deletion-rehearsal",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "forbiddenProductionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "publicOrigin": "https://beer-staging.up.railway.app",
+  "stagingSupabaseOrigin": "https://bbfibbadwjxzrcdncavy.supabase.co",
+  "productionSupabaseOrigin": "https://jxpubqlmqnnqwadmjgyk.supabase.co",
+  "region": "asia-southeast1-eqsg3a",
+  "requiredGitRef": "refs/heads/main",
+  "concurrencyGroup": "pintpath-permanent-staging-key-rollout",
+  "githubEnvironments": {
+    "providerMutation": "permanent-staging-provider-mutation",
+    "deployment": "permanent-staging-deployment",
+    "scale": "permanent-staging-scale-evidence"
+  },
+  "railwayCli": {
+    "version": "5.32.0",
+    "releaseUrl": "https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
+    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
+    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
+  },
+  "credentialRowsRequiredBeforeActivation": [
+    "RESEND_TRANSACTIONAL_API_KEY",
+    "RESEND_WEBHOOK_SIGNING_SECRET",
+    "ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID",
+    "ACCOUNT_DELETION_NOTICE_KEYRING_JSON",
+    "ACCOUNT_DELETION_NOTICE_FROM",
+    "ACCOUNT_DELETION_NOTICE_REPLY_TO"
+  ],
+  "activationVariables": {
+    "SUPABASE_OAUTH_PROVIDERS": "google",
+    "ACCOUNT_DELETION_NOTICE_MODE": "resend",
+    "ACCOUNT_DELETION_REHEARSAL_ENABLED": "true",
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL": "https://bbfibbadwjxzrcdncavy.supabase.co",
+    "ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL": "https://jxpubqlmqnnqwadmjgyk.supabase.co",
+    "ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT": "2"
+  },
+  "cleanupVariables": {
+    "ACCOUNT_DELETION_NOTICE_MODE": "disabled",
+    "ACCOUNT_DELETION_REHEARSAL_ENABLED": null,
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID": null,
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID": null,
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID": null,
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL": null,
+    "ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL": null,
+    "ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT": null
+  },
+  "intervalPolicy": {
+    "variable": "ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES",
+    "allowedStoredValues": [
+      null,
+      "5"
+    ]
+  },
+  "runMarkerPrefix": "ACCOUNT_DELETION_REHEARSAL_RUN_",
+  "replicas": {
+    "safeInitial": 1,
+    "rehearsal": 2,
+    "safeFinal": 1,
+    "quarantine": 0
+  },
+  "runtimeRoutes": [
+    "/health",
+    "/startup",
+    "/ready"
+  ],
+  "stateMachine": [
+    "SAFE_ONE",
+    "CREDENTIALS_STORED_NO_DEPLOY",
+    "SAFE_TWO",
+    "ACTIVATION_STORED_NO_DEPLOY",
+    "ACTIVATION_STORED_SAFE_TWO",
+    "ACTIVE_TWO",
+    "CLEANUP_STORED_NO_DEPLOY",
+    "CLEANUP_STAGED_ACTIVE_TWO",
+    "CLEANUP_STORED_ACTIVE_TWO",
+    "SAFE_TWO_REDEPLOYED",
+    "SAFE_ONE_FINAL",
+    "QUARANTINED_ZERO_PENDING_CLEANUP",
+    "QUARANTINED_ZERO"
+  ],
+  "writeContract": {
+    "maximumAttemptsPerTransition": 1,
+    "automaticRetriesAllowed": false,
+    "activationMutation": "variableCollectionUpsert",
+    "activationSkipDeploys": true,
+    "cleanupStageMutation": "environmentStageChanges",
+    "cleanupStageMerge": false,
+    "cleanupCommitMutation": "environmentPatchCommitStaged",
+    "cleanupCommitSkipDeploys": true,
+    "deploymentMutation": "railway redeploy",
+    "scaleMutation": "railway service scale",
+    "scaleOutPrerequisite": "durable cleanup arm",
+    "convergeOnePrerequisite": "exact safe redeploy terminal",
+    "sourceUploadAllowed": false,
+    "quarantineMutation": "railway service scale",
+    "productionMutationAllowed": false
+  },
+  "failurePolicy": {
+    "cleanupRunsUnconditionally": true,
+    "safeRedeployRunsUnconditionally": true,
+    "cleanupAuthorityBoundToOriginalActivationRun": true,
+    "cleanupMayProceedAfterMainAdvances": true,
+    "safeTerminalRequiredBeforeScaleToOne": true,
+    "uncertainCleanupOrSafeRedeployAction": "QUARANTINE_ZERO",
+    "quarantineRestorationRequiresReadOnlySafeReconciliation": true,
+    "activationStoredSafeTwoAction": "RECONCILE_CLEANUP",
+    "cleanupStoredActiveTwoWithoutApplySafeAttempt": "APPLY_SAFE",
+    "cleanupStoredActiveTwoWithApplySafeAttempt": "QUARANTINE_ZERO",
+    "cleanupStagedActiveTwoWithoutReconcileAttempt": "RECONCILE_CLEANUP",
+    "cleanupStagedActiveTwoWithReconcileAttempt": "QUARANTINE_ZERO",
+    "containedZeroCleanupOperation": "cleanup-contained-zero",
+    "containedZeroCleanupRequiresZeroInstances": true,
+    "containedZeroCleanupMaximumAttempts": 1,
+    "containedZeroCleanupExhaustedAction": "MANUAL_FAIL_CLOSED",
+    "quarantineAttemptOperations": [
+      "quarantine-zero",
+      "quarantine-zero-retry-1",
+      "quarantine-zero-retry-2"
+    ],
+    "quarantineGlobalMaximumAttempts": 3,
+    "quarantineRetriesRequireFreshExactNonterminalObservation": true,
+    "quarantineLadderExhaustedAction": "MANUAL_FAIL_CLOSED",
+    "nonterminalObservationStates": [
+      "SAFE_ONE_FINAL",
+      "ACTIVATION_STORED_SAFE_TWO",
+      "ACTIVE_TWO",
+      "CLEANUP_STAGED_ACTIVE_TWO",
+      "CLEANUP_STORED_ACTIVE_TWO",
+      "CLEANUP_STORED_SAFE_TWO"
+    ]
+  }
+}

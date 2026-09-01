@@ -1,0 +1,709 @@
+name: Rehearse Pint Path permanent-staging account deletion
+run-name: Account deletion rehearsal | ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main and deployed in permanent staging
+        required: true
+        type: string
+      confirmation:
+        description: RUN_ACCOUNT_DELETION_REHEARSAL_IN_PERMANENT_STAGING
+        required: true
+        type: string
+      external_mutation_freeze_attestation:
+        description: I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  verify-prerequisites:
+    name: Verify, bind, and arm unconditional cleanup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout the exact current main candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Require the exact original dispatch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          FREEZE: ${{ inputs.external_mutation_freeze_attestation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$CONFIRMATION" = RUN_ACCOUNT_DELETION_REHEARSAL_IN_PERMANENT_STAGING
+          test "$FREEZE" = I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+          test '${{ github.ref }}' = refs/heads/main
+          test '${{ github.run_attempt }}' = 1
+          test '${{ github.sha }}' = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install immutable dependencies
+        run: npm ci
+      - name: Verify the rehearsal contract before arming cleanup
+        run: npm run account-deletion:rehearsal:contract:check
+      - name: Create reviewed authority and a durable cleanup arm
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/pintpath-account-deletion-authority"
+          install -d -m 700 "$evidence"
+          npm run --silent github:account-deletion-rehearsal-authority:verify -- \
+            --mode start --candidate-sha "$CANDIDATE_SHA" \
+            --evidence-dir "$evidence"
+          jq -n --arg candidateSha "$CANDIDATE_SHA" \
+            --arg activationRunId '${{ github.run_id }}' '{
+              schemaVersion:"pintpath-account-deletion-rehearsal-cleanup-arm/v1",
+              candidateSha:$candidateSha,
+              activationRunId:$activationRunId,
+              projectId:"48d8c6cd-1c66-4148-874b-20877f48e1a5",
+              environmentId:"a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              serviceId:"6816c4a2-e392-4ee5-826f-2584cb599ec0",
+              cleanupRequired:true,
+              disarmCondition:"SAFE_ONE_PREACTIVATION_OR_SAFE_ONE_FINAL_OR_QUARANTINED_ZERO",
+              secretMaterialIncluded:false
+            }' > "$evidence/cleanup-arm.json"
+          chmod 600 "$evidence/cleanup-arm.json"
+      - name: Retain the authority and cleanup arm before any mutation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-authority/
+          if-no-files-found: error
+          retention-days: 90
+
+  scale-safe-to-two:
+    name: Scale the safe candidate from one to two
+    needs: verify-prerequisites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: permanent-staging-scale-evidence
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false, ref: "${{ inputs.candidate_sha }}" }
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version, cache: npm }
+      - run: npm ci
+      - name: Install the exact reviewed Railway CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-railway-cli"; install -d -m 700 "$root"
+          archive="$root/railway.tar.gz"
+          curl --fail --silent --show-error --location 'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' --output "$archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$root" --no-same-owner --no-same-permissions
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$root/railway" | sha256sum --check --strict
+          chmod 500 "$root/railway"; echo "PINTPATH_RAILWAY_CLI_PATH=$root/railway" >> "$GITHUB_ENV"
+      - name: Download the pre-mutation authority and cleanup arm
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/authority
+      - name: Prepare and seal the single scale-out attempt before exposing scale authority
+        id: attempt
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "$RUNNER_TEMP/authority"
+          attempt="$RUNNER_TEMP/pintpath-account-deletion-attempt-prepare-two"
+          install -d -m 700 "$attempt"
+          npm run --silent account-deletion:rehearsal:action:prepare -- \
+            --operation prepare-two --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --prerequisite-file "$RUNNER_TEMP/authority/cleanup-arm.json" \
+            --evidence-dir "$attempt" > "$attempt/result.json"
+          sha="$(sha256sum "$attempt/attempt-arm.json" | cut -d' ' -f1)"
+          test "$(jq -r .contentSha256 "$attempt/result.json")" = "$sha"
+          echo "content_sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: Retain the scale-out attempt arm before exposing scale authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-attempt-prepare-two-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-attempt-prepare-two/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Scale safe permanent staging to two once
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_CONFIRMATION: PREPARE_ACCOUNT_DELETION_REHEARSAL_TWO_REPLICAS_IN_PERMANENT_STAGING
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_FILE: ${{ runner.temp }}/pintpath-account-deletion-attempt-prepare-two/attempt-arm.json
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_SHA256: ${{ steps.attempt.outputs.content_sha256 }}
+        shell: bash
+        run: |
+          chmod -R go-rwx "$RUNNER_TEMP/authority"
+          install -d -m 700 "$RUNNER_TEMP/pintpath-account-deletion-scale-out"
+          npm run --silent railway:staging:account-deletion:scale:protected -- \
+            --operation prepare-two --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --prerequisite-file "$RUNNER_TEMP/authority/cleanup-arm.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-account-deletion-scale-out"
+      - name: Upload scale-out evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-scale-out-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-scale-out/
+          if-no-files-found: error
+          retention-days: 90
+
+  store-activation:
+    name: Store exact rehearsal activation without deploying
+    needs: [verify-prerequisites, scale-safe-to-two]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: permanent-staging-provider-mutation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false, ref: "${{ inputs.candidate_sha }}" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version, cache: npm }
+      - run: npm ci
+      - name: Download armed authority
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-authority
+      - name: Prepare and seal the activation write before exposing variable authority
+        id: attempt
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "$RUNNER_TEMP/pintpath-account-deletion-authority"
+          attempt="$RUNNER_TEMP/pintpath-account-deletion-attempt-store-activation"
+          install -d -m 700 "$attempt"
+          npm run --silent account-deletion:rehearsal:action:prepare -- \
+            --operation store-activation --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/pintpath-account-deletion-authority/github-authority.json" \
+            --evidence-dir "$attempt" > "$attempt/result.json"
+          sha="$(sha256sum "$attempt/attempt-arm.json" | cut -d' ' -f1)"
+          test "$(jq -r .contentSha256 "$attempt/result.json")" = "$sha"
+          echo "content_sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: Retain the activation attempt arm before exposing variable authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-attempt-store-activation-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-attempt-store-activation/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Atomically store exact activation variables with skipDeploys true
+        env:
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_CONFIRMATION: ACTIVATE_ACCOUNT_DELETION_REHEARSAL_IN_PERMANENT_STAGING
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_FILE: ${{ runner.temp }}/pintpath-account-deletion-attempt-store-activation/attempt-arm.json
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_SHA256: ${{ steps.attempt.outputs.content_sha256 }}
+        shell: bash
+        run: |
+          chmod -R go-rwx "$RUNNER_TEMP/pintpath-account-deletion-authority"
+          install -d -m 700 "$RUNNER_TEMP/pintpath-account-deletion-activation"
+          npm run --silent railway:staging:account-deletion:transition:protected -- \
+            --operation store-activation --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/pintpath-account-deletion-authority/github-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-account-deletion-activation"
+      - name: Upload activation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-activation-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-activation/
+          if-no-files-found: error
+          retention-days: 90
+
+  apply-active-config:
+    name: Redeploy the same source and prove both active replicas
+    needs: [verify-prerequisites, store-activation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: permanent-staging-deployment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false, ref: "${{ inputs.candidate_sha }}" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version, cache: npm }
+      - run: npm ci
+      - name: Install exact Railway CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-railway-cli"; install -d -m 700 "$root"; archive="$root/railway.tar.gz"
+          curl --fail --silent --show-error --location 'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' --output "$archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$root" --no-same-owner --no-same-permissions
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$root/railway" | sha256sum --check --strict
+          chmod 500 "$root/railway"; echo "PINTPATH_RAILWAY_CLI_PATH=$root/railway" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}", path: "${{ runner.temp }}/pintpath-account-deletion-authority" }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-activation-${{ inputs.candidate_sha }}", path: "${{ runner.temp }}/pintpath-account-deletion-activation" }
+      - name: Prepare and seal the active redeploy before exposing deployment authority
+        id: attempt
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "$RUNNER_TEMP/pintpath-account-deletion-authority" "$RUNNER_TEMP/pintpath-account-deletion-activation"
+          attempt="$RUNNER_TEMP/pintpath-account-deletion-attempt-apply-active"
+          install -d -m 700 "$attempt"
+          npm run --silent account-deletion:rehearsal:action:prepare -- \
+            --operation apply-active --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/pintpath-account-deletion-authority/github-authority.json" \
+            --prerequisite-file "$RUNNER_TEMP/pintpath-account-deletion-activation/terminal.json" \
+            --evidence-dir "$attempt" > "$attempt/result.json"
+          sha="$(sha256sum "$attempt/attempt-arm.json" | cut -d' ' -f1)"
+          test "$(jq -r .contentSha256 "$attempt/result.json")" = "$sha"
+          echo "content_sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: Retain the active-redeploy attempt arm before exposing deployment authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-attempt-apply-active-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-attempt-apply-active/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Redeploy existing deployment without source upload and prove readiness on both instances
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_FILE: ${{ runner.temp }}/pintpath-account-deletion-attempt-apply-active/attempt-arm.json
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_SHA256: ${{ steps.attempt.outputs.content_sha256 }}
+        shell: bash
+        run: |
+          chmod -R go-rwx "$RUNNER_TEMP/pintpath-account-deletion-authority" "$RUNNER_TEMP/pintpath-account-deletion-activation"
+          install -d -m 700 "$RUNNER_TEMP/pintpath-account-deletion-active-redeploy"
+          npm run --silent railway:staging:account-deletion:redeploy:protected -- \
+            --operation apply-active --candidate-sha '${{ inputs.candidate_sha }}' \
+            --transition-run-id '${{ github.run_id }}' \
+            --transition-terminal-file "$RUNNER_TEMP/pintpath-account-deletion-activation/terminal.json" \
+            --authority-file "$RUNNER_TEMP/pintpath-account-deletion-authority/github-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-account-deletion-active-redeploy"
+      - name: Upload active redeploy evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-active-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-active-redeploy/
+          if-no-files-found: error
+          retention-days: 90
+
+  prove:
+    name: Prove active deletion rehearsal receipt
+    needs: apply-active-config
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-active-${{ inputs.candidate_sha }}", path: "${{ runner.temp }}/active" }
+      - name: Require exact active profile on two distinct replicas
+        shell: bash
+        run: |
+          jq -e --arg sha '${{ inputs.candidate_sha }}' '
+            .receipt.schemaVersion == "pintpath-account-deletion-rehearsal-redeploy/v1" and
+            .receipt.outcome == "redeployed_active" and
+            .receipt.candidateSha == $sha and
+            .receipt.runtime.exact == true and
+            (.receipt.runtime.replicaIdSha256s | length) == 2 and
+            (.receipt.runtime.providerReadinessSha256s | length) == 2 and
+            .receipt.checks.sourceUnchanged == true and
+            .receipt.checks.accountDeletionRuntimeStateExact == true
+          ' "$RUNNER_TEMP/active/terminal.json" >/dev/null
+
+  store-cleanup:
+    name: Unconditionally store exact disabled and absent cleanup
+    if: always() && needs.verify-prerequisites.result == 'success'
+    needs: [verify-prerequisites, prove]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: permanent-staging-provider-mutation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false, ref: "${{ inputs.candidate_sha }}" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version, cache: npm }
+      - run: npm ci
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}", path: "${{ runner.temp }}/authority" }
+      - name: Prepare and seal the cleanup write before exposing variable authority
+        id: attempt
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "$RUNNER_TEMP/authority"
+          attempt="$RUNNER_TEMP/pintpath-account-deletion-attempt-store-cleanup"
+          install -d -m 700 "$attempt"
+          npm run --silent account-deletion:rehearsal:action:prepare -- \
+            --operation store-cleanup --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --evidence-dir "$attempt" > "$attempt/result.json"
+          sha="$(sha256sum "$attempt/attempt-arm.json" | cut -d' ' -f1)"
+          test "$(jq -r .contentSha256 "$attempt/result.json")" = "$sha"
+          echo "content_sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: Retain the cleanup attempt arm before exposing variable authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-attempt-store-cleanup-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-attempt-store-cleanup/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Stage, dual-read, and commit exact cleanup with skipDeploys true
+        env:
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_CONFIRMATION: CLEAN_UP_ACCOUNT_DELETION_REHEARSAL_IN_PERMANENT_STAGING
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_FILE: ${{ runner.temp }}/pintpath-account-deletion-attempt-store-cleanup/attempt-arm.json
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_SHA256: ${{ steps.attempt.outputs.content_sha256 }}
+        shell: bash
+        run: |
+          chmod -R go-rwx "$RUNNER_TEMP/authority"
+          install -d -m 700 "$RUNNER_TEMP/pintpath-account-deletion-cleanup"
+          npm run --silent railway:staging:account-deletion:transition:protected -- \
+            --operation store-cleanup --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-account-deletion-cleanup"
+      - name: Upload cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-cleanup-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-cleanup/
+          if-no-files-found: error
+          retention-days: 90
+
+  apply-safe-config:
+    name: Unconditionally redeploy disabled config and prove scheduler inactive
+    if: always() && needs.store-cleanup.result == 'success'
+    needs: [verify-prerequisites, store-cleanup]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: permanent-staging-deployment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false, ref: "${{ inputs.candidate_sha }}" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version, cache: npm }
+      - run: npm ci
+      - name: Install exact Railway CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-railway-cli"; install -d -m 700 "$root"; archive="$root/railway.tar.gz"
+          curl --fail --silent --show-error --location 'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' --output "$archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$root" --no-same-owner --no-same-permissions
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$root/railway" | sha256sum --check --strict
+          chmod 500 "$root/railway"; echo "PINTPATH_RAILWAY_CLI_PATH=$root/railway" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}", path: "${{ runner.temp }}/authority" }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-cleanup-${{ inputs.candidate_sha }}", path: "${{ runner.temp }}/cleanup" }
+      - name: Prepare and seal the safe redeploy before exposing deployment authority
+        id: attempt
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "$RUNNER_TEMP/authority" "$RUNNER_TEMP/cleanup"
+          attempt="$RUNNER_TEMP/pintpath-account-deletion-attempt-apply-safe"
+          install -d -m 700 "$attempt"
+          npm run --silent account-deletion:rehearsal:action:prepare -- \
+            --operation apply-safe --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --prerequisite-file "$RUNNER_TEMP/cleanup/terminal.json" \
+            --evidence-dir "$attempt" > "$attempt/result.json"
+          sha="$(sha256sum "$attempt/attempt-arm.json" | cut -d' ' -f1)"
+          test "$(jq -r .contentSha256 "$attempt/result.json")" = "$sha"
+          echo "content_sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: Retain the safe-redeploy attempt arm before exposing deployment authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-attempt-apply-safe-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-attempt-apply-safe/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Redeploy existing source into disabled ordinary readiness
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_FILE: ${{ runner.temp }}/pintpath-account-deletion-attempt-apply-safe/attempt-arm.json
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_SHA256: ${{ steps.attempt.outputs.content_sha256 }}
+        shell: bash
+        run: |
+          chmod -R go-rwx "$RUNNER_TEMP/authority" "$RUNNER_TEMP/cleanup"
+          install -d -m 700 "$RUNNER_TEMP/pintpath-account-deletion-safe-redeploy"
+          npm run --silent railway:staging:account-deletion:redeploy:protected -- \
+            --operation apply-safe --candidate-sha '${{ inputs.candidate_sha }}' \
+            --transition-run-id '${{ github.run_id }}' \
+            --transition-terminal-file "$RUNNER_TEMP/cleanup/terminal.json" \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-account-deletion-safe-redeploy"
+      - name: Upload safe redeploy evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-safe-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-safe-redeploy/
+          if-no-files-found: error
+          retention-days: 90
+
+  converge-safe-to-one:
+    name: Converge proven-safe staging from two to one
+    if: needs.apply-safe-config.result == 'success'
+    needs: [verify-prerequisites, apply-safe-config]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: permanent-staging-scale-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0, persist-credentials: false, ref: "${{ inputs.candidate_sha }}" }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version, cache: npm }
+      - run: npm ci
+      - name: Install exact Railway CLI
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/pintpath-railway-cli"; install -d -m 700 "$root"; archive="$root/railway.tar.gz"
+          curl --fail --silent --show-error --location 'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' --output "$archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$root" --no-same-owner --no-same-permissions
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$root/railway" | sha256sum --check --strict
+          chmod 500 "$root/railway"; echo "PINTPATH_RAILWAY_CLI_PATH=$root/railway" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}", path: "${{ runner.temp }}/authority" }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: "pintpath-account-deletion-rehearsal-safe-${{ inputs.candidate_sha }}", path: "${{ runner.temp }}/safe" }
+      - name: Prepare and seal the single converge attempt before exposing scale authority
+        id: attempt
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "$RUNNER_TEMP/authority" "$RUNNER_TEMP/safe"
+          attempt="$RUNNER_TEMP/pintpath-account-deletion-attempt-converge-one"
+          install -d -m 700 "$attempt"
+          npm run --silent account-deletion:rehearsal:action:prepare -- \
+            --operation converge-one --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --prerequisite-file "$RUNNER_TEMP/safe/terminal.json" \
+            --evidence-dir "$attempt" > "$attempt/result.json"
+          sha="$(sha256sum "$attempt/attempt-arm.json" | cut -d' ' -f1)"
+          test "$(jq -r .contentSha256 "$attempt/result.json")" = "$sha"
+          echo "content_sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: Retain the converge attempt arm before exposing scale authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-attempt-converge-one-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-attempt-converge-one/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Converge only after safe terminal proof
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_CONFIRMATION: CONVERGE_ACCOUNT_DELETION_REHEARSAL_TO_ONE_IN_PERMANENT_STAGING
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_FILE: ${{ runner.temp }}/pintpath-account-deletion-attempt-converge-one/attempt-arm.json
+          PINTPATH_ACCOUNT_DELETION_REHEARSAL_ATTEMPT_ARM_SHA256: ${{ steps.attempt.outputs.content_sha256 }}
+        shell: bash
+        run: |
+          chmod -R go-rwx "$RUNNER_TEMP/authority" "$RUNNER_TEMP/safe"
+          install -d -m 700 "$RUNNER_TEMP/pintpath-account-deletion-converge"
+          npm run --silent railway:staging:account-deletion:scale:protected -- \
+            --operation converge-one --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --prerequisite-file "$RUNNER_TEMP/safe/terminal.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-account-deletion-converge"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-converge-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-converge/
+          if-no-files-found: error
+          retention-days: 90
+
+  terminal-evidence:
+    name: Reclassify live state and seal the complete closeout bundle
+    needs:
+      - verify-prerequisites
+      - prove
+      - store-cleanup
+      - apply-safe-config
+      - converge-safe-to-one
+    if: needs.converge-safe-to-one.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: permanent-staging-scale-evidence
+    steps:
+      - name: Checkout the exact candidate implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version, cache: npm }
+      - run: npm ci
+      - name: Install the exact reviewed Railway CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-railway-cli"
+          install -d -m 700 "$root"
+          archive="$root/railway.tar.gz"
+          curl --fail --silent --show-error --location \
+            'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' \
+            --output "$archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$root" --no-same-owner --no-same-permissions
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$root/railway" | sha256sum --check --strict
+          chmod 500 "$root/railway"
+          echo "PINTPATH_RAILWAY_CLI_PATH=$root/railway" >> "$GITHUB_ENV"
+      - name: Download the exact original authority and cleanup arm
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-arm-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/authority
+      - name: Reclassify the live provider and runtime state
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod -R go-rwx "$RUNNER_TEMP/authority"
+          evidence="$RUNNER_TEMP/pintpath-account-deletion-final-observation"
+          install -d -m 700 "$evidence"
+          npm run --silent account-deletion:rehearsal:state:classify -- \
+            --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --evidence-dir "$evidence" > "$RUNNER_TEMP/final-classification.json"
+          jq -e '
+            .state == "SAFE_ONE_FINAL" and
+            .exact == true and
+            .implementationSha == "${{ github.sha }}" and
+            .mutationCredentialExposed == false and
+            .secretMaterialIncluded == false
+          ' "$RUNNER_TEMP/final-classification.json" >/dev/null
+      - name: Inventory the complete immutable attempt history
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_ACCOUNT_DELETION_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_ACCOUNT_DELETION_ACTIVATION_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/inventory-github-account-deletion-rehearsal-attempts.mjs \
+            > "$RUNNER_TEMP/attempt-inventory.json"
+      - name: Require final state to match all containment history
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(jq -r .state "$RUNNER_TEMP/final-classification.json")"
+          jq -e --arg state "$state" '
+            ([
+              .attempts["cleanup-contained-zero"],
+              .attempts["quarantine-zero"],
+              .attempts["quarantine-zero-retry-1"],
+              .attempts["quarantine-zero-retry-2"]
+            ] | any(. != null)) as $contained |
+            if $contained then
+              $state == "QUARANTINED_ZERO"
+            else
+              ($state == "SAFE_ONE_PREACTIVATION" or
+               $state == "SAFE_ONE_FINAL" or
+               $state == "QUARANTINED_ZERO")
+            end
+          ' "$RUNNER_TEMP/attempt-inventory.json" >/dev/null
+      - name: Finalize and revalidate the exact four-file closeout bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/pintpath-account-deletion-closeout"
+          install -d -m 700 "$bundle"
+          node scripts/finalize-account-deletion-rehearsal-closeout.mjs \
+            --mode original \
+            --candidate-sha '${{ inputs.candidate_sha }}' \
+            --activation-run-id '${{ github.run_id }}' \
+            --producer-run-id '${{ github.run_id }}' \
+            --implementation-sha '${{ github.sha }}' \
+            --cleanup-arm-file "$RUNNER_TEMP/authority/cleanup-arm.json" \
+            --authority-file "$RUNNER_TEMP/authority/github-authority.json" \
+            --observation-file "$RUNNER_TEMP/pintpath-account-deletion-final-observation/state-observation.json" \
+            --attempt-inventory-file "$RUNNER_TEMP/attempt-inventory.json" \
+            --output-dir "$bundle" > "$RUNNER_TEMP/closeout-result.json"
+          jq -e '
+            .ok == true and
+            .state == "SAFE_ONE_FINAL" and
+            .attemptArmCount == 6
+          ' "$RUNNER_TEMP/closeout-result.json" >/dev/null
+          test "$(find "$bundle" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 4
+      - name: Retain the terminal closeout bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-account-deletion-rehearsal-closeout-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-account-deletion-closeout/
+          if-no-files-found: error
+          retention-days: 90

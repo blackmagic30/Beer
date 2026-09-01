@@ -29,6 +29,9 @@ const evidence = "/private/venue-evidence";
 const authorityFile = `${evidence}/fenced-authority.json`;
 const projectRef = "bbfibbadwjxzrcdncavy";
 const targetFilename = "20260901032339_validate_external_venue_directory_constraints.sql";
+const forwardFilename =
+  "20260901122942_remove_redundant_accounts_public_account_index.sql";
+const firstRunMigrationFilenames = [targetFilename, forwardFilename] as const;
 const databaseContract = {
   migrationVersion: "20260901032339",
   migrationPath:
@@ -194,7 +197,9 @@ function targetLedger() {
 }
 
 function ledger(steady: boolean) {
-  return localVersions().slice(0, steady ? undefined : -1).map((version) =>
+  return localVersions()
+    .slice(0, steady ? undefined : -firstRunMigrationFilenames.length)
+    .map((version) =>
     version === "20260901032339" ? targetLedger() : {
       version,
       name: `migration_${version}`,
@@ -242,7 +247,7 @@ function commandHarness(
         signal: null,
         stdout: first ? "Finished supabase db push.\n" : "Remote database is up to date.\n",
         stderr: first
-          ? `DRY RUN: migrations will *not* be pushed to the database.\nWould push these migrations:\n • ${targetFilename}\n`
+          ? `DRY RUN: migrations will *not* be pushed to the database.\nWould push these migrations:\n${firstRunMigrationFilenames.map((filename) => ` • ${filename}`).join("\n")}\n`
           : "DRY RUN: migrations will *not* be pushed to the database.\n",
       };
     }
@@ -341,6 +346,26 @@ describe("protected permanent-staging venue directory", () => {
           steadyStateMaximumPushInvocations: 0,
           automaticRetriesAllowed: false,
           unexpectedOrExternalStateTransitionsAllowed: false,
+          firstRunMigrationInventory: [
+            {
+              version: "20260901032339",
+              filename: targetFilename,
+              path:
+                "supabase/migrations/20260901032339_validate_external_venue_directory_constraints.sql",
+              sha256:
+                "5068c2a678813e57fde83b29d3cb5e438ce9070705f246827b7ee8e2a70ee96c",
+              bytes: 161,
+            },
+            {
+              version: "20260901122942",
+              filename: forwardFilename,
+              path:
+                "supabase/migrations/20260901122942_remove_redundant_accounts_public_account_index.sql",
+              sha256:
+                "70ba85af2938a7356740b5216b6577ad311e961359aa72746dd6ac2d25ef46ee",
+              bytes: 4709,
+            },
+          ],
         }),
       }),
     }));
@@ -377,7 +402,8 @@ describe("protected permanent-staging venue directory", () => {
     expect(preflight).toEqual(expect.objectContaining({
       schemaVersion: VENUE_DIRECTORY_CONSTRAINT_PREFLIGHT_SCHEMA,
       migrationMode: "first_run",
-      remoteMigrationVersions: localVersions().slice(0, -1),
+      remoteMigrationVersions:
+        localVersions().slice(0, -firstRunMigrationFilenames.length),
       targetLedger: null,
       violationCounts: { businessStatus: 0, postcode: 0 },
     }));

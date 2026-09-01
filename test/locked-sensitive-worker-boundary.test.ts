@@ -22,6 +22,7 @@ import { lockedSensitiveWorkerInternals } from
   "../scripts/run-locked-sensitive-worker.js";
 
 const ROOT = path.resolve(".");
+const PINNED_REPOSITORY_ROOT = "/Users/zac/Desktop/Beer";
 const REVIEWED_NODE_VERSION = "v22.23.2";
 const LOCAL_REVIEWED_NODE = "/Users/zac/.nvm/versions/node/v22.23.2/bin/node";
 const CURRENT_NODE_IS_REVIEWED = process.version === REVIEWED_NODE_VERSION;
@@ -758,6 +759,9 @@ describe.skipIf(!HAS_EXACT_NODE22)("locked sensitive production worker", () => {
     expect(launcherSource).toContain("--disable-sigusr1");
     expect(launcherSource).toContain("#!/usr/bin/env -S -i /bin/zsh -f");
     expect(launcherSource).toContain(
+      `locked_repo_root=${PINNED_REPOSITORY_ROOT}`,
+    );
+    expect(launcherSource).toContain(
       `locked_expected_tsx_version=${LOCKED_SENSITIVE_WORKER_TSX_VERSION}`,
     );
     expect(launcherSource).toContain(
@@ -834,10 +838,15 @@ describe.skipIf(!HAS_EXACT_NODE22)("locked sensitive production worker", () => {
             },
           },
         );
-        expect(result.status).toBe(1);
         expect(result.stderr).toBe("");
         expect(fs.existsSync(cdMarker)).toBe(false);
         expect(fs.existsSync(testMarker)).toBe(false);
+        if (fs.realpathSync(ROOT) !== PINNED_REPOSITORY_ROOT) {
+          expect(result.status).toBe(69);
+          expect(result.stdout).toBe("");
+          return;
+        }
+        expect(result.status).toBe(1);
         expect(JSON.parse(result.stdout.trim())).toEqual({
           command: "attest",
           failureCode: "argument_invalid",
