@@ -246,6 +246,71 @@ function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function sameHeldFileSnapshot(left, right) {
+  return left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs;
+}
+
+export function readHeldPinnedEvidenceFile(filename, maximumBytes) {
+  if (
+    typeof filename !== "string" ||
+    !path.isAbsolute(filename) ||
+    path.resolve(filename) !== filename ||
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 0 ||
+    typeof fs.constants.O_NOFOLLOW !== "number" ||
+    fs.constants.O_NOFOLLOW <= 0 ||
+    typeof fs.constants.O_NONBLOCK !== "number" ||
+    fs.constants.O_NONBLOCK <= 0
+  ) throw new Error("invalid");
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY |
+        fs.constants.O_NOFOLLOW |
+        fs.constants.O_NONBLOCK,
+    );
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.size < 0n ||
+      before.size > BigInt(maximumBytes)
+    ) throw new Error("invalid");
+    const bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (!Number.isSafeInteger(count) || count <= 0) {
+        throw new Error("invalid");
+      }
+      offset += count;
+    }
+    const overflow = Buffer.alloc(1);
+    if (fs.readSync(descriptor, overflow, 0, 1, offset) !== 0) {
+      throw new Error("invalid");
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameHeldFileSnapshot(before, after)) throw new Error("invalid");
+    return bytes;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
 function exactKeys(value, expected) {
   return (
     value !== null &&
@@ -889,14 +954,17 @@ function verifyDurableCleanupSuccessorCloseout() {
       CLEANUP_SUCCESSOR_CLOSEOUT_EVIDENCE_DIRECTORY,
       "attestation.json",
     );
-    const attestationStat = fs.lstatSync(attestationPath);
-    const source = fs.readFileSync(attestationPath, "utf8");
+    const attestationBytes = readHeldPinnedEvidenceFile(
+      attestationPath,
+      16 * 1024,
+    );
     if (
-      !attestationStat.isFile() ||
-      attestationStat.isSymbolicLink() ||
-      Buffer.byteLength(source, "utf8") > 16 * 1024 ||
-      sha256(source) !== CLEANUP_SUCCESSOR_CLOSEOUT_ATTESTATION_SHA256
+      sha256(attestationBytes) !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ATTESTATION_SHA256
     ) throw new Error("invalid");
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(
+      attestationBytes,
+    );
     const value = JSON.parse(source);
     if (
       canonicalJson(value) !== source ||
@@ -1043,11 +1111,11 @@ function verifyDurableCleanupSuccessorCloseout() {
         CLEANUP_SUCCESSOR_CLOSEOUT_EVIDENCE_DIRECTORY,
         expected.leaf,
       );
-      const evidenceStat = fs.lstatSync(evidencePath);
-      const evidence = fs.readFileSync(evidencePath);
+      const evidence = readHeldPinnedEvidenceFile(
+        evidencePath,
+        expected.sizeInBytes,
+      );
       if (
-        !evidenceStat.isFile() ||
-        evidenceStat.isSymbolicLink() ||
         evidence.length !== expected.sizeInBytes ||
         sha256(evidence) !== expected.sha256
       ) throw new Error("invalid");

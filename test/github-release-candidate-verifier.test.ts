@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   parseGithubReleaseChecksPolicy,
+  readHeldPinnedEvidenceFile,
   runGithubReleaseCandidateVerification,
 } from "../scripts/verify-github-release-candidate.mjs";
 
@@ -1612,6 +1613,46 @@ describe("GitHub release-candidate verifier", () => {
       expect(crypto.createHash("sha256").update(source).digest("hex"))
         .toBe(evidence.sha256);
     }
+  });
+
+  it("fails closed if a pinned evidence pathname is replaced or linked", () => {
+    const directory = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "held-pinned-evidence-test-")),
+    );
+    temporaryDirectories.push(directory);
+    const evidencePath = path.join(directory, "evidence.json");
+    const displacedPath = path.join(directory, "evidence-held.json");
+    const replacementPath = path.join(directory, "replacement.json");
+    const trusted = Buffer.from('{"trusted":true}\n');
+    fs.writeFileSync(evidencePath, trusted);
+    fs.writeFileSync(replacementPath, '{"trusted":false}\n');
+    const originalFstatSync = fs.fstatSync;
+    let injected = false;
+    const fstatSpy = vi.spyOn(fs, "fstatSync").mockImplementation((...args) => {
+      const value = Reflect.apply(originalFstatSync, fs, args);
+      if (!injected) {
+        injected = true;
+        fs.renameSync(evidencePath, displacedPath);
+        fs.renameSync(replacementPath, evidencePath);
+      }
+      return value;
+    });
+    try {
+      expect(() => readHeldPinnedEvidenceFile(evidencePath, 1024)).toThrow(
+        "invalid",
+      );
+      expect(injected).toBe(true);
+      expect(fs.readFileSync(evidencePath, "utf8")).toBe(
+        '{"trusted":false}\n',
+      );
+    } finally {
+      fstatSpy.mockRestore();
+    }
+    const targetPath = path.join(directory, "target.json");
+    const symbolicLinkPath = path.join(directory, "evidence-link.json");
+    fs.writeFileSync(targetPath, trusted);
+    fs.symlinkSync(targetPath, symbolicLinkPath);
+    expect(() => readHeldPinnedEvidenceFile(symbolicLinkPath, 1024)).toThrow();
   });
 
   it("rejects incident-era cancellation operations after the immutable closeout", async () => {
