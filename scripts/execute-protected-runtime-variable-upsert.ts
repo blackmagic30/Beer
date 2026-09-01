@@ -64,11 +64,14 @@ const ALLOWED_VARIABLES = Object.freeze([
   "RESEND_TRANSACTIONAL_API_KEY",
   "RESEND_WEBHOOK_SIGNING_SECRET",
   "SOURCE_EVIDENCE_SIGNING_SECRET",
+  "ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID",
+  "ACCOUNT_DELETION_NOTICE_FROM",
   "ACCOUNT_DELETION_NOTICE_KEYRING_JSON",
+  "ACCOUNT_DELETION_NOTICE_REPLY_TO",
 ] as const);
 const POLICY_PATH = "ops/railway/protected-runtime-variable-policy.json";
 const POLICY_SHA256 =
-  "552e98b607613388314d5b18182cf2befbfaa993c11bc89348abc2dc8d29580f";
+  "207f9c7667ef01818eac27b08e2e90166b29a18f94a3e06795a97728d8c89ae8";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";

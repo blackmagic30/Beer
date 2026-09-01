@@ -341,6 +341,36 @@ The repeated `PINTPATH` segment is intentional: the dispatcher prepends the
 target namespace to the exact Railway variable name and the worker verifies
 that bijection before reading the protected secret.
 
+For the permanent-staging account-deletion completion notice, place these six
+exact secrets only in `permanent-staging-provider-mutation`:
+
+- `PINTPATH_STAGING_RESEND_TRANSACTIONAL_API_KEY`
+- `PINTPATH_STAGING_RESEND_WEBHOOK_SIGNING_SECRET`
+- `PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_KEYRING_JSON`
+- `PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID`
+- `PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_FROM`
+- `PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_REPLY_TO`
+
+The Resend key must be a dedicated sending-only staging key. The webhook secret
+must belong to the staging-only deletion-notice endpoint and its six reviewed
+events. Generate the 32-byte recipient-encryption key locally without printing
+it; the active key ID must select that exact keyring member. The sender must use
+the verified Pint Path sending domain and the reply-to address must be a
+monitored privacy/support inbox. Treat the active ID, sender, and reply-to as
+protected inputs even though they are not credentials; this prevents a manual
+provider write from bypassing candidate and target authority.
+
+After all six protected sources exist, serialize six first-attempt
+`configure-runtime-variable.yml` dispatches at the exact current `main`. Write
+the keyring before its active ID, then the transactional key, webhook secret,
+sender, and reply-to. Use the generated
+`UPSERT_<VARIABLE>_IN_PERMANENT_STAGING` confirmation for each dispatch. Every
+write is sealed and deploy-suppressed. Do not deploy or enable the notice mode
+until all six postflights pass and the separately reviewed rehearsal-activation
+path is ready. Production uses independently generated
+`PINTPATH_PRODUCTION_<VARIABLE>` secrets and remains outside this staging
+ceremony.
+
 The one exception is the non-secret staging source repair. Select target
 `permanent-staging-postgres`, variable
 `PINTPATH_RUNTIME_DATABASE_URL`, and confirmation

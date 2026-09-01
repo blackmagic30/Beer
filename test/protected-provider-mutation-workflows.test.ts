@@ -666,11 +666,11 @@ describe("protected provider mutation workflows", () => {
     )?.groups?.body ?? "";
     const variableNames = [...variableOptions.matchAll(/^          - ([A-Z0-9_]+)$/gm)]
       .map((match) => match[1]!);
-    expect(variableNames).toHaveLength(17);
+    expect(variableNames).toHaveLength(20);
     const secretBackedVariableNames = variableNames.filter((variableName) =>
       variableName !== "PINTPATH_RUNTIME_DATABASE_URL"
     );
-    expect(secretBackedVariableNames).toHaveLength(16);
+    expect(secretBackedVariableNames).toHaveLength(19);
     for (const variableName of secretBackedVariableNames) {
       expect(worker).toContain(
         `PINTPATH_PRODUCTION_${variableName}:\n        required: false`,
@@ -707,6 +707,9 @@ describe("protected provider mutation workflows", () => {
     expect(dispatcher).toContain("- REDIS_URL");
     expect(dispatcher).toContain("- PINTPATH_POSTGRES_ROOT_CA_PEM");
     expect(dispatcher).toContain("- PINTPATH_POSTGRES_ROOT_CA_DER_SHA256");
+    expect(dispatcher).toContain("- ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID");
+    expect(dispatcher).toContain("- ACCOUNT_DELETION_NOTICE_FROM");
+    expect(dispatcher).toContain("- ACCOUNT_DELETION_NOTICE_REPLY_TO");
     expect(dispatcher).not.toMatch(/\|\|\s*'PINTPATH_(?:STAGING|PRODUCTION)_/);
     expect(worker).toContain(
       'test "$VALUE_SECRET_NAME" = "PINTPATH_PRODUCTION_${VARIABLE_NAME}"',
