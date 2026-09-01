@@ -98,6 +98,11 @@ describe("external venue-directory bootstrap migration", () => {
     expect(
       rehearsal.match(/20260828010000_bootstrap_external_venue_directory\.sql/g),
     ).toHaveLength(2);
+    expect(
+      rehearsal.match(
+        /20260901032339_validate_external_venue_directory_constraints\.sql/g,
+      ),
+    ).toHaveLength(2);
     expect(rehearsal).toContain("business_status is null");
     expect(rehearsal).toContain("directory_eligible = false");
     expect(rehearsal.trimEnd()).toMatch(/rollback;$/);
