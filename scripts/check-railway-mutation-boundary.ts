@@ -42,10 +42,15 @@ export const RAILWAY_PROJECT_TOKEN_SCOPE_QUERY = `query PintPathRailwayProjectTo
 }`;
 
 export const RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY = `query PintPathRailwayProductionPostgresPin(
+  $projectId: String!
   $environmentId: String!
   $serviceId: String!
   $deploymentId: String!
 ) {
+  environment(id: $environmentId, projectId: $projectId) {
+    id
+    config(decryptVariables: false)
+  }
   serviceInstance(environmentId: $environmentId, serviceId: $serviceId) {
     id
     serviceId
@@ -107,6 +112,7 @@ interface EnvironmentVariables {
 }
 
 interface PostgresVariables {
+  readonly projectId: string;
   readonly environmentId: string;
   readonly serviceId: string;
   readonly deploymentId: string;
@@ -189,10 +195,10 @@ export function railwayMutationQueriesAreMetadataOnly(): boolean {
     && joined.includes("image\n")
     && joined.includes("snapshotId")
     && joined.includes("meta\n")
+    && joined.includes("config(decryptVariables: false)")
     && !/decryptVariables\s*:\s*true/.test(joined)
     && !/\bvariables\b/.test(joined)
     && !/\bvalue\b/.test(joined)
-    && !/\bconfig\b/.test(joined)
     && !/mutation\s+/i.test(joined);
 }
 
@@ -291,6 +297,81 @@ function parseDeploymentSummary(value: unknown): {
   };
 }
 
+function exactKeySet(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const expectedKeys = new Set(expected);
+  const actual = Object.keys(value);
+  return actual.length === expectedKeys.size
+    && actual.every((key) => expectedKeys.has(key));
+}
+
+function safeConfiguredSourceString(
+  value: unknown,
+  maximumLength: number,
+): value is string {
+  return typeof value === "string"
+    && value.length >= 1
+    && value.length <= maximumLength
+    && value === value.trim()
+    && !/[\r\n\0]/.test(value);
+}
+
+function parseConfiguredServiceSource(
+  config: unknown,
+  serviceId: string,
+): RailwayProductionDeploymentBoundary["configuredSource"] {
+  if (!plainObject(config) || !plainObject(config.services)) return null;
+  const service = config.services[serviceId];
+  if (!plainObject(service) || !plainObject(service.source)) return null;
+  const source = service.source;
+  const image = source.image;
+  const repo = source.repo;
+  if (
+    !(image === undefined || image === null || safeConfiguredSourceString(image, 512))
+    || !(repo === undefined || repo === null || safeConfiguredSourceString(repo, 512))
+  ) {
+    return null;
+  }
+
+  const rawAutoUpdates = source.autoUpdates;
+  let autoUpdates: NonNullable<
+    RailwayProductionDeploymentBoundary["configuredSource"]
+  >["autoUpdates"] = null;
+  if (rawAutoUpdates !== undefined && rawAutoUpdates !== null) {
+    if (!plainObject(rawAutoUpdates)) return null;
+    const type = rawAutoUpdates.type;
+    const schedule = rawAutoUpdates.schedule;
+    const tagMode = rawAutoUpdates.tagMode;
+    if (
+      !(type === undefined || type === null || safeConfiguredSourceString(type, 64))
+      || !(schedule === undefined
+        || schedule === null
+        || safeConfiguredSourceString(schedule, 1_024))
+      || !(tagMode === undefined
+        || tagMode === null
+        || safeConfiguredSourceString(tagMode, 64))
+    ) {
+      return null;
+    }
+    autoUpdates = {
+      type: typeof type === "string" ? type : null,
+      schedule: typeof schedule === "string" ? schedule : null,
+      tagMode: typeof tagMode === "string" ? tagMode : null,
+      exactShape: exactKeySet(rawAutoUpdates, ["type", "schedule", "tagMode"]),
+      remediationNoticePresent: Object.hasOwn(rawAutoUpdates, "remediationNotice"),
+      snoozedUntilPresent: Object.hasOwn(rawAutoUpdates, "snoozedUntil"),
+    };
+  }
+
+  return {
+    image: typeof image === "string" ? image : null,
+    repo: typeof repo === "string" ? repo : null,
+    autoUpdates,
+  };
+}
+
 export function parseProductionPostgresResponse(
   source: string,
 ): RailwayProductionDeploymentBoundary | null {
@@ -299,11 +380,17 @@ export function parseProductionPostgresResponse(
     const parsed: unknown = JSON.parse(source);
     if (!exactKeys(parsed, ["data"])) return null;
     const data = parsed.data;
-    if (!exactKeys(data, ["serviceInstance", "approvedDeployment"])) return null;
+    if (
+      !exactKeys(data, ["environment", "serviceInstance", "approvedDeployment"])
+    ) return null;
+    const environment = data.environment;
     const instance = data.serviceInstance;
     const approved = data.approvedDeployment;
     if (
-      !exactKeys(instance, [
+      !exactKeys(environment, ["id", "config"])
+      || typeof environment.id !== "string"
+      || !UUID_PATTERN.test(environment.id)
+      || !exactKeys(instance, [
         "id",
         "serviceId",
         "environmentId",
@@ -317,6 +404,7 @@ export function parseProductionPostgresResponse(
       || !UUID_PATTERN.test(instance.serviceId)
       || typeof instance.environmentId !== "string"
       || !UUID_PATTERN.test(instance.environmentId)
+      || instance.environmentId !== environment.id
       || !Array.isArray(instance.activeDeployments)
       || instance.activeDeployments.length > 20
       || !exactKeys(instance.source, ["image", "repo"])
@@ -331,6 +419,10 @@ export function parseProductionPostgresResponse(
     ) {
       return null;
     }
+    const configuredSource = parseConfiguredServiceSource(
+      environment.config,
+      instance.serviceId,
+    );
     let latestDeployment: RailwayProductionDeploymentBoundary["latestDeployment"] = null;
     if (instance.latestDeployment !== null) {
       const latest = instance.latestDeployment;
@@ -418,6 +510,7 @@ export function parseProductionPostgresResponse(
       serviceId: instance.serviceId,
       sourceImage: instance.source.image,
       sourceRepo: instance.source.repo,
+      configuredSource,
       latestDeployment,
       activeDeployments: activeDeployments as RailwayProductionDeploymentBoundary["activeDeployments"],
       approvedDeployment,
@@ -687,6 +780,7 @@ export async function runRailwayMutationBoundaryCheck(
         STAGING_TOKEN_NAME,
       ),
       dependencies.queryPostgres({
+        projectId: policy.projectId,
         environmentId: policy.productionPostgres.environmentId,
         serviceId: policy.productionPostgres.serviceId,
         deploymentId: policy.productionPostgres.deploymentId,

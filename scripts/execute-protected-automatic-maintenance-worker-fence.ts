@@ -29,14 +29,14 @@ export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_TERMINAL_SCHEMA =
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_EXECUTOR_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_POLICY_SHA256 =
-  "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461" as const;
+  "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27" as const;
 
 const POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const BOUNDARY_POLICY_SHA256 =
-  "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed";
+  "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const REPOSITORY = "blackmagic30/Beer";

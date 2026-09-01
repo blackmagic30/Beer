@@ -1,5 +1,5 @@
 export const RAILWAY_MUTATION_POLICY_SCHEMA =
-  "pintpath-railway-production-staging-mutation-policy/v1" as const;
+  "pintpath-railway-production-staging-mutation-policy/v2" as const;
 export const RAILWAY_MUTATION_POLICY_ID =
   "pintpath-production-staging-mutation-boundary" as const;
 
@@ -18,8 +18,14 @@ export interface RailwayProductionPostgresPolicy {
   readonly serviceId: string;
   readonly deploymentId: string;
   readonly snapshotId: string;
-  readonly sourceImage: string;
+  readonly deploymentRecordedSourceImage: string;
+  readonly desiredServiceSourceImage: string;
   readonly imageDigest: string;
+  readonly requiredAutoUpdates: {
+    readonly type: "disabled";
+    readonly schedule: null;
+    readonly tagMode: null;
+  };
   readonly requireImmutableSource: true;
 }
 
@@ -49,6 +55,18 @@ export interface RailwayProductionDeploymentBoundary {
   readonly serviceId: string;
   readonly sourceImage: string | null;
   readonly sourceRepo: string | null;
+  readonly configuredSource: {
+    readonly image: string | null;
+    readonly repo: string | null;
+    readonly autoUpdates: {
+      readonly type: string | null;
+      readonly schedule: string | null;
+      readonly tagMode: string | null;
+      readonly exactShape: boolean;
+      readonly remediationNoticePresent: boolean;
+      readonly snoozedUntilPresent: boolean;
+    } | null;
+  } | null;
   readonly latestDeployment: {
     readonly id: string;
     readonly status: string;
@@ -88,7 +106,9 @@ export interface RailwayMutationBoundaryChecks {
   approvedSnapshotExact: boolean;
   approvedImageDigestExact: boolean;
   deploymentPatchAbsent: boolean;
+  deploymentRecordedSourceExact: boolean;
   sourceImageExact: boolean;
+  autoUpdatesDisabledExact: boolean;
   sourceReferenceImmutable: boolean;
 }
 
@@ -127,6 +147,17 @@ function safeSourceImage(value: string): boolean {
     && !value.includes("://")
     && !value.includes("$")
     && !value.includes("\\");
+}
+
+function exactKeySet(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const expectedKeys = new Set(expected);
+  const actual = Object.keys(value);
+  return actual.length === expectedKeys.size
+    && actual.every((key) => expectedKeys.has(key));
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function sourceReferencePinsDigest(
@@ -179,8 +210,10 @@ export function parseRailwayMutationPolicy(
         "serviceId",
         "deploymentId",
         "snapshotId",
-        "sourceImage",
+        "deploymentRecordedSourceImage",
+        "desiredServiceSourceImage",
         "imageDigest",
+        "requiredAutoUpdates",
         "requireImmutableSource",
       ])
       || typeof postgres.environmentId !== "string"
@@ -191,10 +224,20 @@ export function parseRailwayMutationPolicy(
       || !UUID_PATTERN.test(postgres.deploymentId)
       || typeof postgres.snapshotId !== "string"
       || !UUID_PATTERN.test(postgres.snapshotId)
-      || typeof postgres.sourceImage !== "string"
-      || !safeSourceImage(postgres.sourceImage)
+      || typeof postgres.deploymentRecordedSourceImage !== "string"
+      || !safeSourceImage(postgres.deploymentRecordedSourceImage)
+      || typeof postgres.desiredServiceSourceImage !== "string"
+      || !safeSourceImage(postgres.desiredServiceSourceImage)
       || typeof postgres.imageDigest !== "string"
       || !IMAGE_DIGEST_PATTERN.test(postgres.imageDigest)
+      || !plainObject(postgres.requiredAutoUpdates)
+      || !exactKeySet(
+        postgres.requiredAutoUpdates,
+        ["type", "schedule", "tagMode"],
+      )
+      || postgres.requiredAutoUpdates.type !== "disabled"
+      || postgres.requiredAutoUpdates.schedule !== null
+      || postgres.requiredAutoUpdates.tagMode !== null
       || postgres.requireImmutableSource !== true
     ) {
       return null;
@@ -209,8 +252,14 @@ export function parseRailwayMutationPolicy(
         serviceId: postgres.serviceId,
         deploymentId: postgres.deploymentId,
         snapshotId: postgres.snapshotId,
-        sourceImage: postgres.sourceImage,
+        deploymentRecordedSourceImage: postgres.deploymentRecordedSourceImage,
+        desiredServiceSourceImage: postgres.desiredServiceSourceImage,
         imageDigest: postgres.imageDigest,
+        requiredAutoUpdates: {
+          type: "disabled",
+          schedule: null,
+          tagMode: null,
+        },
         requireImmutableSource: true,
       },
     };
@@ -236,7 +285,9 @@ export function emptyRailwayMutationBoundaryChecks(): RailwayMutationBoundaryChe
     approvedSnapshotExact: false,
     approvedImageDigestExact: false,
     deploymentPatchAbsent: false,
+    deploymentRecordedSourceExact: false,
     sourceImageExact: false,
+    autoUpdatesDisabledExact: false,
     sourceReferenceImmutable: false,
   };
 }
@@ -301,12 +352,27 @@ export function evaluateRailwayMutationBoundary(input: {
   checks.deploymentPatchAbsent =
     checks.productionPostgresExact
     && postgres.approvedDeployment?.patchId === null;
+  checks.deploymentRecordedSourceExact =
+    checks.productionPostgresExact
+    && postgres.approvedDeployment?.sourceImage === expected.deploymentRecordedSourceImage;
   checks.sourceImageExact =
     postgres.sourceRepo === null
-    && postgres.sourceImage === expected.sourceImage
-    && postgres.approvedDeployment?.sourceImage === expected.sourceImage;
+    && postgres.sourceImage === expected.desiredServiceSourceImage
+    && postgres.configuredSource?.repo === null
+    && postgres.configuredSource.image === expected.desiredServiceSourceImage;
+  checks.autoUpdatesDisabledExact =
+    checks.sourceImageExact
+    && postgres.configuredSource?.autoUpdates?.exactShape === true
+    && postgres.configuredSource.autoUpdates.remediationNoticePresent === false
+    && postgres.configuredSource.autoUpdates.snoozedUntilPresent === false
+    && postgres.configuredSource.autoUpdates.type === expected.requiredAutoUpdates.type
+    && postgres.configuredSource.autoUpdates.schedule === expected.requiredAutoUpdates.schedule
+    && postgres.configuredSource.autoUpdates.tagMode === expected.requiredAutoUpdates.tagMode;
   checks.sourceReferenceImmutable =
     checks.sourceImageExact
-    && sourceReferencePinsDigest(expected.sourceImage, expected.imageDigest);
+    && sourceReferencePinsDigest(
+      expected.desiredServiceSourceImage,
+      expected.imageDigest,
+    );
   return checks;
 }

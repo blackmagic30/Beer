@@ -32,10 +32,16 @@ const DEPLOYMENT_ID = "66666666-6666-4666-8666-666666666666";
 const SNAPSHOT_ID = "77777777-7777-4777-8777-777777777777";
 const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
 const SOURCE_IMAGE = `ghcr.io/pintpath/postgres:17.10@${IMAGE_DIGEST}`;
+const DEPLOYMENT_SOURCE_IMAGE = "ghcr.io/pintpath/postgres:17.10";
+const DISABLED_AUTO_UPDATES = {
+  type: "disabled",
+  schedule: null,
+  tagMode: null,
+} as const;
 
 function policyFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    schemaVersion: "pintpath-railway-production-staging-mutation-policy/v1",
+    schemaVersion: "pintpath-railway-production-staging-mutation-policy/v2",
     policyId: "pintpath-production-staging-mutation-boundary",
     projectId: PROJECT_ID,
     environments: [
@@ -47,8 +53,10 @@ function policyFixture(overrides: Record<string, unknown> = {}): Record<string, 
       serviceId: POSTGRES_SERVICE_ID,
       deploymentId: DEPLOYMENT_ID,
       snapshotId: SNAPSHOT_ID,
-      sourceImage: SOURCE_IMAGE,
+      deploymentRecordedSourceImage: DEPLOYMENT_SOURCE_IMAGE,
+      desiredServiceSourceImage: SOURCE_IMAGE,
       imageDigest: IMAGE_DIGEST,
+      requiredAutoUpdates: DISABLED_AUTO_UPDATES,
       requireImmutableSource: true,
     },
     ...overrides,
@@ -76,6 +84,16 @@ function postgresBoundary(
     serviceId: POSTGRES_SERVICE_ID,
     sourceImage: SOURCE_IMAGE,
     sourceRepo: null,
+    configuredSource: {
+      image: SOURCE_IMAGE,
+      repo: null,
+      autoUpdates: {
+        ...DISABLED_AUTO_UPDATES,
+        exactShape: true,
+        remediationNoticePresent: false,
+        snoozedUntilPresent: false,
+      },
+    },
     latestDeployment: {
       id: DEPLOYMENT_ID,
       status: "SUCCESS",
@@ -91,7 +109,7 @@ function postgresBoundary(
       environmentId: PRODUCTION_ENVIRONMENT_ID,
       serviceId: POSTGRES_SERVICE_ID,
       snapshotId: SNAPSHOT_ID,
-      sourceImage: SOURCE_IMAGE,
+      sourceImage: DEPLOYMENT_SOURCE_IMAGE,
       imageDigest: IMAGE_DIGEST,
       patchId: null,
     },
@@ -207,10 +225,23 @@ function environmentResponse(environmentId: string, patch: Record<string, unknow
 
 function postgresResponse(meta: Record<string, unknown> = {
   imageDigest: IMAGE_DIGEST,
+  image: DEPLOYMENT_SOURCE_IMAGE,
+}, configuredSource: Record<string, unknown> = {
   image: SOURCE_IMAGE,
+  autoUpdates: DISABLED_AUTO_UPDATES,
 }): string {
   return JSON.stringify({
     data: {
+      environment: {
+        id: PRODUCTION_ENVIRONMENT_ID,
+        config: {
+          services: {
+            [POSTGRES_SERVICE_ID]: {
+              source: configuredSource,
+            },
+          },
+        },
+      },
       serviceInstance: {
         id: POSTGRES_INSTANCE_ID,
         serviceId: POSTGRES_SERVICE_ID,
@@ -378,9 +409,29 @@ describe("Railway mutation boundary guard", () => {
       "sourceImageExact",
     ],
     [
-      "approved-deployment source drift",
+      "deployment-recorded source drift",
       { postgres: postgresBoundary({ approvedDeployment: { ...postgresBoundary().approvedDeployment!, sourceImage: "ghcr.io/pintpath/postgres:other" } }) },
+      "deploymentRecordedSourceExact",
+    ],
+    [
+      "configured service source drift",
+      { postgres: postgresBoundary({ configuredSource: { ...postgresBoundary().configuredSource!, image: "ghcr.io/pintpath/postgres:other" } }) },
       "sourceImageExact",
+    ],
+    [
+      "enabled image auto-updates",
+      { postgres: postgresBoundary({ configuredSource: { ...postgresBoundary().configuredSource!, autoUpdates: { ...postgresBoundary().configuredSource!.autoUpdates!, type: "vuln" } } }) },
+      "autoUpdatesDisabledExact",
+    ],
+    [
+      "an armed image auto-update remediation notice",
+      { postgres: postgresBoundary({ configuredSource: { ...postgresBoundary().configuredSource!, autoUpdates: { ...postgresBoundary().configuredSource!.autoUpdates!, exactShape: false, remediationNoticePresent: true } } }) },
+      "autoUpdatesDisabledExact",
+    ],
+    [
+      "image auto-update snooze metadata",
+      { postgres: postgresBoundary({ configuredSource: { ...postgresBoundary().configuredSource!, autoUpdates: { ...postgresBoundary().configuredSource!.autoUpdates!, exactShape: false, snoozedUntilPresent: true } } }) },
+      "autoUpdatesDisabledExact",
     ],
   ])("fails closed on %s", async (_label, input, failedCheck) => {
     const result = await runWith(input);
@@ -394,16 +445,16 @@ describe("Railway mutation boundary guard", () => {
     const policy = policyFixture({
       productionPostgres: {
         ...policyFixture().productionPostgres as Record<string, unknown>,
-        sourceImage: mutableSource,
+        desiredServiceSourceImage: mutableSource,
       },
     });
     const result = await runWith({
       policy,
       postgres: postgresBoundary({
         sourceImage: mutableSource,
-        approvedDeployment: {
-          ...postgresBoundary().approvedDeployment!,
-          sourceImage: mutableSource,
+        configuredSource: {
+          ...postgresBoundary().configuredSource!,
+          image: mutableSource,
         },
       }),
     });
@@ -422,10 +473,26 @@ describe("Railway mutation boundary guard", () => {
       productionPostgres: {
         deploymentId: DEPLOYMENT_ID,
         snapshotId: SNAPSHOT_ID,
+        deploymentRecordedSourceImage: DEPLOYMENT_SOURCE_IMAGE,
+        desiredServiceSourceImage: SOURCE_IMAGE,
         imageDigest: IMAGE_DIGEST,
+        requiredAutoUpdates: DISABLED_AUTO_UPDATES,
       },
     });
     expect(parseRailwayMutationPolicy(JSON.stringify({ ...policyFixture(), extra: true }))).toBeNull();
+    expect(parseRailwayMutationPolicy(JSON.stringify(policyFixture({
+      productionPostgres: {
+        ...policyFixture().productionPostgres as Record<string, unknown>,
+        requiredAutoUpdates: {
+          ...DISABLED_AUTO_UPDATES,
+          remediationNotice: null,
+        },
+      },
+    })))).toBeNull();
+    expect(parseRailwayMutationPolicy(JSON.stringify({
+      ...policyFixture(),
+      schemaVersion: "pintpath-railway-production-staging-mutation-policy/v1",
+    }))).toBeNull();
     expect(parseRailwayMutationPolicy(JSON.stringify(policyFixture({ environments: [
       { name: "staging", environmentId: STAGING_ENVIRONMENT_ID },
       { name: "production", environmentId: PRODUCTION_ENVIRONMENT_ID },
@@ -465,13 +532,65 @@ describe("Railway mutation boundary guard", () => {
         environmentResponse(PRODUCTION_ENVIRONMENT_ID),
       ),
     ).toEqual({ environmentId: PRODUCTION_ENVIRONMENT_ID, patch: {} });
-    expect(
+    const parsedPostgres =
       railwayMutationBoundaryInternals.parseProductionPostgresResponse(
-        postgresResponse({ imageDigest: IMAGE_DIGEST, patchId: null, unrelated: "discarded" }),
-      ),
-    ).toMatchObject({
-      approvedDeployment: { imageDigest: IMAGE_DIGEST, patchId: null },
+        postgresResponse({
+          image: DEPLOYMENT_SOURCE_IMAGE,
+          imageDigest: IMAGE_DIGEST,
+          patchId: null,
+          unrelated: "discarded",
+        }),
+      );
+    expect(parsedPostgres).toMatchObject({
+      configuredSource: {
+        image: SOURCE_IMAGE,
+        repo: null,
+        autoUpdates: {
+          ...DISABLED_AUTO_UPDATES,
+          exactShape: true,
+          remediationNoticePresent: false,
+          snoozedUntilPresent: false,
+        },
+      },
+      approvedDeployment: {
+        sourceImage: DEPLOYMENT_SOURCE_IMAGE,
+        imageDigest: IMAGE_DIGEST,
+        patchId: null,
+      },
     });
+
+    const rawConfigSecret = "must-not-leave-environment-config";
+    const withRawConfig = JSON.parse(postgresResponse()) as {
+      data: { environment: { config: Record<string, unknown> } };
+    };
+    withRawConfig.data.environment.config.variables = {
+      DATABASE_URL: rawConfigSecret,
+    };
+    const sanitized = railwayMutationBoundaryInternals
+      .parseProductionPostgresResponse(JSON.stringify(withRawConfig));
+    expect(sanitized).not.toBeNull();
+    expect(JSON.stringify(sanitized)).not.toContain(rawConfigSecret);
+
+    const armedRemediation = railwayMutationBoundaryInternals
+      .parseProductionPostgresResponse(
+        postgresResponse(undefined, {
+          image: SOURCE_IMAGE,
+          autoUpdates: {
+            ...DISABLED_AUTO_UPDATES,
+            remediationNotice: { id: rawConfigSecret },
+          },
+        }),
+      );
+    expect(armedRemediation).toMatchObject({
+      configuredSource: {
+        autoUpdates: {
+          exactShape: false,
+          remediationNoticePresent: true,
+          snoozedUntilPresent: false,
+        },
+      },
+    });
+    expect(JSON.stringify(armedRemediation)).not.toContain(rawConfigSecret);
     expect(
       railwayMutationBoundaryInternals.parseEnvironmentBoundaryResponse(
         JSON.stringify({ errors: [{ message: "secret" }], data: null }),
@@ -496,6 +615,9 @@ describe("Railway mutation boundary guard", () => {
     expect(RAILWAY_PROJECT_TOKEN_SCOPE_QUERY).not.toContain("environment {");
     expect(RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY).toContain("snapshotId");
     expect(RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY).toContain("meta");
+    expect(RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY).toContain(
+      "config(decryptVariables: false)",
+    );
 
     const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(init?.headers).toEqual({
@@ -543,6 +665,7 @@ describe("Railway mutation boundary guard", () => {
     await expect(
       railwayMutationBoundaryInternals.defaultQueryPostgres(
         {
+          projectId: PROJECT_ID,
           environmentId: PRODUCTION_ENVIRONMENT_ID,
           serviceId: POSTGRES_SERVICE_ID,
           deploymentId: DEPLOYMENT_ID,
@@ -613,14 +736,19 @@ describe("Railway mutation boundary guard", () => {
     expect(policy).toMatchObject({
       projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
       productionPostgres: {
-        deploymentId: "ccb513ee-c850-49a1-a205-9ab8ab7534cc",
-        snapshotId: "f2a08518-2336-4837-a77b-11852cf2a8ab",
-        imageDigest: "sha256:6008e0827c45d3fa6e6eba2140a8932598fe10cea7f0fafafc4af9ab1715e8ad",
+        deploymentId: "f31d3dbd-a997-42cf-b3a8-970b8c337841",
+        snapshotId: "03f6d2ff-e78e-42a5-a78f-216a4a1f498d",
+        deploymentRecordedSourceImage:
+          "ghcr.io/railwayapp-templates/postgres-ssl:17",
+        desiredServiceSourceImage:
+          "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+        imageDigest: "sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+        requiredAutoUpdates: DISABLED_AUTO_UPDATES,
         requireImmutableSource: true,
       },
     });
     expect(sourceReferencePinsDigest(
-      policy!.productionPostgres.sourceImage,
+      policy!.productionPostgres.desiredServiceSourceImage,
       policy!.productionPostgres.imageDigest,
     )).toBe(true);
   });

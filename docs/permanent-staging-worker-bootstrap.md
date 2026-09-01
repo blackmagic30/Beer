@@ -114,13 +114,13 @@ The prerequisite policy SHA is
 Its producer hashes are:
 
 - worker prepare/activate policy:
-  `03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461`;
+  `685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27`;
 - scale policy:
   `164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608`;
 - fenced zero-replica deployment policy:
-  `5b3a47d5155347d5b74379ebd969aa95df465bc0e8fef6fad32895a202c6f864`;
+  `a46ee1af6d8b3afcfe38d595767e28fcae53a9716730e4cff33b9da39e0ff7df`;
 - active one-replica deployment policy:
-  `7d4f899e5ee17ee3a7b4d86183aedf7f7f0f86b7e24ed0f2afc50a2df9e8f2e6`.
+  `c73fe315f98c5736f4ac31963e11361b059881d7ec5774292e7e8048ff6f8986`.
 
 Any producer policy change deliberately invalidates this verifier until all
 contracts are reviewed and the prerequisite policy and embedded digest are

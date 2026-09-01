@@ -159,6 +159,21 @@ workflow for staged provider/Supabase operations, and the separate Supabase
 cutover ceremony for canary-B, legacy disablement, and old-key denial. A
 successful variable receipt still requires the same-candidate deployment and
 runtime/provider smoke; metadata alone cannot prove secret value semantics.
+The only repository-native exception for the currently reviewed production
+Postgres source drift is
+`.github/workflows/repin-production-postgres-source.yml`. It requires the exact
+mutable `:17` source, armed vulnerability-updater metadata, config ETag, and
+runtime identities as its recovery baseline, plus a distinct production
+source-write token and the standalone reviewed-candidate authority. It dismisses
+that exact notice once, stages only the already-running policy-pinned digest
+with canonical disabled auto-update metadata, and commits with deploys skipped.
+That digest was observed running PostgreSQL 17.11, the fixed release for
+CVE-2026-15741. Railway's armed notice still names `currentVersion: 17.10`
+because it records the pre-remediation baseline; it is not the running or
+desired version. The source-lock policy pins both facts and rejects drift.
+It does not authorize a restart, deployment, rollback, digest change, or any
+other production metadata write. An ambiguous apply must use the separately
+guarded prior-run reconciliation state machine; it must never be rerun.
 The deprecated fixture's internal review kernels remain useful only as
 adversarial test material. Their native-process and credential-custody caveats
 do not apply to, authorize, or block the separately implemented protected

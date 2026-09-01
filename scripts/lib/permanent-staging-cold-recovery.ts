@@ -13,11 +13,11 @@ import {
 export const COLD_RECOVERY_POLICY_PATH =
   "ops/railway/permanent-staging-cold-recovery-policy.json" as const;
 export const COLD_RECOVERY_POLICY_SHA256 =
-  "1df2038eee8e785f49d35057a701f94a4b7ec41d38987938d658fb1a9744746c" as const;
+  "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd" as const;
 export const COLD_RECOVERY_BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json" as const;
 export const COLD_RECOVERY_BOUNDARY_POLICY_SHA256 =
-  "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed" as const;
+  "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079" as const;
 export const COLD_RECOVERY_CLI_SHA256 =
   "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43" as const;
 

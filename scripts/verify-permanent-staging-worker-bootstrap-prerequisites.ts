@@ -15,7 +15,7 @@ export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "09521fb1359d3c47a3e00ffea4d998c5d04296f11726d75fdf364addb50c2230" as const;
+  "51d9a84eeaa3e0e23437efb1556af6198009f19bb7980ca376722ae67ff6b88c" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -25,7 +25,7 @@ const POLICY_PATH =
 const WORKER_POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json";
 const WORKER_POLICY_SHA256 =
-  "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461";
+  "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27";
 const SCALE_POLICY_PATH =
   "ops/railway/permanent-staging-scale-evidence-policy.json";
 const SCALE_POLICY_SHA256 =
@@ -33,15 +33,15 @@ const SCALE_POLICY_SHA256 =
 const FENCED_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-fenced-app-deployment-policy.json";
 const FENCED_DEPLOYMENT_POLICY_SHA256 =
-  "5b3a47d5155347d5b74379ebd969aa95df465bc0e8fef6fad32895a202c6f864";
+  "a46ee1af6d8b3afcfe38d595767e28fcae53a9716730e4cff33b9da39e0ff7df";
 const ACTIVE_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-app-deployment-policy.json";
 const ACTIVE_DEPLOYMENT_POLICY_SHA256 =
-  "7d4f899e5ee17ee3a7b4d86183aedf7f7f0f86b7e24ed0f2afc50a2df9e8f2e6";
+  "c73fe315f98c5736f4ac31963e11361b059881d7ec5774292e7e8048ff6f8986";
 const COLD_RECOVERY_POLICY_PATH =
   "ops/railway/permanent-staging-cold-recovery-policy.json";
 const COLD_RECOVERY_POLICY_SHA256 =
-  "1df2038eee8e785f49d35057a701f94a4b7ec41d38987938d658fb1a9744746c";
+  "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";

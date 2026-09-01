@@ -1,0 +1,231 @@
+{
+  "schemaVersion": "pintpath-protected-production-postgres-source-lock-policy/v2",
+  "policyId": "pintpath-protected-production-postgres-source-lock",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "production-postgres-source-repin",
+  "requiredGitRef": "refs/heads/main",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "target": {
+    "serviceId": "4a2334a1-71e7-4745-970a-2cd95da10169",
+    "serviceInstanceId": "bba99cde-3f9b-4045-b349-93da78461b44",
+    "runningInstanceId": "0a8b344a-8d17-4f77-8f1b-1677dcf122de",
+    "deploymentId": "f31d3dbd-a997-42cf-b3a8-970b8c337841",
+    "snapshotId": "03f6d2ff-e78e-42a5-a78f-216a4a1f498d",
+    "volumeInstanceId": "74cbfae2-3383-40b4-8464-21a403ca509d",
+    "volumeId": "a3585b0a-b57a-4b69-ad45-05f798e739e1",
+    "expectedMutableSourceImage": "ghcr.io/railwayapp-templates/postgres-ssl:17",
+    "desiredImmutableSourceImage": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+    "approvedImageDigest": "sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+    "baselineConfigEtag": "7bc537f25b01f8cc6d865552c829d8291e14d8fabb9982d2e63ca0cee8954e83"
+  },
+  "securityRemediation": {
+    "cveId": "CVE-2026-15741",
+    "affectedVersions": "before 17.11",
+    "fixedVersion": "17.11",
+    "officialAdvisory": "https://www.postgresql.org/support/security/CVE-2026-15741/",
+    "observedRunningDatabaseVersion": "17.11",
+    "runtimeObservationMode": "READ_ONLY_SQL_SHOW_SERVER_VERSION",
+    "approvedDigestMatchesObservedRunningDeployment": true,
+    "armedNoticeCurrentVersionIsPreRemediationBaseline": "17.10",
+    "sourceLockMustNotDeploy": true
+  },
+  "autoUpdates": {
+    "armed": {
+      "remediationNotice": {
+        "armedAt": "2026-08-24T22:45:47.247Z",
+        "currentVersion": "17.10",
+        "cveId": "CVE-2026-15741",
+        "severity": "HIGH",
+        "targetImage": "ghcr.io/railwayapp-templates/postgres-ssl:17",
+        "targetVersion": "17"
+      },
+      "schedule": [
+        {
+          "day": 6,
+          "endHour": 24,
+          "startHour": 10
+        },
+        {
+          "day": 0,
+          "endHour": 18,
+          "startHour": 0
+        }
+      ],
+      "tagMode": "sha",
+      "type": "vuln"
+    },
+    "dismissed": {
+      "schedule": [
+        {
+          "day": 6,
+          "endHour": 24,
+          "startHour": 10
+        },
+        {
+          "day": 0,
+          "endHour": 18,
+          "startHour": 0
+        }
+      ],
+      "tagMode": "sha",
+      "type": "vuln"
+    },
+    "desired": {
+      "schedule": null,
+      "tagMode": null,
+      "type": "disabled"
+    }
+  },
+  "githubAuthorityContract": {
+    "applyOperation": "production-postgres-source-repin",
+    "reconcileOperation": "production-postgres-source-repin-reconcile",
+    "workflowPath": ".github/workflows/repin-production-postgres-source.yml",
+    "applyRunTitleTemplate": "Production Postgres source lock | apply | {candidateSha}",
+    "reconcileRunTitleTemplate": "Production Postgres source lock | reconcile | {candidateSha}",
+    "jobName": "Lock or reconcile the protected production Postgres source",
+    "writeStepName": "Apply or reconcile the exact production Postgres source lock",
+    "reviewedPullRequestRequired": true,
+    "completeRetainedHistoryRequired": true,
+    "runAttemptOneRequired": true,
+    "freshApplyHistoryIncludesApplyAndReconcileRuns": true,
+    "priorSameCandidateRunAllowedOnlyWhenWriterSkipped": true,
+    "reconcilePriorRunIdRequired": true,
+    "reconcileSelectedPriorRunMustBeOneAmbiguousApply": true,
+    "reconcileSecondMayHaveWrittenRunAllowed": false,
+    "reconcilePriorRunCompletionRequired": true,
+    "reconcileSettlementSeconds": 60,
+    "reconcileGraceHours": 24
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
+    "prepareAndApplyAllowedFalseChecks": [
+      "sourceImageExact",
+      "autoUpdatesDisabledExact",
+      "sourceReferenceImmutable"
+    ],
+    "prepareAndApplyAllOtherChecksRequiredTrue": true,
+    "reconcileObservedStateMustMatchOneDocumentedRecoveryState": true,
+    "unconditionalPostflightRequired": true,
+    "canonicalPostflightAllChecksRequiredTrue": true
+  },
+  "phases": {
+    "prepare": {
+      "mode": "READ_ONLY_METADATA_ONLY",
+      "mutationCredentialAllowed": false,
+      "armedBaselineRequired": true,
+      "exactConfigEtagRequired": true,
+      "durableIntentArtifactRequired": true,
+      "intentArtifactMustBeUploadedBeforeMutationCredential": true
+    },
+    "apply": {
+      "sameRunIntentRequired": true,
+      "sameRunReviewedAuthorityRequired": true,
+      "armedBaselineRequiredImmediatelyBeforeWrite": true,
+      "maximumDismissAttempts": 1,
+      "maximumStageAttempts": 1,
+      "maximumCommitAttempts": 1
+    },
+    "reconcile": {
+      "priorRunIntentArtifactRequired": true,
+      "priorRunArtifactIdentityAndDigestRequired": true,
+      "reviewedAuthorityMustBindExactPriorRun": true,
+      "priorRunGraceAttestationRequired": true,
+      "additionalDismissAllowed": false,
+      "maximumStageAttempts": 1,
+      "maximumCommitAttempts": 1
+    }
+  },
+  "mutationPlan": {
+    "confirmation": "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY",
+    "requestedPatch": {
+      "services": {
+        "4a2334a1-71e7-4745-970a-2cd95da10169": {
+          "source": {
+            "image": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+            "autoUpdates": {
+              "type": "disabled",
+              "schedule": null,
+              "tagMode": null,
+              "remediationNotice": null,
+              "snoozedUntil": null
+            }
+          }
+        }
+      }
+    },
+    "providerNormalizedPatch": {
+      "services": {
+        "4a2334a1-71e7-4745-970a-2cd95da10169": {
+          "source": {
+            "image": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+            "autoUpdates": {
+              "type": "disabled",
+              "schedule": null,
+              "tagMode": null
+            }
+          }
+        }
+      }
+    },
+    "dismissOperationName": "serviceInstanceVulnRemediationDismiss",
+    "dismissMaximumAttempts": 1,
+    "dismissAcknowledgementRequired": true,
+    "dismissedStateExactReadbackRequired": true,
+    "stageOperationName": "environmentStageChanges",
+    "stageMerge": false,
+    "stageMaximumAttempts": 1,
+    "stageAcknowledgementRequired": true,
+    "selectedAndActivePatchExactReadbackRequired": true,
+    "commitOperationName": "environmentPatchCommitStaged",
+    "commitSkipDeploys": true,
+    "commitMaximumAttempts": 1,
+    "commitAcknowledgementRequired": true,
+    "automaticRetriesAllowed": false,
+    "workflowRerunsAllowed": false,
+    "rollbackAllowed": false,
+    "ambiguousOutcomeAction": "SEPARATE_READ_ONLY_RECONCILIATION_NO_RETRY"
+  },
+  "recoveryStateMachine": {
+    "desiredWithEmptyStagedPatch": "RECONCILED_READ_ONLY",
+    "dismissedWithExactStagedPatch": "RECONCILED_COMMIT_ONLY",
+    "dismissedWithEmptyStagedPatch": "RECONCILED_STAGE_AND_COMMIT",
+    "armedWithEmptyStagedPatch": "NOT_APPLIED_NO_WRITE",
+    "allOtherStates": "FAIL_CLOSED_NO_WRITE",
+    "writeRecoveryRequiresAuthorityAndPriorRunGrace": true,
+    "writeRecoveryMayNotDismissAgain": true
+  },
+  "runtimeContinuity": {
+    "exactPinnedIdentitiesRequiredBeforeAndAfter": true,
+    "completeDeploymentInventoryMustRemainUnchanged": true,
+    "serviceInstanceReplicaCountMustRemainUnchanged": true,
+    "serviceInstanceRegionMustRemainUnchanged": true,
+    "stagingPatchMustRemainEmpty": true,
+    "productionPatchMustBeEmptyAfterSuccess": true,
+    "noNewDeploymentAllowed": true,
+    "noRestartAllowed": true,
+    "noSnapshotChangeAllowed": true,
+    "noVolumeInstanceChangeAllowed": true,
+    "noVolumeChangeAllowed": true
+  },
+  "externalMutationFreeze": {
+    "required": true,
+    "dispatchAttestation": "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    "enforcement": "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+    "providerCommitSelector": "ENVIRONMENT_ID_ONLY",
+    "providerStagedCommitPatchIdCasOrLockAvailable": false,
+    "residualRisk": "OUT_OF_BAND_STAGED_PATCH_REPLACEMENT_CAN_COMMIT_BEFORE_POSTFLIGHT_DETECTION"
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeMutationCredential": true,
+    "intentArtifactNameTemplate": "pintpath-production-postgres-source-lock-intent-{candidateSha}-{applyRunId}",
+    "terminalEvidenceRequired": true,
+    "finalReceiptEvidenceRequired": true,
+    "providerCredentialsAllowedInEvidence": false,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false,
+    "rawProviderMetadataAllowed": false
+  }
+}

@@ -21,7 +21,8 @@ commit/discard an unrelated staged patch to bypass this stop.
 
 The active protected operation paths are the manual application-deployment,
 runtime-variable, permanent-staging provider-variable, Supabase legacy-cutover,
-Postgres build-canary, staging scale-evidence, production converge-two,
+Postgres build-canary, the exact deploy-suppressed production Postgres source
+lock and runner-loss reconciliation, staging scale-evidence, production converge-two,
 canonical production-route close/open, promotion/recovery activation and attestation,
 Postgres-HA PITR, and disposable-restore teardown workflows described in
 [the protected provider-operations runbook](./protected-provider-mutation-operations.md)
@@ -1796,7 +1797,11 @@ protected application source-upload executor cannot bypass a failed preflight.
 Protected successors also exist for the exact production canonical
 route close/open pair, reviewed runtime/provider
 variables, Supabase legacy-key cutover, the staging Postgres build canary,
-bounded staging/production scale, Postgres HA/PITR enable-and-verify, and exact
+the exact production Postgres same-digest source lock plus disabled auto-update
+state from the policy-pinned mutable/armed baseline (the approved digest is the
+already-running PostgreSQL 17.11 fix for CVE-2026-15741; the armed notice's
+`currentVersion: 17.10` is only its pre-remediation baseline), bounded
+staging/production scale, Postgres HA/PITR enable-and-verify, and exact
 disposable-restore teardown. Those workflows authorize only their named
 operation. Any other route/domain change, arbitrary service/resource/volume mutation,
 Railway-native restart/redeploy/rollback, and every other unlisted provider or

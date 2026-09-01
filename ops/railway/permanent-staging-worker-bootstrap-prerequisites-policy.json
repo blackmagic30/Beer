@@ -18,7 +18,7 @@
   "producerPolicies": {
     "workerFence": {
       "path": "ops/railway/protected-automatic-maintenance-worker-fence-policy.json",
-      "sha256": "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461"
+      "sha256": "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27"
     },
     "scale": {
       "path": "ops/railway/permanent-staging-scale-evidence-policy.json",
@@ -26,15 +26,15 @@
     },
     "fencedDeployment": {
       "path": "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
-      "sha256": "5b3a47d5155347d5b74379ebd969aa95df465bc0e8fef6fad32895a202c6f864"
+      "sha256": "a46ee1af6d8b3afcfe38d595767e28fcae53a9716730e4cff33b9da39e0ff7df"
     },
     "activeDeployment": {
       "path": "ops/railway/permanent-staging-app-deployment-policy.json",
-      "sha256": "7d4f899e5ee17ee3a7b4d86183aedf7f7f0f86b7e24ed0f2afc50a2df9e8f2e6"
+      "sha256": "c73fe315f98c5736f4ac31963e11361b059881d7ec5774292e7e8048ff6f8986"
     },
     "coldRecovery": {
       "path": "ops/railway/permanent-staging-cold-recovery-policy.json",
-      "sha256": "1df2038eee8e785f49d35057a701f94a4b7ec41d38987938d658fb1a9744746c"
+      "sha256": "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd"
     }
   },
   "producers": {

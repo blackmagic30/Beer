@@ -11,6 +11,175 @@ function read(filename: string): string {
 }
 
 describe("protected provider mutation workflows", () => {
+  it("locks the production Postgres source only after durable intent and supports one fail-closed reconciliation", () => {
+    const workflow = read(
+      ".github/workflows/repin-production-postgres-source.yml",
+    );
+    const executor = read(
+      "scripts/execute-protected-production-postgres-source-repin.ts",
+    );
+    const policySource = read(
+      "ops/railway/protected-production-postgres-source-repin-policy.json",
+    );
+    const boundaryPolicySource = read(
+      "ops/railway/production-staging-mutation-policy.json",
+    );
+    const policy = JSON.parse(policySource) as Record<string, unknown>;
+    const policySha = crypto
+      .createHash("sha256")
+      .update(policySource)
+      .digest("hex");
+    const boundaryPolicySha = crypto
+      .createHash("sha256")
+      .update(boundaryPolicySource)
+      .digest("hex");
+
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toMatch(/^\s*(?:push|pull_request|schedule):/m);
+    expect(workflow).toContain(
+      "run-name: Production Postgres source lock | ${{ inputs.operation_mode }} | ${{ inputs.candidate_sha }}",
+    );
+    expect(workflow).toContain(
+      "name: Lock or reconcile the protected production Postgres source",
+    );
+    expect(workflow).toContain(
+      "name: Apply or reconcile the exact production Postgres source lock",
+    );
+    expect(workflow).toContain(
+      "environment: production-postgres-source-repin",
+    );
+    expect(workflow).toContain("group: pintpath-production-rollout");
+    expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow).toContain("operation_mode:");
+    expect(workflow).toContain("prior_run_id:");
+    expect(workflow).toContain("prior_run_grace_attestation:");
+    expect(workflow).toContain(
+      "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY",
+    );
+    expect(workflow).toContain(
+      "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    );
+    expect(workflow).toContain(
+      "I_ATTEST_PRIOR_SOURCE_LOCK_RUN_ENDED_AND_NO_WRITER_IS_ACTIVE",
+    );
+    expect(workflow).toContain(
+      "--operation production-postgres-source-repin-reconcile",
+    );
+    expect(workflow).toContain('--prior-run-id "$PRIOR_RUN_ID"');
+    expect(workflow).toContain("--phase prepare");
+    expect(workflow).toContain('--phase "$OPERATION_MODE"');
+    expect(workflow).toContain(
+      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    );
+    expect(workflow).toContain(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(workflow).toContain(".artifacts[0].workflow_run.id == $priorRunId");
+    expect(workflow).toContain(
+      ".artifacts[0].workflow_run.head_sha == $candidate",
+    );
+    expect(workflow).toContain(
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST",
+    );
+    expect(workflow).toContain(
+      '[[ "$APPLY_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]',
+    );
+    expect(workflow).toContain(
+      'artifact_digest="sha256:$APPLY_ARTIFACT_DIGEST"',
+    );
+    expect(workflow).not.toContain(
+      'artifact_digest="$APPLY_ARTIFACT_DIGEST"',
+    );
+    expect(workflow).toContain(
+      '[[ "$artifact_digest" =~ ^sha256:[a-f0-9]{64}$ ]]',
+    );
+    expect(workflow).toContain(
+      "if: always() && steps.reviewed_authority.outcome == 'success'",
+    );
+
+    const repositoryGate = workflow.indexOf("npm run check");
+    const authority = workflow.indexOf(
+      "Verify reviewed-candidate authority before any mutation credential exists",
+    );
+    const prepare = workflow.indexOf(
+      "Prepare the exact source-lock intent with metadata credentials only",
+    );
+    const intentUpload = workflow.indexOf(
+      "Persist the exact source-lock intent before any mutation credential exists",
+    );
+    const artifactBinding = workflow.indexOf(
+      "Bind the exact durable intent artifact before the writer",
+    );
+    const mutationCredential = workflow.indexOf(
+      "PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN",
+    );
+    const writer = workflow.indexOf(
+      "      - name: Apply or reconcile the exact production Postgres source lock",
+    );
+    expect(repositoryGate).toBeGreaterThan(-1);
+    expect(authority).toBeGreaterThan(repositoryGate);
+    expect(prepare).toBeGreaterThan(authority);
+    expect(intentUpload).toBeGreaterThan(prepare);
+    expect(artifactBinding).toBeGreaterThan(intentUpload);
+    expect(writer).toBeGreaterThan(artifactBinding);
+    expect(mutationCredential).toBeGreaterThan(artifactBinding);
+    expect(workflow.slice(0, intentUpload)).not.toContain(
+      "PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN",
+    );
+    expect(
+      workflow.match(/PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN/g),
+    ).toHaveLength(2);
+
+    expect(policy).toMatchObject({
+      schemaVersion:
+        "pintpath-protected-production-postgres-source-lock-policy/v2",
+      policyId: "pintpath-protected-production-postgres-source-lock",
+      activationState: "GITHUB_ENVIRONMENT_PROTECTED",
+      githubEnvironment: "production-postgres-source-repin",
+      requiredGitRef: "refs/heads/main",
+      projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+      productionEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
+      stagingEnvironmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      target: {
+        serviceId: "4a2334a1-71e7-4745-970a-2cd95da10169",
+        serviceInstanceId: "bba99cde-3f9b-4045-b349-93da78461b44",
+        runningInstanceId: "0a8b344a-8d17-4f77-8f1b-1677dcf122de",
+        deploymentId: "f31d3dbd-a997-42cf-b3a8-970b8c337841",
+        snapshotId: "03f6d2ff-e78e-42a5-a78f-216a4a1f498d",
+        volumeInstanceId: "74cbfae2-3383-40b4-8464-21a403ca509d",
+        volumeId: "a3585b0a-b57a-4b69-ad45-05f798e739e1",
+        expectedMutableSourceImage:
+          "ghcr.io/railwayapp-templates/postgres-ssl:17",
+        desiredImmutableSourceImage:
+          "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+        approvedImageDigest:
+          "sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+        baselineConfigEtag:
+          "7bc537f25b01f8cc6d865552c829d8291e14d8fabb9982d2e63ca0cee8954e83",
+      },
+      autoUpdates: {
+        desired: { schedule: null, tagMode: null, type: "disabled" },
+      },
+      mutationBoundary: {
+        policySha256: boundaryPolicySha,
+        prepareAndApplyAllowedFalseChecks: [
+          "sourceImageExact",
+          "autoUpdatesDisabledExact",
+          "sourceReferenceImmutable",
+        ],
+      },
+      recoveryStateMachine: {
+        desiredWithEmptyStagedPatch: "RECONCILED_READ_ONLY",
+        dismissedWithExactStagedPatch: "RECONCILED_COMMIT_ONLY",
+        dismissedWithEmptyStagedPatch: "RECONCILED_STAGE_AND_COMMIT",
+        armedWithEmptyStagedPatch: "NOT_APPLIED_NO_WRITE",
+        allOtherStates: "FAIL_CLOSED_NO_WRITE",
+      },
+    });
+    expect(executor).toContain(policySha);
+    expect(executor).toContain(boundaryPolicySha);
+  });
+
   it("keeps staging variables behind one protected, main-only, non-rerunnable plan", () => {
     const workflow = read(
       ".github/workflows/permanent-staging-provider-mutation.yml",
@@ -99,6 +268,30 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain(
       "Execute one reviewed protected Railway mutation plan",
     );
+    const boundaryPreflight = workflow.match(
+      /- name: Fail closed on the Railway boundary before staging protected values(?<body>[\s\S]*?)\n      - name:/,
+    )?.groups?.body ?? "";
+    expect(boundaryPreflight).toContain(
+      "PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}",
+    );
+    expect(boundaryPreflight).toContain(
+      "PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}",
+    );
+    expect(boundaryPreflight).toContain(
+      "run: npm run readiness:railway:mutation-boundary",
+    );
+    const boundaryPreflightIndex = workflow.indexOf(
+      "Fail closed on the Railway boundary before staging protected values",
+    );
+    const firstProtectedValueStage = workflow.indexOf(
+      "Stage Google Maps API key in private custody",
+    );
+    const writeStep = workflow.indexOf(
+      "Execute one reviewed protected Railway mutation plan",
+    );
+    expect(boundaryPreflightIndex).toBeGreaterThan(-1);
+    expect(boundaryPreflightIndex).toBeLessThan(firstProtectedValueStage);
+    expect(boundaryPreflightIndex).toBeLessThan(writeStep);
     const closeoutStep = workflow.match(
       /- name: Reconcile the completed cleanup with metadata only(?<body>[\s\S]*?)\n      - name:/,
     )?.groups?.body ?? "";
