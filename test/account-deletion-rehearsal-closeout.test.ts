@@ -395,6 +395,26 @@ describe("account-deletion rehearsal closeout", () => {
     )).toThrow("attempt_inventory_invalid");
   });
 
+  it("rejects symlinked and hard-linked input evidence", () => {
+    const symlinked = fixture("reconcile", "SAFE_ONE_FINAL");
+    const symlink = path.join(symlinked.directory, "cleanup-arm-link.json");
+    fs.symlinkSync(symlinked.armFile, symlink);
+    const symlinkArguments = argv(symlinked, "reconcile");
+    symlinkArguments[symlinkArguments.indexOf("--cleanup-arm-file") + 1] =
+      symlink;
+    expect(() => finalizeAccountDeletionRehearsalCloseout(symlinkArguments))
+      .toThrow("cleanup_arm_invalid");
+
+    const hardLinked = fixture("reconcile", "SAFE_ONE_FINAL");
+    const hardLink = path.join(hardLinked.directory, "authority-hard-link.json");
+    fs.linkSync(hardLinked.authorityFile, hardLink);
+    const hardLinkArguments = argv(hardLinked, "reconcile");
+    hardLinkArguments[hardLinkArguments.indexOf("--authority-file") + 1] =
+      hardLink;
+    expect(() => finalizeAccountDeletionRehearsalCloseout(hardLinkArguments))
+      .toThrow("authority_invalid");
+  });
+
   it("requires clean zero after any immutable containment arm exists", () => {
     for (const operation of [
       "cleanup-contained-zero",

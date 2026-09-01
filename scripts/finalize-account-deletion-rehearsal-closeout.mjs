@@ -92,6 +92,23 @@ function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function requiredFileFlag(value, failureCode) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(failureCode);
+  return value;
+}
+
+function sameFileSnapshot(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.nlink === right.nlink
+    && left.uid === right.uid
+    && left.gid === right.gid
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
 function parseCanonicalSource(source, failureCode) {
   try {
     if (typeof source !== "string" || source.length <= 1
@@ -106,14 +123,60 @@ function parseCanonicalSource(source, failureCode) {
 }
 
 function readCanonicalFile(filename, failureCode) {
-  if (!path.isAbsolute(filename)) throw new Error(failureCode);
-  const stat = fs.lstatSync(filename);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1
-    || stat.size <= 1 || stat.size > MAX_SOURCE_BYTES) {
-    throw new Error(failureCode);
+  let descriptor = null;
+  let bytes = null;
+  let source = null;
+  let exactRead = false;
+  try {
+    if (!path.isAbsolute(filename) || filename.includes("\0")) {
+      throw new Error(failureCode);
+    }
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY
+        | requiredFileFlag(fs.constants.O_NOFOLLOW, failureCode)
+        | requiredFileFlag(fs.constants.O_NONBLOCK, failureCode),
+    );
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile() || before.nlink !== 1n
+      || before.size <= 1n || before.size > BigInt(MAX_SOURCE_BYTES)) {
+      throw new Error(failureCode);
+    }
+    bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (!Number.isSafeInteger(count) || count <= 0) {
+        throw new Error(failureCode);
+      }
+      offset += count;
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileSnapshot(before, after)) throw new Error(failureCode);
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    parseCanonicalSource(source, failureCode);
+    const final = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameFileSnapshot(after, final)) throw new Error(failureCode);
+    exactRead = true;
+  } catch {
+    exactRead = false;
+  } finally {
+    bytes?.fill(0);
+    if (descriptor !== null) {
+      try {
+        fs.closeSync(descriptor);
+      } catch {
+        exactRead = false;
+      }
+    }
   }
-  const source = fs.readFileSync(filename, "utf8");
-  parseCanonicalSource(source, failureCode);
+  if (!exactRead || source === null) throw new Error(failureCode);
   return source;
 }
 
