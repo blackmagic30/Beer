@@ -580,6 +580,14 @@ function boundEnvironment(
   };
 }
 
+function parsedIntentArgs(prepared: Awaited<ReturnType<typeof prepare>>) {
+  const args = protectedProductionPostgresSourceRepinInternals.parseArgs(
+    argsFor("apply", prepared.evidence, prepared.intentFile),
+  );
+  if (args === null) throw new Error("expected valid intent arguments");
+  return args;
+}
+
 function mutationCalls(provider: ReturnType<typeof providerMock>) {
   return provider.calls.filter((call) =>
     [
@@ -777,6 +785,159 @@ describe("protected production Postgres source lock", () => {
       ).toBe(0);
     }
   });
+
+  it("rejects a symlinked reviewed-authority file before contacting Railway", async () => {
+    const evidence = createEvidence();
+    const authorityTarget = path.join(
+      evidence.directory,
+      "reviewed-authority-target.json",
+    );
+    fs.renameSync(evidence.authorityFile, authorityTarget);
+    fs.symlinkSync(authorityTarget, evidence.authorityFile);
+    const provider = providerMock();
+
+    const result = await run(
+      "prepare",
+      evidence,
+      provider,
+      [],
+      environment("prepare"),
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      checks: { authorityExact: false },
+    });
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it("rejects a group-readable reviewed-authority file before contacting Railway", async () => {
+    const evidence = createEvidence();
+    fs.chmodSync(evidence.authorityFile, 0o640);
+    const provider = providerMock();
+
+    const result = await run(
+      "prepare",
+      evidence,
+      provider,
+      [],
+      environment("prepare"),
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      checks: { authorityExact: false },
+    });
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it.each(["symlink", "group-readable", "hard-link", "oversized"] as const)(
+    "rejects an unsafe %s intent file through held descriptor custody",
+    async (unsafeKind) => {
+      const prepared = await prepare();
+      const args = parsedIntentArgs(prepared);
+      if (unsafeKind === "symlink") {
+        const target = path.join(
+          prepared.evidence.directory,
+          "source-lock-intent-target.json",
+        );
+        fs.renameSync(prepared.intentFile, target);
+        fs.symlinkSync(target, prepared.intentFile);
+      } else if (unsafeKind === "group-readable") {
+        fs.chmodSync(prepared.intentFile, 0o640);
+      } else if (unsafeKind === "hard-link") {
+        fs.linkSync(
+          prepared.intentFile,
+          path.join(
+            prepared.evidence.directory,
+            "source-lock-intent-link.json",
+          ),
+        );
+      } else {
+        fs.appendFileSync(prepared.intentFile, Buffer.alloc(65_536, 0x20));
+      }
+
+      expect(
+        protectedProductionPostgresSourceRepinInternals.parseIntent(
+          prepared.intentFile,
+          args,
+        ),
+      ).toBeNull();
+    },
+  );
+
+  it("rejects a symlinked intent before any source-lock writer call", async () => {
+    const prepared = await prepare();
+    const target = path.join(
+      prepared.evidence.directory,
+      "source-lock-intent-target.json",
+    );
+    fs.renameSync(prepared.intentFile, target);
+    fs.symlinkSync(target, prepared.intentFile);
+    const provider = providerMock();
+
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      checks: { intentExact: false },
+    });
+    expect(mutationCalls(provider)).toHaveLength(0);
+  });
+
+  it(
+    "rejects an intent pathname replacement after no-follow open and closes the held descriptor",
+    async () => {
+      const prepared = await prepare();
+      const args = parsedIntentArgs(prepared);
+      const source = fs.readFileSync(prepared.intentFile);
+      const displaced = path.join(
+        prepared.evidence.directory,
+        "source-lock-intent-held.json",
+      );
+      const originalOpen = fs.openSync.bind(fs);
+      let heldDescriptor: number | null = null;
+      let replaced = false;
+      const open = vi.spyOn(fs, "openSync").mockImplementation(
+        ((filename, flags, mode) => {
+          const descriptor = originalOpen(filename, flags, mode);
+          if (
+            !replaced &&
+            filename === prepared.intentFile &&
+            typeof flags === "number" &&
+            (flags & fs.constants.O_NOFOLLOW) !== 0
+          ) {
+            replaced = true;
+            heldDescriptor = descriptor;
+            fs.renameSync(prepared.intentFile, displaced);
+            fs.writeFileSync(prepared.intentFile, source, { mode: 0o600 });
+          }
+          return descriptor;
+        }) as typeof fs.openSync,
+      );
+
+      expect(
+        protectedProductionPostgresSourceRepinInternals.parseIntent(
+          prepared.intentFile,
+          args,
+        ),
+      ).toBeNull();
+      open.mockRestore();
+      expect(heldDescriptor).not.toBeNull();
+      expect(() => fs.fstatSync(heldDescriptor!)).toThrow();
+      source.fill(0);
+    },
+  );
 
   it("rejects a mutation credential in prepare and still writes terminal evidence", async () => {
     const evidence = createEvidence();

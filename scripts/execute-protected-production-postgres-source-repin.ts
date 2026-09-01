@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runRailwayMutationBoundaryCheck } from "./check-railway-mutation-boundary.js";
+import { readTrustedRegularFile } from "./lib/trusted-filesystem.js";
 
 export const PROTECTED_PRODUCTION_POSTGRES_SOURCE_REPIN_SCHEMA =
   "pintpath-protected-production-postgres-source-lock/v2" as const;
@@ -688,23 +689,22 @@ function parseTimestamp(value: unknown): string | null {
   return new Date(milliseconds).toISOString();
 }
 
+function readPrivateJson(filename: string): Buffer {
+  return readTrustedRegularFile(filename, {
+    minBytes: 2,
+    maxBytes: 65_536,
+    requirePrivate: true,
+  });
+}
+
 function reviewedAuthorityExact(
   filename: string,
   args: Args,
   env: Readonly<Record<string, string | undefined>>,
 ): ReviewedAuthority | null {
+  let source: Buffer | null = null;
   try {
-    const stat = fs.lstatSync(filename);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.size < 2 ||
-      stat.size > 65_536 ||
-      (stat.mode & 0o077) !== 0 ||
-      fs.realpathSync(filename) !== filename
-    )
-      return null;
-    const source = fs.readFileSync(filename);
+    source = readPrivateJson(filename);
     const value = JSON.parse(source.toString("utf8")) as unknown;
     const commonKeys = [
       "command",
@@ -817,6 +817,8 @@ function reviewedAuthorityExact(
     };
   } catch {
     return null;
+  } finally {
+    source?.fill(0);
   }
 }
 
@@ -843,18 +845,9 @@ function parseIntent(
   filename: string,
   args: Args,
 ): { readonly intent: Intent; readonly sha256: string } | null {
+  let source: Buffer | null = null;
   try {
-    const stat = fs.lstatSync(filename);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.size < 2 ||
-      stat.size > 65_536 ||
-      (stat.mode & 0o077) !== 0 ||
-      fs.realpathSync(filename) !== filename
-    )
-      return null;
-    const source = fs.readFileSync(filename);
+    source = readPrivateJson(filename);
     const value = JSON.parse(source.toString("utf8")) as unknown;
     if (
       !exactKeys(value, [
@@ -924,6 +917,8 @@ function parseIntent(
     return { intent: value as unknown as Intent, sha256: sha256(source) };
   } catch {
     return null;
+  } finally {
+    source?.fill(0);
   }
 }
 
