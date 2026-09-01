@@ -50,6 +50,8 @@ const MAX_MUTATION_HISTORY_PAGES = 10;
 const MAX_STAGING_MUTATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const RUNNER_LOSS_RECOVERY_GRACE_MS = 24 * 60 * 60 * 1000;
 const STAGING_DEPLOYMENT_CHECK = "Deploy permanent staging";
+const STAGING_VENUE_DIRECTORY_CHECK =
+  "Apply and prove permanent-staging venue directory";
 const STAGING_SCALE_CHECK = "Scale 1→2, prove, and converge 2→1";
 const PROVIDER_MUTATION_WORKFLOW_PATH =
   ".github/workflows/permanent-staging-provider-mutation.yml";
@@ -70,6 +72,10 @@ const COLD_RECOVERY_WORKFLOW_PATH =
   ".github/workflows/recover-permanent-staging-cold-zero.yml";
 const COLD_RECOVERY_WORKFLOW_ID =
   "recover-permanent-staging-cold-zero.yml";
+const STAGING_VENUE_DIRECTORY_WORKFLOW_PATH =
+  ".github/workflows/permanent-staging-venue-directory.yml";
+const STAGING_VENUE_DIRECTORY_WORKFLOW_ID =
+  "permanent-staging-venue-directory.yml";
 const COLD_RECOVERY_JOBS = Object.freeze({
   prepare: Object.freeze({
     jobName: "Bind the exact replacement and prepare the dead baseline",
@@ -141,8 +147,56 @@ const INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION =
   "cancel-masked-forbidden-offsite-backup-deletion-patch";
 const CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION =
   "reconcile-completed-forbidden-offsite-backup-deletion";
-const CLEANUP_SUCCESSOR_CLOSEOUT_PREDECESSOR_SHA =
+const CLEANUP_SUCCESSOR_CLOSEOUT_ORIGINAL_CANDIDATE_SHA =
   "0eadad05ce6c313ed3c12492d3095609ce5872d5";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA =
+  "d939a77d0950b27466f3b9ecd26643a2416059a7";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_TREE_SHA =
+  "83b0b51efd2cf0ac5c2299c6cfd4c919d1973aff";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_MERGED_AT =
+  "2026-08-29T11:16:02Z";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_PULL_REQUEST_NUMBER = 72;
+const CLEANUP_SUCCESSOR_CLOSEOUT_RUN_ID = 33249810569;
+const CLEANUP_SUCCESSOR_CLOSEOUT_RUN_CREATED_AT =
+  "2026-08-29T11:18:12Z";
+const CLEANUP_SUCCESSOR_CLOSEOUT_RUN_COMPLETED_AT =
+  "2026-08-29T11:22:43Z";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_ID = 9714046913;
+const CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_NAME =
+  "pintpath-permanent-staging-provider-mutation-reconcile-completed-forbidden-offsite-backup-deletion-d939a77d0950b27466f3b9ecd26643a2416059a7";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_DIGEST =
+  "sha256:625fca28703f9c4c7897c6d52a3e54cef8caee6e68f66c3b26a1565d7e4f655d";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_BYTES = 2583;
+const CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_CREATED_AT =
+  "2026-08-29T11:22:39Z";
+const CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_EXPIRES_AT =
+  "2026-09-28T11:22:38Z";
+const CLEANUP_SUCCESSOR_CLOSEOUT_EVIDENCE_DIRECTORY = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29",
+);
+const CLEANUP_SUCCESSOR_CLOSEOUT_ATTESTATION_SHA256 =
+  "2f7f0204e4962f33d87d59b09da5a81ee76d343b8d23a48947547ed1099f0a64";
+const CLEANUP_SUCCESSOR_CLOSEOUT_RETAINED_EVIDENCE = Object.freeze([
+  Object.freeze({
+    leaf: "intent.json",
+    sha256:
+      "2f4aae0e84f714d0b9a1a9129d45f169270cdbde387a310fc323c248603aa180",
+    sizeInBytes: 2443,
+  }),
+  Object.freeze({
+    leaf: "dispatch.json",
+    sha256:
+      "4ac26e99c3d94d303c3c08f85f1a258e562d79f5e1edbec3100851a57db4844e",
+    sizeInBytes: 233,
+  }),
+  Object.freeze({
+    leaf: "terminal.json",
+    sha256:
+      "4d73f8a8455ed08d6538962c91718cc04259122550a1d0ee1ca9461aa4f8efd3",
+    sizeInBytes: 1842,
+  }),
+]);
 const CLEANUP_SUCCESSOR_CLOSEOUT_STEP =
   "Reconcile the completed cleanup with metadata only";
 const PROVIDER_BOUNDARY_STEP =
@@ -190,6 +244,71 @@ function canonicalJson(value) {
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function sameHeldFileSnapshot(left, right) {
+  return left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs;
+}
+
+export function readHeldPinnedEvidenceFile(filename, maximumBytes) {
+  if (
+    typeof filename !== "string" ||
+    !path.isAbsolute(filename) ||
+    path.resolve(filename) !== filename ||
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 0 ||
+    typeof fs.constants.O_NOFOLLOW !== "number" ||
+    fs.constants.O_NOFOLLOW <= 0 ||
+    typeof fs.constants.O_NONBLOCK !== "number" ||
+    fs.constants.O_NONBLOCK <= 0
+  ) throw new Error("invalid");
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY |
+        fs.constants.O_NOFOLLOW |
+        fs.constants.O_NONBLOCK,
+    );
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.size < 0n ||
+      before.size > BigInt(maximumBytes)
+    ) throw new Error("invalid");
+    const bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (!Number.isSafeInteger(count) || count <= 0) {
+        throw new Error("invalid");
+      }
+      offset += count;
+    }
+    const overflow = Buffer.alloc(1);
+    if (fs.readSync(descriptor, overflow, 0, 1, offset) !== 0) {
+      throw new Error("invalid");
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (!sameHeldFileSnapshot(before, after)) throw new Error("invalid");
+    return bytes;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
 }
 
 function exactKeys(value, expected) {
@@ -829,41 +948,265 @@ async function successfulIncidentProviderTerminalExact(
     terminalSteps[0]?.conclusion === "success";
 }
 
-async function successfulCleanupSuccessorCloseoutExact(
+function verifyDurableCleanupSuccessorCloseout() {
+  try {
+    const attestationPath = path.join(
+      CLEANUP_SUCCESSOR_CLOSEOUT_EVIDENCE_DIRECTORY,
+      "attestation.json",
+    );
+    const attestationBytes = readHeldPinnedEvidenceFile(
+      attestationPath,
+      16 * 1024,
+    );
+    if (
+      sha256(attestationBytes) !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ATTESTATION_SHA256
+    ) throw new Error("invalid");
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(
+      attestationBytes,
+    );
+    const value = JSON.parse(source);
+    if (
+      canonicalJson(value) !== source ||
+      !exactKeys(value, [
+        "schemaVersion",
+        "operation",
+        "originalCandidateSha",
+        "anchor",
+        "workflowRun",
+        "workflowJob",
+        "githubArtifact",
+        "retainedEvidence",
+        "result",
+      ]) ||
+      value.schemaVersion !==
+        "pintpath-permanent-staging-cleanup-closeout-attestation/v1" ||
+      value.operation !== CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION ||
+      value.originalCandidateSha !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ORIGINAL_CANDIDATE_SHA ||
+      !exactKeys(value.anchor, [
+        "candidateSha",
+        "treeSha",
+        "parentSha",
+        "pullRequestNumber",
+        "mergedAt",
+      ]) ||
+      value.anchor.candidateSha !== CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA ||
+      value.anchor.treeSha !== CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_TREE_SHA ||
+      value.anchor.parentSha !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ORIGINAL_CANDIDATE_SHA ||
+      value.anchor.pullRequestNumber !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_PULL_REQUEST_NUMBER ||
+      value.anchor.mergedAt !== CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_MERGED_AT ||
+      !exactKeys(value.workflowRun, [
+        "id",
+        "workflowPath",
+        "displayTitle",
+        "headBranch",
+        "headSha",
+        "runAttempt",
+        "status",
+        "conclusion",
+        "createdAt",
+        "runStartedAt",
+        "updatedAt",
+      ]) ||
+      value.workflowRun.id !== CLEANUP_SUCCESSOR_CLOSEOUT_RUN_ID ||
+      value.workflowRun.workflowPath !== PROVIDER_MUTATION_WORKFLOW_PATH ||
+      value.workflowRun.displayTitle !==
+        `Permanent staging provider mutation | ${CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION} | ${CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA}` ||
+      value.workflowRun.headBranch !== "main" ||
+      value.workflowRun.headSha !== CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA ||
+      value.workflowRun.runAttempt !== 1 ||
+      value.workflowRun.status !== "completed" ||
+      value.workflowRun.conclusion !== "success" ||
+      value.workflowRun.createdAt !== CLEANUP_SUCCESSOR_CLOSEOUT_RUN_CREATED_AT ||
+      value.workflowRun.runStartedAt !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_RUN_CREATED_AT ||
+      value.workflowRun.updatedAt !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_RUN_COMPLETED_AT ||
+      !exactKeys(value.workflowJob, [
+        "name",
+        "runId",
+        "runAttempt",
+        "status",
+        "conclusion",
+        "steps",
+      ]) ||
+      value.workflowJob.name !== PROVIDER_MUTATION_JOB ||
+      value.workflowJob.runId !== CLEANUP_SUCCESSOR_CLOSEOUT_RUN_ID ||
+      value.workflowJob.runAttempt !== 1 ||
+      value.workflowJob.status !== "completed" ||
+      value.workflowJob.conclusion !== "success" ||
+      !Array.isArray(value.workflowJob.steps) ||
+      value.workflowJob.steps.length !== 4
+    ) throw new Error("invalid");
+    const expectedSteps = [
+      [PROVIDER_MUTATION_STEP, "skipped"],
+      [CLEANUP_SUCCESSOR_CLOSEOUT_STEP, "success"],
+      [PROVIDER_BOUNDARY_STEP, "success"],
+      [PROVIDER_EVIDENCE_UPLOAD_STEP, "success"],
+    ];
+    if (value.workflowJob.steps.some((step, index) =>
+      !exactKeys(step, ["name", "status", "conclusion"]) ||
+      step.name !== expectedSteps[index][0] ||
+      step.status !== "completed" ||
+      step.conclusion !== expectedSteps[index][1])) throw new Error("invalid");
+    if (
+      !exactKeys(value.githubArtifact, [
+        "id",
+        "name",
+        "digest",
+        "sizeInBytes",
+        "createdAt",
+        "updatedAt",
+        "expiresAt",
+      ]) ||
+      value.githubArtifact.id !== CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_ID ||
+      value.githubArtifact.name !== CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_NAME ||
+      value.githubArtifact.digest !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_DIGEST ||
+      value.githubArtifact.sizeInBytes !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_BYTES ||
+      value.githubArtifact.createdAt !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_CREATED_AT ||
+      value.githubArtifact.updatedAt !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_CREATED_AT ||
+      value.githubArtifact.expiresAt !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ARTIFACT_EXPIRES_AT ||
+      !Array.isArray(value.retainedEvidence) ||
+      value.retainedEvidence.length !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_RETAINED_EVIDENCE.length ||
+      !exactKeys(value.result, [
+        "outcome",
+        "mutationAttempts",
+        "secretMaterialIncluded",
+        "secretDerivedCommitmentsIncluded",
+        "laterCandidateCloseoutRerunsAllowed",
+      ]) ||
+      value.result.outcome !== "cleanup_completed_read_only_reconciled" ||
+      value.result.mutationAttempts !== 0 ||
+      value.result.secretMaterialIncluded !== false ||
+      value.result.secretDerivedCommitmentsIncluded !== false ||
+      value.result.laterCandidateCloseoutRerunsAllowed !== false
+    ) throw new Error("invalid");
+    for (
+      let index = 0;
+      index < CLEANUP_SUCCESSOR_CLOSEOUT_RETAINED_EVIDENCE.length;
+      index += 1
+    ) {
+      const expected = CLEANUP_SUCCESSOR_CLOSEOUT_RETAINED_EVIDENCE[index];
+      const observed = value.retainedEvidence[index];
+      const expectedPath = path.posix.join(
+        "docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29",
+        expected.leaf,
+      );
+      if (
+        !exactKeys(observed, ["path", "sha256", "sizeInBytes"]) ||
+        observed.path !== expectedPath ||
+        observed.sha256 !== expected.sha256 ||
+        observed.sizeInBytes !== expected.sizeInBytes
+      ) throw new Error("invalid");
+      const evidencePath = path.join(
+        CLEANUP_SUCCESSOR_CLOSEOUT_EVIDENCE_DIRECTORY,
+        expected.leaf,
+      );
+      const evidence = readHeldPinnedEvidenceFile(
+        evidencePath,
+        expected.sizeInBytes,
+      );
+      if (
+        evidence.length !== expected.sizeInBytes ||
+        sha256(evidence) !== expected.sha256
+      ) throw new Error("invalid");
+    }
+  } catch {
+    throw new Error("staging_mutation_history_invalid");
+  }
+}
+
+async function verifyCleanupSuccessorLineage(
   fetchImpl,
   token,
   policy,
-  run,
+  candidateSha,
 ) {
-  if (run.conclusion !== "success") return false;
-  const listing = await githubGet(
-    fetchImpl,
-    token,
-    policy.repository,
-    `/actions/runs/${run.id}/jobs?filter=all&per_page=100`,
+  let anchor;
+  try {
+    anchor = await githubGet(
+      fetchImpl,
+      token,
+      policy.repository,
+      `/git/commits/${CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA}`,
+    );
+  } catch {
+    throw new Error("staging_mutation_history_unavailable");
+  }
+  if (
+    anchor?.sha !== CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA ||
+    anchor?.tree?.sha !== CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_TREE_SHA ||
+    !Array.isArray(anchor?.parents) ||
+    anchor.parents.length !== 1 ||
+    anchor.parents[0]?.sha !==
+      CLEANUP_SUCCESSOR_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
+  ) throw new Error("staging_mutation_history_invalid");
+  if (candidateSha === CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA) return;
+
+  let comparison;
+  try {
+    comparison = await githubGet(
+      fetchImpl,
+      token,
+      policy.repository,
+      `/compare/${CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA}...${candidateSha}`,
+    );
+  } catch {
+    throw new Error("staging_mutation_history_unavailable");
+  }
+  if (
+    comparison?.status !== "ahead" ||
+    comparison?.base_commit?.sha !==
+      CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA ||
+    comparison?.merge_base_commit?.sha !==
+      CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA ||
+    comparison?.behind_by !== 0 ||
+    !Number.isSafeInteger(comparison?.ahead_by) ||
+    comparison.ahead_by < 1
+  ) throw new Error("staging_mutation_history_invalid");
+}
+
+async function verifyHistoricalCleanupSuccessorCloseout(
+  input,
+  mergedAtMs,
+  deployStartedAtMs,
+) {
+  verifyDurableCleanupSuccessorCloseout();
+  await verifyCleanupSuccessorLineage(
+    input.fetchImpl,
+    input.token,
+    input.policy,
+    input.candidateSha,
+  );
+  const anchorMergedAtMs = timestamp(
+    CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_MERGED_AT,
+  );
+  const closeoutCreatedAtMs = timestamp(
+    CLEANUP_SUCCESSOR_CLOSEOUT_RUN_CREATED_AT,
+  );
+  const closeoutCompletedAtMs = timestamp(
+    CLEANUP_SUCCESSOR_CLOSEOUT_RUN_COMPLETED_AT,
   );
   if (
-    listing?.total_count !== 1 ||
-    !Array.isArray(listing?.jobs) ||
-    listing.jobs.length !== 1
-  ) return false;
-  const job = listing.jobs[0];
-  const steps = Array.isArray(job?.steps) ? job.steps : [];
-  const exactStep = (name, conclusion) => {
-    const matches = steps.filter((step) => step?.name === name);
-    return matches.length === 1 &&
-      matches[0]?.status === "completed" &&
-      matches[0]?.conclusion === conclusion;
-  };
-  return job?.run_id === run.id &&
-    job?.run_attempt === 1 &&
-    job?.name === PROVIDER_MUTATION_JOB &&
-    job?.status === "completed" &&
-    job?.conclusion === "success" &&
-    exactStep(PROVIDER_MUTATION_STEP, "skipped") &&
-    exactStep(CLEANUP_SUCCESSOR_CLOSEOUT_STEP, "success") &&
-    exactStep(PROVIDER_BOUNDARY_STEP, "success") &&
-    exactStep(PROVIDER_EVIDENCE_UPLOAD_STEP, "success");
+    anchorMergedAtMs === null ||
+    closeoutCreatedAtMs === null ||
+    closeoutCompletedAtMs === null ||
+    anchorMergedAtMs > closeoutCreatedAtMs ||
+    closeoutCreatedAtMs > closeoutCompletedAtMs ||
+    closeoutCompletedAtMs >= deployStartedAtMs ||
+    (input.candidateSha === CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA
+      ? mergedAtMs !== anchorMergedAtMs
+      : closeoutCompletedAtMs >= mergedAtMs)
+  ) throw new Error("staging_mutation_history_invalid");
 }
 
 async function verifyStagingMutationClosure(input) {
@@ -914,44 +1257,40 @@ async function verifyStagingMutationClosure(input) {
   if (
     !Array.isArray(input.deployments) ||
     input.deployments.length !== 2 ||
+    !input.venueDirectory ||
     !input.scale
   ) throw new Error("staging_bootstrap_history_invalid");
-  const candidateCommit = await githubGet(
-    input.fetchImpl,
-    input.token,
-    input.policy.repository,
-    `/git/commits/${input.candidateSha}`,
+  await verifyHistoricalCleanupSuccessorCloseout(
+    input,
+    mergedAtMs,
+    deployStartedAtMs,
   );
-  if (
-    candidateCommit?.sha !== input.candidateSha ||
-    !Array.isArray(candidateCommit?.parents) ||
-    candidateCommit.parents.length !== 1 ||
-    typeof candidateCommit.parents[0]?.sha !== "string" ||
-    !SHA_PATTERN.test(candidateCommit.parents[0].sha)
-  ) throw new Error("staging_mutation_history_invalid");
-  if (
-    candidateCommit.parents[0].sha !==
-      CLEANUP_SUCCESSOR_CLOSEOUT_PREDECESSOR_SHA
-  ) throw new Error("staging_mutation_history_invalid");
   const [fencedDeployment, activeDeployment] = input.deployments;
   const fencedStartedAtMs = timestamp(fencedDeployment.startedAt);
   const fencedCompletedAtMs = timestamp(fencedDeployment.completedAt);
   const activeStartedAtMs = timestamp(activeDeployment.startedAt);
   const activeCompletedAtMs = timestamp(activeDeployment.completedAt);
+  const venueStartedAtMs = timestamp(input.venueDirectory.startedAt);
+  const venueCompletedAtMs = timestamp(input.venueDirectory.completedAt);
   const scaleStartedAtMs = timestamp(input.scale.startedAt);
   const fencedRun = input.workflowRuns.get(fencedDeployment.runId);
   const activeRun = input.workflowRuns.get(activeDeployment.runId);
+  const venueRun = input.workflowRuns.get(input.venueDirectory.runId);
   if (
     fencedStartedAtMs === null ||
     fencedCompletedAtMs === null ||
     activeStartedAtMs === null ||
     activeCompletedAtMs === null ||
+    venueStartedAtMs === null ||
+    venueCompletedAtMs === null ||
     scaleStartedAtMs === null ||
     activeStartedAtMs !== deployStartedAtMs ||
     fencedRun?.display_title !==
       `Deploy permanent staging | fenced | ${input.candidateSha}` ||
     activeRun?.display_title !==
-      `Deploy permanent staging | active | ${input.candidateSha}`
+      `Deploy permanent staging | active | ${input.candidateSha}` ||
+    venueRun?.display_title !==
+      `Permanent staging venue directory | apply-refresh-validate | ${input.candidateSha}`
   ) throw new Error("staging_bootstrap_history_invalid");
 
   const providerRuns = await listMutationWorkflowRuns(
@@ -968,11 +1307,26 @@ async function verifyStagingMutationClosure(input) {
   const safeSkippedOffsiteCleanupRuns = [];
   const safeSkippedOffsiteCleanupRecoveryRuns = [];
   const incidentCleanupCancelRuns = [];
-  const cleanupSuccessorCloseoutRuns = [];
   let nonIncidentProviderRuns = 0;
   let successfulOffsiteCleanupRuns = 0;
+  const closeoutTitlePrefix =
+    `Permanent staging provider mutation | ${CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION} | `;
+  const currentWindowCloseouts = providerRuns.filter((run) =>
+    typeof run?.display_title === "string" &&
+    run.display_title.startsWith(closeoutTitlePrefix));
+  if (input.candidateSha === CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA) {
+    if (
+      currentWindowCloseouts.length !== 1 ||
+      currentWindowCloseouts[0]?.id !== CLEANUP_SUCCESSOR_CLOSEOUT_RUN_ID ||
+      currentWindowCloseouts[0]?.head_sha !==
+        CLEANUP_SUCCESSOR_CLOSEOUT_ANCHOR_SHA
+    ) throw new Error("staging_mutation_history_invalid");
+  } else if (currentWindowCloseouts.length !== 0) {
+    throw new Error("staging_mutation_history_invalid");
+  }
   for (const observed of providerRuns.filter((run) =>
-    run?.head_sha === input.candidateSha)) {
+    run?.head_sha === input.candidateSha &&
+    run?.id !== CLEANUP_SUCCESSOR_CLOSEOUT_RUN_ID)) {
     const operation = providerOperationForTitle(
       observed?.display_title,
       input.candidateSha,
@@ -990,14 +1344,7 @@ async function verifyStagingMutationClosure(input) {
       run.createdAtMs > consumerStartedAtMs
     ) throw new Error("staging_mutation_history_invalid");
     if (operation === CLEANUP_SUCCESSOR_CLOSEOUT_OPERATION) {
-      if (!await successfulCleanupSuccessorCloseoutExact(
-          input.fetchImpl,
-          input.token,
-          input.policy,
-          run,
-        )) throw new Error("staging_mutation_history_invalid");
-      requireInitialWriteInWindow(run);
-      cleanupSuccessorCloseoutRuns.push(run);
+      throw new Error("staging_mutation_history_invalid");
     } else if (operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION) {
       const disposition = run.conclusion === "success"
         ? await successfulIncidentProviderTerminalExact(
@@ -1064,9 +1411,6 @@ async function verifyStagingMutationClosure(input) {
     }
   }
   if (successfulOffsiteCleanupRuns > 1) {
-    throw new Error("staging_mutation_history_invalid");
-  }
-  if (cleanupSuccessorCloseoutRuns.length !== 1) {
     throw new Error("staging_mutation_history_invalid");
   }
   if (incidentCleanupCancelRuns.length > 0) {
@@ -1175,6 +1519,42 @@ async function verifyStagingMutationClosure(input) {
       throw new Error("staging_mutation_after_closeout_deployment");
     }
   }
+
+  const venueDirectoryRuns = await listMutationWorkflowRuns(
+    input.fetchImpl,
+    input.token,
+    input.policy,
+    STAGING_VENUE_DIRECTORY_WORKFLOW_ID,
+    input.reviewedPullRequest.mergedAt,
+    input.consumerStartedAt,
+  );
+  const candidateVenueDirectoryRuns = venueDirectoryRuns.filter((run) =>
+    run?.head_sha === input.candidateSha
+  );
+  if (candidateVenueDirectoryRuns.length !== 1) {
+    throw new Error("staging_bootstrap_history_invalid");
+  }
+  let venueDirectoryRun;
+  try {
+    venueDirectoryRun = validateMutationWorkflowRun(
+      candidateVenueDirectoryRuns[0],
+      input.policy,
+      input.candidateSha,
+      STAGING_VENUE_DIRECTORY_WORKFLOW_PATH,
+      `Permanent staging venue directory | apply-refresh-validate | ${input.candidateSha}`,
+    );
+  } catch {
+    throw new Error("staging_bootstrap_history_invalid");
+  }
+  if (
+    venueDirectoryRun.id !== input.venueDirectory.runId ||
+    venueDirectoryRun.conclusion !== "success" ||
+    venueDirectoryRun.createdAtMs < mergedAtMs ||
+    venueDirectoryRun.createdAtMs > consumerStartedAtMs ||
+    venueDirectoryRun.startedAtMs > venueStartedAtMs ||
+    venueDirectoryRun.updatedAtMs < venueCompletedAtMs
+  ) throw new Error("staging_bootstrap_history_invalid");
+  requireInitialWriteInWindow(venueDirectoryRun);
 
   const workerRuns = await listMutationWorkflowRuns(
     input.fetchImpl,
@@ -1626,7 +2006,8 @@ async function verifyStagingMutationClosure(input) {
   if (
     preparePhase.terminal.updatedAtMs >= quiescePhase.first.startedAtMs ||
     quiescePhase.terminal.updatedAtMs >= fencedStartedAtMs ||
-    fencedCompletedAtMs >= restorePhase.first.startedAtMs ||
+    fencedCompletedAtMs >= venueStartedAtMs ||
+    venueCompletedAtMs >= restorePhase.first.startedAtMs ||
     restorePhase.terminal.updatedAtMs >= activatePhase.first.startedAtMs ||
     activatePhase.terminal.updatedAtMs >= activeStartedAtMs ||
     activeCompletedAtMs >= scaleStartedAtMs
@@ -1995,7 +2376,15 @@ export async function runGithubReleaseCandidateVerification(argv, dependencies =
     }
     const stagingDeployments = intendedByName.get(STAGING_DEPLOYMENT_CHECK);
     if (stagingDeployments !== undefined) {
+      const stagingVenueDirectories = intendedByName.get(
+        STAGING_VENUE_DIRECTORY_CHECK,
+      );
       const stagingScales = intendedByName.get(STAGING_SCALE_CHECK);
+      if (!stagingVenueDirectories || stagingVenueDirectories.length !== 1) {
+        throw new Error(
+          `required_check_invalid:${STAGING_DEPLOYMENT_CHECK}:venue_directory_missing`,
+        );
+      }
       if (!stagingScales || stagingScales.length !== 1) {
         throw new Error(`required_check_invalid:${STAGING_DEPLOYMENT_CHECK}:scale_missing`);
       }
@@ -2018,6 +2407,7 @@ export async function runGithubReleaseCandidateVerification(argv, dependencies =
         candidateSha: args.candidateSha,
         reviewedPullRequest,
         deployments: ordered,
+        venueDirectory: stagingVenueDirectories[0],
         scale: stagingScales[0],
         workflowRuns,
         consumerStartedAt: consumer.runStartedAt,

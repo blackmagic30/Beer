@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites-policy/v2",
+  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites-policy/v4",
   "policyId": "pintpath-permanent-staging-worker-bootstrap-prerequisites",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "repository": "blackmagic30/Beer",
@@ -18,7 +18,7 @@
   "producerPolicies": {
     "workerFence": {
       "path": "ops/railway/protected-automatic-maintenance-worker-fence-policy.json",
-      "sha256": "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27"
+      "sha256": "3178685f32c9d49e359d089d5afd7c2d8c62860899a0cc70b25760155c8d7236"
     },
     "scale": {
       "path": "ops/railway/permanent-staging-scale-evidence-policy.json",
@@ -35,6 +35,10 @@
     "coldRecovery": {
       "path": "ops/railway/permanent-staging-cold-recovery-policy.json",
       "sha256": "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd"
+    },
+    "venueDirectory": {
+      "path": "ops/supabase/permanent-staging-venue-directory-policy.json",
+      "sha256": "ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd"
     }
   },
   "producers": {
@@ -88,6 +92,44 @@
       "artifactNameTemplate": "pintpath-permanent-staging-fenced-deployment-<candidate-sha>",
       "receiptFilename": "deployment-receipt.json",
       "receiptSchema": "pintpath-railway-application-deployment-executor/v5"
+    },
+    "venue-directory": {
+      "workflowPath": ".github/workflows/permanent-staging-venue-directory.yml",
+      "workflowName": "Apply and prove permanent-staging venue directory",
+      "runNameTemplate": "Permanent staging venue directory | apply-refresh-validate | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-permanent-staging-venue-directory-<candidate-sha>",
+      "receiptFilename": "venue-directory-terminal.json",
+      "receiptSchema": "pintpath-permanent-staging-venue-directory-terminal/v1",
+      "companionEvidence": {
+        "canonicalization": "RECURSIVE_KEY_SORTED_COMPACT_JSON_PLUS_ONE_LF",
+        "exactSiblingFiles": {
+          "venue-directory-plan.json": "pintpath-permanent-staging-venue-import-plan/v1",
+          "venue-import-terminal.json": "pintpath-permanent-staging-venue-import-terminal/v1",
+          "constraint-preflight.json": "pintpath-permanent-staging-venue-constraint-preflight/v1",
+          "migration-prewrite.json": "pintpath-permanent-staging-venue-migration-prewrite/v1",
+          "migration-apply.json": "pintpath-permanent-staging-venue-migration-apply/v1",
+          "constraint-postflight.json": "pintpath-permanent-staging-venue-constraint-postflight/v1",
+          "venue-directory-terminal.json": "pintpath-permanent-staging-venue-directory-terminal/v1"
+        },
+        "migrationModes": {
+          "first_run": {
+            "targetLedgerInitiallyAbsent": true,
+            "constraintsInitiallyUnvalidated": true,
+            "exactMigrationWriteAttempts": 1
+          },
+          "steady_state": {
+            "targetLedgerInitiallyExact": true,
+            "constraintsInitiallyValidated": true,
+            "exactMigrationWriteAttempts": 0
+          }
+        },
+        "postflightRequires": [
+          "exact-target-ledger",
+          "no-pending-migrations",
+          "validated-constraints",
+          "zero-violations"
+        ]
+      }
     },
     "restore": {
       "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
@@ -152,8 +194,8 @@
       "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
       "githubEnvironment": "permanent-staging-scale-evidence",
       "requiresAny": [
-        ["prepare", "quiesce", "fenced-deployment"],
-        ["cold-prepare", "cold-quiesce", "fenced-deployment"]
+        ["prepare", "quiesce", "fenced-deployment", "venue-directory"],
+        ["cold-prepare", "cold-quiesce", "fenced-deployment", "venue-directory"]
       ]
     },
     "reconcile-restore": {
@@ -165,12 +207,14 @@
         [
           "prepare",
           "quiesce",
-          "fenced-deployment"
+          "fenced-deployment",
+          "venue-directory"
         ],
         [
           "cold-prepare",
           "cold-quiesce",
-          "fenced-deployment"
+          "fenced-deployment",
+          "venue-directory"
         ]
       ]
     },
@@ -178,8 +222,8 @@
       "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
       "githubEnvironment": "permanent-staging-provider-mutation",
       "requiresAny": [
-        ["prepare", "quiesce", "fenced-deployment", "restore"],
-        ["cold-prepare", "cold-quiesce", "fenced-deployment", "restore"]
+        ["prepare", "quiesce", "fenced-deployment", "venue-directory", "restore"],
+        ["cold-prepare", "cold-quiesce", "fenced-deployment", "venue-directory", "restore"]
       ]
     },
     "reconcile-activate": {
@@ -192,12 +236,14 @@
           "prepare",
           "quiesce",
           "fenced-deployment",
+          "venue-directory",
           "restore"
         ],
         [
           "cold-prepare",
           "cold-quiesce",
           "fenced-deployment",
+          "venue-directory",
           "restore"
         ]
       ]
@@ -220,7 +266,7 @@
     "sameMainRefRequired": true
   },
   "evidence": {
-    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2",
+    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v4",
     "filename": "prerequisites-verification.json",
     "canonicalJsonRequired": true,
     "artifactDigestRequired": true,

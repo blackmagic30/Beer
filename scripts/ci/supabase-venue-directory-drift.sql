@@ -28,7 +28,9 @@ alter table public.venues
   drop column directory_eligible;
 
 \ir ../../supabase/migrations/20260828010000_bootstrap_external_venue_directory.sql
+\ir ../../supabase/migrations/20260901032339_validate_external_venue_directory_constraints.sql
 \ir ../../supabase/migrations/20260828010000_bootstrap_external_venue_directory.sql
+\ir ../../supabase/migrations/20260901032339_validate_external_venue_directory_constraints.sql
 \ir supabase-venue-directory-schema-verify.sql
 
 do $verify_preservation$

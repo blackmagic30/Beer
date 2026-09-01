@@ -323,6 +323,19 @@ const CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA =
   "b8d0d0e44cf63e996388a223ba4ee2ff02ab02e5";
 const CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA =
   "2f624d697d97f5682d7b69231ed4d0ec66a21e6d";
+const CLEANUP_CLOSEOUT_CANDIDATE_SHA =
+  "d939a77d0950b27466f3b9ecd26643a2416059a7";
+const CLEANUP_CLOSEOUT_CANDIDATE_TREE_SHA =
+  "83b0b51efd2cf0ac5c2299c6cfd4c919d1973aff";
+const CLEANUP_CLOSEOUT_EVIDENCE_ATTESTATION_PATH =
+  "docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29/attestation.json";
+const CLEANUP_CLOSEOUT_EVIDENCE_ATTESTATION_SHA256 =
+  "2f7f0204e4962f33d87d59b09da5a81ee76d343b8d23a48947547ed1099f0a64";
+const CLEANUP_CLOSEOUT_RUN_ID = "33249810569";
+const CLEANUP_CLOSEOUT_ARTIFACT_ID = "9714046913";
+const CLEANUP_CLOSEOUT_ARTIFACT_DIGEST =
+  "sha256:625fca28703f9c4c7897c6d52a3e54cef8caee6e68f66c3b26a1565d7e4f655d";
+const CLEANUP_CLOSEOUT_ARTIFACT_BYTES = 2583;
 const CLEANUP_CLOSEOUT_ORIGINAL_PULL_REQUEST_NUMBER = 71;
 const CLEANUP_CLOSEOUT_ORIGINAL_MERGED_AT = "2026-08-29T09:42:49Z";
 const CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID = "33246243698";
@@ -2592,9 +2605,14 @@ function policyExact(cwd: string): boolean {
     );
     if (sha256(deletionProofAttestation) !==
       STAGED_DELETION_PROOF_ATTESTATION_SHA256) return false;
+    const closeoutAttestation = fs.readFileSync(
+      path.resolve(cwd, CLEANUP_CLOSEOUT_EVIDENCE_ATTESTATION_PATH),
+    );
+    if (sha256(closeoutAttestation) !==
+      CLEANUP_CLOSEOUT_EVIDENCE_ATTESTATION_SHA256) return false;
     const policy = JSON.parse(fs.readFileSync(path.resolve(cwd, POLICY_PATH), "utf8")) as unknown;
     return canonical(policy) === canonical({
-      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v8",
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v9",
       policyId: "pintpath-permanent-staging-protected-variable-mutations",
       activationState: PROTECTED_STAGING_VARIABLE_MUTATION_STATE,
       projectId: PROJECT_ID,
@@ -2736,7 +2754,21 @@ function policyExact(cwd: string): boolean {
               originalReviewedPrHeadSha:
                 CLEANUP_CLOSEOUT_ORIGINAL_REVIEWED_HEAD_SHA,
               originalTreeSha: CLEANUP_CLOSEOUT_ORIGINAL_TREE_SHA,
-              currentCandidateMustBeDirectChild: true,
+              closeoutCandidateWasDirectChildOfOriginal: true,
+              closeoutCandidateSha: CLEANUP_CLOSEOUT_CANDIDATE_SHA,
+              closeoutCandidateTreeSha: CLEANUP_CLOSEOUT_CANDIDATE_TREE_SHA,
+              closeoutEvidenceAttestationPath:
+                CLEANUP_CLOSEOUT_EVIDENCE_ATTESTATION_PATH,
+              closeoutEvidenceAttestationSha256:
+                CLEANUP_CLOSEOUT_EVIDENCE_ATTESTATION_SHA256,
+              closeoutRunId: CLEANUP_CLOSEOUT_RUN_ID,
+              closeoutArtifactId: CLEANUP_CLOSEOUT_ARTIFACT_ID,
+              closeoutArtifactDigest: CLEANUP_CLOSEOUT_ARTIFACT_DIGEST,
+              closeoutArtifactBytes: CLEANUP_CLOSEOUT_ARTIFACT_BYTES,
+              closeoutCompleted: true,
+              closeoutDispatchState: "RETIRED_AFTER_COMPLETION",
+              historicalRunRerunAllowed: false,
+              laterCandidateCloseoutRerunsAllowed: false,
               originalCleanupRunId: CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID,
               originalCleanupArtifactId:
                 CLEANUP_CLOSEOUT_ORIGINAL_ARTIFACT_ID,

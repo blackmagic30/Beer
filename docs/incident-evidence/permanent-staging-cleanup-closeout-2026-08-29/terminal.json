@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-terminal/v4",
+  "receipt": {
+    "schemaVersion": "pintpath-permanent-staging-variable-mutation/v4",
+    "executorState": "GITHUB_ENVIRONMENT_PROTECTED",
+    "operation": "reconcile-completed-forbidden-offsite-backup-deletion",
+    "outcome": "cleanup_completed_read_only_reconciled",
+    "candidateSha": "d939a77d0950b27466f3b9ecd26643a2416059a7",
+    "attempts": 0,
+    "retryAllowed": false,
+    "intentSha256": "2f4aae0e84f714d0b9a1a9129d45f169270cdbde387a310fc323c248603aa180",
+    "terminalEvidenceSha256": null,
+    "externalMutationFreeze": {
+      "attestation": "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+      "enforcement": "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+      "providerCasOrLockVerified": false
+    },
+    "stagedDeletionPatchId": "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae",
+    "supabaseKeyCanary": null,
+    "checks": {
+      "policyExact": true,
+      "githubAuthorityExact": true,
+      "externalMutationFreezeAttested": true,
+      "tokenScopesExact": true,
+      "boundaryPreflightExact": true,
+      "boundaryPrecommitExact": false,
+      "targetPreflightExact": true,
+      "supabasePairCanaryExact": true,
+      "durableIntentExact": true,
+      "mutationAttemptedAtMostOnce": true,
+      "acknowledgementExact": false,
+      "stageAcknowledgementExact": false,
+      "commitAcknowledgementExact": false,
+      "stagedDeletionPatchExact": false,
+      "committedDeletionPatchExact": true,
+      "deploySuppressionExact": true,
+      "postflightAttempted": true,
+      "targetPostflightExact": true,
+      "deploymentUnchanged": true,
+      "boundaryPostflightExact": true,
+      "inputZeroized": true,
+      "terminalEvidenceExact": false
+    }
+  },
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

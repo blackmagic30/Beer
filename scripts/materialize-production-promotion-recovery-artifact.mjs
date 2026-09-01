@@ -12,7 +12,7 @@ const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 const ARCHIVE_LEAF = ".production-rollout-artifact.zip";
 const RELEASE_POLICY_SHA256 =
-  "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd";
+  "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90";
 const STAGE_CONTRACTS = Object.freeze({
   deploy: Object.freeze({
     phases: Object.freeze(["close", "activation", "promotion-recovery"]),

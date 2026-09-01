@@ -9,10 +9,8 @@ import {
   automaticMaintenanceWorkerFenceInternals,
   runProtectedAutomaticMaintenanceWorkerFence,
 } from "../scripts/execute-protected-automatic-maintenance-worker-fence.js";
-import type { ProductionActivationRoleLimitPrerequisiteVerification } from
-  "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
-import { railwayDeploymentIdentityIdSha256 } from
-  "../src/lib/railway-deployment-identity.js";
+import type { ProductionActivationRoleLimitPrerequisiteVerification } from "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
+import { railwayDeploymentIdentityIdSha256 } from "../src/lib/railway-deployment-identity.js";
 
 const IDS = Object.freeze({
   project: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -96,8 +94,7 @@ function authority(operation: "fence" | "activate"): string {
     branch: "main",
     workflowPath:
       ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
-    workflowDisplayTitle:
-      `Automatic maintenance worker fence | production | ${operation} | ${CANDIDATE}`,
+    workflowDisplayTitle: `Automatic maintenance worker fence | production | ${operation} | ${CANDIDATE}`,
     runId: "123456789",
     runAttempt: 1,
     runCreatedAt: "2026-08-21T00:00:00.000Z",
@@ -131,8 +128,7 @@ function authority(operation: "fence" | "activate"): string {
 function stagingPrepareEnvironment() {
   return {
     ...environment("fence"),
-    PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION:
-      `PREPARE_AUTOMATIC_MAINTENANCE_IN_PERMANENT_STAGING_FOR_${CANDIDATE}`,
+    PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION: `PREPARE_AUTOMATIC_MAINTENANCE_IN_PERMANENT_STAGING_FOR_${CANDIDATE}`,
     PINTPATH_PROTECTED_ENVIRONMENT: "permanent-staging-provider-mutation",
     PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: STAGING_TOKEN,
     PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: STAGING_WRITE_TOKEN,
@@ -141,8 +137,7 @@ function stagingPrepareEnvironment() {
 
 function stagingPrepareAuthority(): string {
   const value = JSON.parse(authority("fence"));
-  value.workflowDisplayTitle =
-    `Automatic maintenance worker fence | permanent-staging | prepare | ${CANDIDATE}`;
+  value.workflowDisplayTitle = `Automatic maintenance worker fence | permanent-staging | prepare | ${CANDIDATE}`;
   value.target = "permanent-staging";
   value.operation = "prepare";
   value.environmentId = IDS.staging;
@@ -205,17 +200,22 @@ function metadataSource(input: {
           deploymentStopped: input.deploymentStopped ?? false,
           snapshotId,
         },
-        activeDeployments: input.activeDeployments ?? [{
-          id: deploymentId,
-          status,
-          deploymentStopped: input.deploymentStopped ?? false,
-        }],
+        activeDeployments: input.activeDeployments ?? [
+          {
+            id: deploymentId,
+            status,
+            deploymentStopped: input.deploymentStopped ?? false,
+          },
+        ],
         domains: {
-          serviceDomains: [{
-            id: "66666666-6666-4666-8666-666666666666",
-            domain: input.domain ?? "pintpath.au",
-            targetPort: input.targetPort === undefined ? 3_000 : input.targetPort,
-          }],
+          serviceDomains: [
+            {
+              id: "66666666-6666-4666-8666-666666666666",
+              domain: input.domain ?? "pintpath.au",
+              targetPort:
+                input.targetPort === undefined ? 3_000 : input.targetPort,
+            },
+          ],
           customDomains: [],
         },
       },
@@ -261,10 +261,7 @@ function targetRows() {
   return [
     row("UNRELATED_FIXTURE", "variable-unrelated"),
     row("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", "variable-enabled"),
-    row(
-      "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
-      "variable-candidate",
-    ),
+    row("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA", "variable-candidate"),
   ];
 }
 
@@ -272,10 +269,7 @@ function stagingTargetRows() {
   return [
     ...providerRows(),
     row("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", "variable-enabled"),
-    row(
-      "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
-      "variable-candidate",
-    ),
+    row("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA", "variable-candidate"),
   ];
 }
 
@@ -302,11 +296,12 @@ function runtimeSource(
   const enabled = input.enabled ?? true;
   const candidateBound = input.candidateBound ?? true;
   const environmentId = input.environmentId ?? IDS.production;
-  const status = route === "/health"
-    ? "ok"
-    : route === "/startup"
-      ? "startup_ready"
-      : "ready";
+  const status =
+    route === "/health"
+      ? "ok"
+      : route === "/startup"
+        ? "startup_ready"
+        : "ready";
   return {
     ok: true,
     data: {
@@ -405,8 +400,7 @@ function workflowRun() {
     head_branch: "main",
     path: ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
     event: "workflow_dispatch",
-    display_title:
-      `Automatic maintenance worker fence | production | fence | ${CANDIDATE}`,
+    display_title: `Automatic maintenance worker fence | production | fence | ${CANDIDATE}`,
     run_attempt: 1,
     status: "in_progress",
     conclusion: null,
@@ -423,8 +417,9 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(sha256(source)).toBe(
       AUTOMATIC_MAINTENANCE_WORKER_FENCE_POLICY_SHA256,
     );
-    expect(automaticMaintenanceWorkerFenceInternals.policyExact(process.cwd()))
-      .toBe(true);
+    expect(
+      automaticMaintenanceWorkerFenceInternals.policyExact(process.cwd()),
+    ).toBe(true);
     const policy = JSON.parse(source.toString("utf8"));
     expect(policy.projectId).toBe(IDS.project);
     expect(policy.serviceId).toBe(IDS.service);
@@ -458,6 +453,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
           "prepare_run_id",
           "quiesce_run_id",
           "fenced_deployment_run_id",
+          "venue_directory_run_id",
           "restore_run_id",
         ],
         productionRoleLimitRunInputAllowed: false,
@@ -497,7 +493,8 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     const writes = new Map<string, string>();
     let output = "";
     const fetchImpl = (async (input: string | URL | Request) => {
-      const resource = new URL(String(input)).pathname + new URL(String(input)).search;
+      const resource =
+        new URL(String(input)).pathname + new URL(String(input)).search;
       if (resource.endsWith(`/git/ref/heads/main`)) {
         return jsonResponse({
           ref: "refs/heads/main",
@@ -505,13 +502,15 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         });
       }
       if (resource.includes(`/commits/${CANDIDATE}/pulls`)) {
-        return jsonResponse([{
-          number: 99,
-          state: "closed",
-          merge_commit_sha: CANDIDATE,
-          base: { ref: "main", repo: { full_name: "blackmagic30/Beer" } },
-          head: { repo: { full_name: "blackmagic30/Beer" } },
-        }]);
+        return jsonResponse([
+          {
+            number: 99,
+            state: "closed",
+            merge_commit_sha: CANDIDATE,
+            base: { ref: "main", repo: { full_name: "blackmagic30/Beer" } },
+            head: { repo: { full_name: "blackmagic30/Beer" } },
+          },
+        ]);
       }
       if (resource.endsWith("/pulls/99")) {
         return jsonResponse({
@@ -581,13 +580,15 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     });
     const receipt = writes.get("authority.json");
     expect(receipt).toBeDefined();
-    expect(automaticMaintenanceWorkerFenceInternals.authorityReceiptExact(
-      receipt!,
-      automaticMaintenanceWorkerFenceInternals.parseArguments(
-        mutationArguments("fence"),
-      )!,
-      env,
-    )).toBe(true);
+    expect(
+      automaticMaintenanceWorkerFenceInternals.authorityReceiptExact(
+        receipt!,
+        automaticMaintenanceWorkerFenceInternals.parseArguments(
+          mutationArguments("fence"),
+        )!,
+        env,
+      ),
+    ).toBe(true);
     expect(receipt).not.toContain(env.GITHUB_TOKEN);
   });
 
@@ -598,7 +599,9 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       ),
     ).toBeNull();
     expect(
-      automaticMaintenanceWorkerFenceInternals.parseArguments(prepareArguments()),
+      automaticMaintenanceWorkerFenceInternals.parseArguments(
+        prepareArguments(),
+      ),
     ).not.toBeNull();
     expect(
       automaticMaintenanceWorkerFenceInternals.parseArguments([
@@ -612,7 +615,9 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     const metadata = [
       forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
       forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
-      forStaging(metadataSource({ rows: stagingTargetRows(), targetPort: 8_080 })),
+      forStaging(
+        metadataSource({ rows: stagingTargetRows(), targetPort: 8_080 }),
+      ),
     ];
     const deployments = [
       forStaging(deploymentSource({ candidateSha: existingSourceSha })),
@@ -623,18 +628,24 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     const writes = new Map<string, string>();
     let runtimeCalls = 0;
     let output = "";
-    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const url = String(input);
       if (url.startsWith("https://beer-staging.up.railway.app/")) {
         runtimeCalls += 1;
-        const route = new URL(url).pathname as "/health" | "/startup" | "/ready";
-        return jsonResponse(runtimeSource(route, {
-          deploymentId: IDS.nextDeployment,
-          sourceSha: existingSourceSha,
-          enabled: false,
-          candidateBound: false,
-          environmentId: IDS.staging,
-        }));
+        const route = new URL(url).pathname as
+          "/health" | "/startup" | "/ready";
+        return jsonResponse(
+          runtimeSource(route, {
+            deploymentId: IDS.nextDeployment,
+            sourceSha: existingSourceSha,
+            enabled: false,
+            candidateBound: false,
+            environmentId: IDS.staging,
+          }),
+        );
       }
       const body = JSON.parse(String(init?.body)) as {
         query: string;
@@ -680,16 +691,18 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
 
     expect(code).toBe(0);
     expect(runtimeCalls).toBe(0);
-    expect(mutationInputs).toEqual([{
-      projectId: IDS.project,
-      serviceId: IDS.service,
-      environmentId: IDS.staging,
-      variables: {
-        PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "false",
-        PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: CANDIDATE,
+    expect(mutationInputs).toEqual([
+      {
+        projectId: IDS.project,
+        serviceId: IDS.service,
+        environmentId: IDS.staging,
+        variables: {
+          PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "false",
+          PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: CANDIDATE,
+        },
+        skipDeploys: true,
       },
-      skipDeploys: true,
-    }]);
+    ]);
     expect(JSON.parse(output)).toMatchObject({
       target: "permanent-staging",
       operation: "prepare",
@@ -756,11 +769,13 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     );
     expect(deployment).not.toBeNull();
     const healthy = { ...metadata!, deployment: deployment! };
-    expect(automaticMaintenanceWorkerFenceInternals.soleHealthyLegacyBaseline(
-      healthy,
-      "permanent-staging",
-      CANDIDATE,
-    )).toBe(true);
+    expect(
+      automaticMaintenanceWorkerFenceInternals.soleHealthyLegacyBaseline(
+        healthy,
+        "permanent-staging",
+        CANDIDATE,
+      ),
+    ).toBe(true);
 
     const scenarios = [
       {
@@ -774,7 +789,10 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         label: "stopped latest deployment",
         snapshot: {
           ...healthy,
-          latestDeployment: { ...healthy.latestDeployment, deploymentStopped: true },
+          latestDeployment: {
+            ...healthy.latestDeployment,
+            deploymentStopped: true,
+          },
         },
       },
       { label: "multiple replicas", snapshot: { ...healthy, numReplicas: 2 } },
@@ -796,11 +814,13 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         label: "latest and active identity mismatch",
         snapshot: {
           ...healthy,
-          activeDeployments: [{
-            id: IDS.nextDeployment,
-            status: "SUCCESS",
-            deploymentStopped: false,
-          }],
+          activeDeployments: [
+            {
+              id: IDS.nextDeployment,
+              status: "SUCCESS",
+              deploymentStopped: false,
+            },
+          ],
         },
       },
       {
@@ -831,14 +851,20 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         label: "stale staging port",
         snapshot: {
           ...healthy,
-          domains: healthy.domains.map((domain) => ({ ...domain, targetPort: 3_000 })),
+          domains: healthy.domains.map((domain) => ({
+            ...domain,
+            targetPort: 3_000,
+          })),
         },
       },
       {
         label: "missing staging target port",
         snapshot: {
           ...healthy,
-          domains: healthy.domains.map((domain) => ({ ...domain, targetPort: null })),
+          domains: healthy.domains.map((domain) => ({
+            ...domain,
+            targetPort: null,
+          })),
         },
       },
       {
@@ -901,36 +927,45 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         label: "sealed provider row",
         snapshot: {
           ...healthy,
-          rows: healthy.rows.map((row) => row.name === "GOOGLE_MAPS_MAP_ID"
-            ? { ...row, isSealed: true }
-            : row),
+          rows: healthy.rows.map((row) =>
+            row.name === "GOOGLE_MAPS_MAP_ID"
+              ? { ...row, isSealed: true }
+              : row,
+          ),
         },
       },
       {
         label: "foreign-service provider row",
         snapshot: {
           ...healthy,
-          rows: healthy.rows.map((row) => row.name === "OPENAI_API_KEY"
-            ? { ...row, serviceId: IDS.project }
-            : row),
+          rows: healthy.rows.map((row) =>
+            row.name === "OPENAI_API_KEY"
+              ? { ...row, serviceId: IDS.project }
+              : row,
+          ),
         },
       },
       {
         label: "referenced provider row",
         snapshot: {
           ...healthy,
-          rows: healthy.rows.map((row) => row.name === "GOOGLE_PLACES_API_KEY"
-            ? { ...row, references: ["OTHER_REFERENCE"] }
-            : row),
+          rows: healthy.rows.map((row) =>
+            row.name === "GOOGLE_PLACES_API_KEY"
+              ? { ...row, references: ["OTHER_REFERENCE"] }
+              : row,
+          ),
         },
       },
     ];
     for (const scenario of scenarios) {
-      expect(automaticMaintenanceWorkerFenceInternals.soleHealthyLegacyBaseline(
-        scenario.snapshot,
-        "permanent-staging",
-        CANDIDATE,
-      ), scenario.label).toBe(false);
+      expect(
+        automaticMaintenanceWorkerFenceInternals.soleHealthyLegacyBaseline(
+          scenario.snapshot,
+          "permanent-staging",
+          CANDIDATE,
+        ),
+        scenario.label,
+      ).toBe(false);
     }
   });
 
@@ -942,39 +977,49 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     }[] = [
       {
         label: "failed latest deployment",
-        source: forStaging(metadataSource({
-          rows: providerRows(),
-          status: "FAILED",
-          targetPort: 8_080,
-        })),
+        source: forStaging(
+          metadataSource({
+            rows: providerRows(),
+            status: "FAILED",
+            targetPort: 8_080,
+          }),
+        ),
       },
       {
         label: "candidate already deployed as legacy",
-        source: forStaging(metadataSource({
-          rows: providerRows(),
-          targetPort: 8_080,
-        })),
+        source: forStaging(
+          metadataSource({
+            rows: providerRows(),
+            targetPort: 8_080,
+          }),
+        ),
         deploymentSha: CANDIDATE,
       },
       {
         label: "multiple replicas",
-        source: forStaging(metadataSource({
-          numReplicas: 2,
-          rows: providerRows(),
-          targetPort: 8_080,
-        })),
+        source: forStaging(
+          metadataSource({
+            numReplicas: 2,
+            rows: providerRows(),
+            targetPort: 8_080,
+          }),
+        ),
       },
       {
         label: "latest and active identity mismatch",
-        source: forStaging(metadataSource({
-          activeDeployments: [{
-            id: IDS.nextDeployment,
-            status: "SUCCESS",
-            deploymentStopped: false,
-          }],
-          rows: providerRows(),
-          targetPort: 8_080,
-        })),
+        source: forStaging(
+          metadataSource({
+            activeDeployments: [
+              {
+                id: IDS.nextDeployment,
+                status: "SUCCESS",
+                deploymentStopped: false,
+              },
+            ],
+            rows: providerRows(),
+            targetPort: 8_080,
+          }),
+        ),
       },
     ];
 
@@ -982,7 +1027,10 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       let mutationCalls = 0;
       let durableWrites = 0;
       let output = "";
-      const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const fetchImpl = (async (
+        _input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
         const body = JSON.parse(String(init?.body)) as { query: string };
         if (body.query.includes("WorkerFenceScope")) {
           return jsonResponse(forStaging(scopeSource()));
@@ -991,9 +1039,13 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
           return jsonResponse(scenario.source);
         }
         if (body.query.includes("WorkerFenceDeployment")) {
-          return jsonResponse(forStaging(deploymentSource({
-            candidateSha: scenario.deploymentSha ?? LEGACY_SHA,
-          })));
+          return jsonResponse(
+            forStaging(
+              deploymentSource({
+                candidateSha: scenario.deploymentSha ?? LEGACY_SHA,
+              }),
+            ),
+          );
         }
         if (body.query === AUTOMATIC_MAINTENANCE_WORKER_FENCE_MUTATION) {
           mutationCalls += 1;
@@ -1050,7 +1102,10 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     let boundaryCalls = 0;
     let runtimeCalls = 0;
     let output = "";
-    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const url = String(input);
       if (url.startsWith("https://pintpath.au/")) {
         runtimeCalls += 1;
@@ -1060,7 +1115,8 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         query: string;
         variables: Record<string, unknown>;
       };
-      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceScope"))
+        return jsonResponse(scopeSource());
       if (body.query.includes("WorkerFenceMetadata")) {
         return jsonResponse(metadata.shift());
       }
@@ -1084,7 +1140,10 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       sleep: async () => undefined,
       boundaryCheck: async () => {
         boundaryCalls += 1;
-        return { passed: true, receiptSha256: String(boundaryCalls).repeat(64) };
+        return {
+          passed: true,
+          receiptSha256: String(boundaryCalls).repeat(64),
+        };
       },
       reassertRepositoryState: () => true,
       readAuthority: () => authority("fence"),
@@ -1138,9 +1197,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
     });
-    expect(terminal.bindingSha256).toBe(
-      sha256(canonical(terminal.binding)),
-    );
+    expect(terminal.bindingSha256).toBe(sha256(canonical(terminal.binding)));
     expect(terminalSource).not.toContain(METADATA_TOKEN);
     expect(terminalSource).not.toContain(STAGING_TOKEN);
     expect(terminalSource).not.toContain(WRITE_TOKEN);
@@ -1179,23 +1236,30 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     const mutationInputs: Record<string, unknown>[] = [];
     const writes = new Map<string, string>();
     let output = "";
-    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const url = String(input);
       if (url.startsWith("https://pintpath.au/")) {
-        const route = new URL(url).pathname as "/health" | "/startup" | "/ready";
+        const route = new URL(url).pathname as
+          "/health" | "/startup" | "/ready";
         const preflight = runtimeRoutes.length < 6;
         runtimeRoutes.push(route);
-        return jsonResponse(runtimeSource(route, {
-          deploymentId: preflight ? IDS.deployment : IDS.nextDeployment,
-          enabled: !preflight,
-          candidateBound: true,
-        }));
+        return jsonResponse(
+          runtimeSource(route, {
+            deploymentId: preflight ? IDS.deployment : IDS.nextDeployment,
+            enabled: !preflight,
+            candidateBound: true,
+          }),
+        );
       }
       const body = JSON.parse(String(init?.body)) as {
         query: string;
         variables: Record<string, unknown>;
       };
-      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceScope"))
+        return jsonResponse(scopeSource());
       if (body.query.includes("WorkerFenceMetadata")) {
         return jsonResponse(metadata.shift());
       }
@@ -1322,18 +1386,25 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     let mutationCalls = 0;
     let output = "";
     const writes = new Map<string, string>();
-    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const url = String(input);
       if (url.startsWith("https://pintpath.au/")) {
-        const route = new URL(url).pathname as "/health" | "/startup" | "/ready";
-        return jsonResponse(runtimeSource(route, {
-          deploymentId: IDS.deployment,
-          enabled: false,
-          candidateBound: true,
-        }));
+        const route = new URL(url).pathname as
+          "/health" | "/startup" | "/ready";
+        return jsonResponse(
+          runtimeSource(route, {
+            deploymentId: IDS.deployment,
+            enabled: false,
+            candidateBound: true,
+          }),
+        );
       }
       const body = JSON.parse(String(init?.body)) as { query: string };
-      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceScope"))
+        return jsonResponse(scopeSource());
       if (body.query.includes("WorkerFenceMetadata")) {
         return jsonResponse(metadata.shift());
       }
@@ -1389,9 +1460,13 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     let mutationCalls = 0;
     let boundaryCalls = 0;
     let output = "";
-    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = (async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const body = JSON.parse(String(init?.body)) as { query: string };
-      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceScope"))
+        return jsonResponse(scopeSource());
       if (body.query.includes("WorkerFenceMetadata")) {
         return jsonResponse(metadataSource({ rows: targetRows() }));
       }
@@ -1437,17 +1512,24 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
   it("binds production activation to the role-limit deployment before any write", async () => {
     let mutationCalls = 0;
     let output = "";
-    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const url = String(input);
       if (url.startsWith("https://pintpath.au/")) {
-        const route = new URL(url).pathname as "/health" | "/startup" | "/ready";
-        return jsonResponse(runtimeSource(route, {
-          enabled: false,
-          candidateBound: true,
-        }));
+        const route = new URL(url).pathname as
+          "/health" | "/startup" | "/ready";
+        return jsonResponse(
+          runtimeSource(route, {
+            enabled: false,
+            candidateBound: true,
+          }),
+        );
       }
       const body = JSON.parse(String(init?.body)) as { query: string };
-      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceScope"))
+        return jsonResponse(scopeSource());
       if (body.query.includes("WorkerFenceMetadata")) {
         return jsonResponse(metadataSource({ rows: targetRows() }));
       }
@@ -1506,9 +1588,13 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     let boundaryCalls = 0;
     let output = "";
     const writes = new Map<string, string>();
-    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = (async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const body = JSON.parse(String(init?.body)) as { query: string };
-      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceScope"))
+        return jsonResponse(scopeSource());
       if (body.query.includes("WorkerFenceMetadata")) {
         return jsonResponse(metadata.shift());
       }
@@ -1517,7 +1603,9 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       }
       if (body.query === AUTOMATIC_MAINTENANCE_WORKER_FENCE_MUTATION) {
         mutationCalls += 1;
-        return new Response("provider acknowledgement unavailable", { status: 502 });
+        return new Response("provider acknowledgement unavailable", {
+          status: 502,
+        });
       }
       throw new Error("unexpected request");
     }) as typeof fetch;
@@ -1547,8 +1635,9 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(code).toBe(1);
     expect(mutationCalls).toBe(1);
     expect(boundaryCalls).toBe(2);
-    expect(writes.has("automatic-maintenance-worker-fence-terminal.json"))
-      .toBe(true);
+    expect(writes.has("automatic-maintenance-worker-fence-terminal.json")).toBe(
+      true,
+    );
     expect(JSON.parse(output)).toMatchObject({
       outcome: "mutation_uncertain",
       attempts: 1,
@@ -1574,6 +1663,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(workflow).toContain("prepare_run_id:");
     expect(workflow).toContain("quiesce_run_id:");
     expect(workflow).toContain("fenced_deployment_run_id:");
+    expect(workflow).toContain("venue_directory_run_id:");
     expect(workflow).toContain("restore_run_id:");
     expect(workflow).toContain("ambiguous_activate_run_id:");
     expect(workflow).toContain("role_limit_run_id:");
@@ -1600,13 +1690,47 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       "scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts",
     );
     expect(workflow).toContain("--operation activate");
+    expect(
+      workflow.match(/--venue-directory-run-id "\$VENUE_DIRECTORY_RUN_ID"/g),
+    ).toHaveLength(2);
+    expect(
+      workflow.match(
+        /--venue-directory-receipt-file "\$sealed\/venue-directory\/venue-directory-terminal\.json"/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      workflow.match(
+        /name: pintpath-permanent-staging-venue-directory-\$\{\{ inputs\.candidate_sha \}\}/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      workflow.match(/run-id: \$\{\{ inputs\.venue_directory_run_id \}\}/g),
+    ).toHaveLength(2);
+    const venueSealBlock = [
+      "for leaf in \\",
+      "            venue-directory-plan.json \\",
+      "            venue-import-terminal.json \\",
+      "            constraint-preflight.json \\",
+      "            migration-prewrite.json \\",
+      "            migration-apply.json \\",
+      "            constraint-postflight.json \\",
+      "            venue-directory-terminal.json; do",
+      '            seal_unique "$root/venue-directory" "$leaf" \\',
+      '              "$sealed/venue-directory/$leaf"',
+      "          done",
+    ].join("\n");
+    expect(workflow.split(venueSealBlock)).toHaveLength(3);
+    expect(
+      workflow.match(/sort -u \| wc -l \| tr -d ' '\)" = '?5'?/g),
+    ).toHaveLength(2);
     expect(workflow).toContain(
       "scripts/verify-production-maintenance-role-limit-prerequisites.ts",
     );
     expect(workflow).toContain("--mode production-activate");
-    expect(workflow).toContain("--role-intent-file \"$sealed/intent.json\"");
-    expect(workflow.match(/actions\/download-artifact@3e5f45b2cfb9/g))
-      .toHaveLength(13);
+    expect(workflow).toContain('--role-intent-file "$sealed/intent.json"');
+    expect(
+      workflow.match(/actions\/download-artifact@3e5f45b2cfb9/g),
+    ).toHaveLength(15);
     const reconcileJob = workflow.split("\n  reconcile-activate:")[1];
     expect(reconcileJob).toContain(
       "Reconcile an ambiguous staging automatic-maintenance activation",
@@ -1624,9 +1748,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(workflow).toContain("actions/upload-artifact@043fb46d");
     const fullCheck = workflow.indexOf("npm run check");
     const authority = workflow.indexOf("--mode authority");
-    const firstProviderSecret = workflow.indexOf(
-      "secrets.PINTPATH_RAILWAY",
-    );
+    const firstProviderSecret = workflow.indexOf("secrets.PINTPATH_RAILWAY");
     const reassertion = workflow.indexOf(
       "Reassert exact current main immediately before provider-token custody",
     );

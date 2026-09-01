@@ -82,6 +82,11 @@
         "event": "workflow_dispatch"
       },
       {
+        "name": "Apply and prove permanent-staging venue directory",
+        "workflowPath": ".github/workflows/permanent-staging-venue-directory.yml",
+        "event": "workflow_dispatch"
+      },
+      {
         "name": "Scale 1→2, prove, and converge 2→1",
         "workflowPath": ".github/workflows/permanent-staging-scale-evidence.yml",
         "event": "workflow_dispatch"
@@ -150,6 +155,10 @@
       {
         "name": "pintpath-permanent-staging-deployment-{candidateSha}",
         "producerCheck": "Deploy permanent staging"
+      },
+      {
+        "name": "pintpath-permanent-staging-venue-directory-{candidateSha}",
+        "producerCheck": "Apply and prove permanent-staging venue directory"
       },
       {
         "name": "pintpath-permanent-staging-scale-evidence-{candidateSha}",

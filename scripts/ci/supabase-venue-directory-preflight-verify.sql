@@ -2,6 +2,11 @@ do $verify$
 declare
   observed integer;
   definition text;
+  business_constraint_validated boolean;
+  postcode_constraint_validated boolean;
+  ledger_recorded boolean;
+  ledger_name text;
+  ledger_statements text[];
 begin
   if to_regclass('public.venues') is null then
     raise exception 'public.venues is absent';
@@ -37,13 +42,12 @@ begin
     raise exception 'venue directory status columns do not match the reviewed contract';
   end if;
 
-  select pg_get_constraintdef(oid)
-    into definition
+  select pg_get_constraintdef(oid), convalidated
+    into definition, business_constraint_validated
     from pg_constraint
    where conrelid = 'public.venues'::regclass
      and conname = 'venues_business_status_check'
-     and contype = 'c'
-     and convalidated;
+     and contype = 'c';
 
   if definition is null
      or position('business_status IS NULL' in definition) = 0
@@ -54,17 +58,41 @@ begin
     raise exception 'venues_business_status_check does not match the reviewed contract';
   end if;
 
-  select pg_get_constraintdef(oid)
-    into definition
+  select count(*)
+    into observed
+    from public.venues
+   where business_status is not null
+     and business_status not in (
+       'OPERATIONAL',
+       'CLOSED_TEMPORARILY',
+       'CLOSED_PERMANENTLY',
+       'FUTURE_OPENING'
+     );
+
+  if observed <> 0 then
+    raise exception 'public.venues contains rows that violate venues_business_status_check';
+  end if;
+
+  select pg_get_constraintdef(oid), convalidated
+    into definition, postcode_constraint_validated
     from pg_constraint
    where conrelid = 'public.venues'::regclass
      and conname = 'venues_australian_postcode_check'
-     and contype = 'c'
-     and convalidated;
+     and contype = 'c';
 
   if definition is null
      or position('^[0-9]{4}$' in definition) = 0 then
     raise exception 'venues_australian_postcode_check does not match the reviewed contract';
+  end if;
+
+  select count(*)
+    into observed
+    from public.venues
+   where postcode is not null
+     and postcode !~ '^[0-9]{4}$';
+
+  if observed <> 0 then
+    raise exception 'public.venues contains rows that violate venues_australian_postcode_check';
   end if;
 
   if not exists (
@@ -116,6 +144,45 @@ begin
          @> array['search_path=pg_catalog']
   ) then
     raise exception 'venue updated_at trigger is absent or not invoker-safe';
+  end if;
+
+  if to_regclass('supabase_migrations.schema_migrations') is null then
+    raise exception 'Supabase migration ledger is absent';
+  end if;
+
+  select exists (
+    select 1
+      from supabase_migrations.schema_migrations
+     where version = '20260901032339'
+  ) into ledger_recorded;
+
+  if business_constraint_validated is distinct from postcode_constraint_validated
+     or business_constraint_validated is distinct from ledger_recorded then
+    raise exception 'venue constraint validation and migration ledger state are mixed';
+  end if;
+
+  if ledger_recorded then
+    select name, statements
+      into ledger_name, ledger_statements
+      from supabase_migrations.schema_migrations
+     where version = '20260901032339';
+
+    if ledger_name is distinct from 'validate_external_venue_directory_constraints'
+       or coalesce(array_length(ledger_statements, 1), 0) <> 2
+       or regexp_replace(
+         btrim(ledger_statements[1]),
+         '[[:space:]]+',
+         ' ',
+         'g'
+       ) <> 'alter table public.venues validate constraint venues_business_status_check'
+       or regexp_replace(
+         btrim(ledger_statements[2]),
+         '[[:space:]]+',
+         ' ',
+         'g'
+       ) <> 'alter table public.venues validate constraint venues_australian_postcode_check' then
+      raise exception 'reviewed venue constraint migration ledger row is not exact';
+    end if;
   end if;
 end
 $verify$;

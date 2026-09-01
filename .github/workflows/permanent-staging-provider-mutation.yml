@@ -22,7 +22,6 @@ on:
           - resume-forbidden-offsite-backup-deletion-patch
           - cancel-forbidden-offsite-backup-deletion-patch
           - cancel-masked-forbidden-offsite-backup-deletion-patch
-          - reconcile-completed-forbidden-offsite-backup-deletion
       prior_cleanup_run_id:
         description: Exact failed cleanup run selected by the reviewed recovery operation
         required: false
@@ -81,6 +80,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          test "$OPERATION" != \
+            'reconcile-completed-forbidden-offsite-backup-deletion'
           if test "$OPERATION" = 'reconcile-completed-forbidden-offsite-backup-deletion'; then
             expected="RECONCILE_${OPERATION^^}_IN_PERMANENT_STAGING"
           else

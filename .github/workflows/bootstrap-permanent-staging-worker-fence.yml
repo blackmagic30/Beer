@@ -40,6 +40,10 @@ on:
         description: Restore/reconcile only; successful candidate upload at zero replicas
         required: false
         type: string
+      venue_directory_run_id:
+        description: Restore/reconcile only; successful same-candidate staging venue import after fenced deployment
+        required: false
+        type: string
       ambiguous_restore_run_id:
         description: Reconcile only; exact prior restore whose scale step may have run
         required: false
@@ -89,6 +93,7 @@ jobs:
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -107,6 +112,7 @@ jobs:
               test "$EXPECTED_DEPLOYMENT_SHA" != "$CANDIDATE_SHA"
               test -z "$QUIESCE_RUN_ID"
               test -z "$FENCED_DEPLOYMENT_RUN_ID"
+              test -z "$VENUE_DIRECTORY_RUN_ID"
               test "$CONFIRMATION" = \
                 "QUIESCE_PERMANENT_STAGING_WORKER_BOOTSTRAP_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
               ;;
@@ -114,11 +120,17 @@ jobs:
               test "$EXPECTED_DEPLOYMENT_SHA" = "$CANDIDATE_SHA"
               [[ "$QUIESCE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
               [[ "$FENCED_DEPLOYMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
-              test "$QUIESCE_RUN_ID" != "$PREPARE_RUN_ID"
-              test "$FENCED_DEPLOYMENT_RUN_ID" != "$PREPARE_RUN_ID"
-              test "$FENCED_DEPLOYMENT_RUN_ID" != "$QUIESCE_RUN_ID"
-              test "$QUIESCE_RUN_ID" != "$RUN_ID"
-              test "$FENCED_DEPLOYMENT_RUN_ID" != "$RUN_ID"
+              [[ "$VENUE_DIRECTORY_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              provided=(
+                "$PREPARE_RUN_ID"
+                "$QUIESCE_RUN_ID"
+                "$FENCED_DEPLOYMENT_RUN_ID"
+                "$VENUE_DIRECTORY_RUN_ID"
+              )
+              for prerequisite_run_id in "${provided[@]}"; do
+                test "$prerequisite_run_id" != "$RUN_ID"
+              done
+              test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = 4
               test "$CONFIRMATION" = \
                 "RESTORE_PERMANENT_STAGING_WORKER_BOOTSTRAP_FOR_${CANDIDATE_SHA}"
               ;;
@@ -157,7 +169,8 @@ jobs:
           root="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-prerequisites"
           evidence="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-evidence"
           install -d -m 700 "$root" "$root/prepare" "$root/quiesce" \
-            "$root/fenced-deployment" "$root/sealed" "$evidence"
+            "$root/fenced-deployment" "$root/venue-directory" \
+            "$root/sealed" "$evidence"
           umask 077
           jq -n \
             --arg candidateSha "$CANDIDATE_SHA" \
@@ -218,6 +231,16 @@ jobs:
           name: pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-prerequisites/fenced-deployment
 
+      - name: Retrieve the exact successful staging venue-directory artifact
+        if: inputs.operation == 'restore'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.venue_directory_run_id }}
+          name: pintpath-permanent-staging-venue-directory-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-prerequisites/venue-directory
+
       - name: Seal unique prerequisite receipts into private custody
         env:
           BOOTSTRAP_PATH: ${{ inputs.bootstrap_path }}
@@ -248,7 +271,8 @@ jobs:
               "$root/sealed/automatic-maintenance-worker-fence-terminal.json"
           fi
           if test "$OPERATION" = restore; then
-            install -d -m 700 "$root/sealed/quiesce" "$root/sealed/fenced-deployment"
+            install -d -m 700 "$root/sealed/quiesce" \
+              "$root/sealed/fenced-deployment" "$root/sealed/venue-directory"
             seal_one "$root/quiesce" prerequisites-verification.json \
               "$root/sealed/quiesce/prerequisites-verification.json"
             if test "$BOOTSTRAP_PATH" = cold-dead; then
@@ -260,6 +284,17 @@ jobs:
             fi
             seal_one "$root/fenced-deployment" deployment-receipt.json \
               "$root/sealed/fenced-deployment/deployment-receipt.json"
+            for leaf in \
+              venue-directory-plan.json \
+              venue-import-terminal.json \
+              constraint-preflight.json \
+              migration-prewrite.json \
+              migration-apply.json \
+              constraint-postflight.json \
+              venue-directory-terminal.json; do
+              seal_one "$root/venue-directory" "$leaf" \
+                "$root/sealed/venue-directory/$leaf"
+            done
           fi
 
       - name: Verify exact current-main, review, run, artifact, receipt, and chronology prerequisites
@@ -275,6 +310,7 @@ jobs:
           PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: ${{ inputs.operation }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -311,6 +347,8 @@ jobs:
             args+=(
               --fenced-deployment-run-id "$FENCED_DEPLOYMENT_RUN_ID"
               --fenced-deployment-receipt-file "$root/fenced-deployment/deployment-receipt.json"
+              --venue-directory-run-id "$VENUE_DIRECTORY_RUN_ID"
+              --venue-directory-receipt-file "$root/venue-directory/venue-directory-terminal.json"
             )
           fi
           args+=(--output "$evidence/prerequisites-verification.json")
@@ -440,6 +478,7 @@ jobs:
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -450,13 +489,14 @@ jobs:
             "$PREPARE_RUN_ID"
             "$QUIESCE_RUN_ID"
             "$FENCED_DEPLOYMENT_RUN_ID"
+            "$VENUE_DIRECTORY_RUN_ID"
             "$AMBIGUOUS_RESTORE_RUN_ID"
           )
           for prerequisite_run_id in "${provided[@]}"; do
             [[ "$prerequisite_run_id" =~ ^[1-9][0-9]{0,19}$ ]]
             test "$prerequisite_run_id" != "$RUN_ID"
           done
-          test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = 4
+          test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = 5
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1
@@ -494,6 +534,7 @@ jobs:
             "$root/prepare" \
             "$root/quiesce" \
             "$root/fenced-deployment" \
+            "$root/venue-directory" \
             "$root/sealed" \
             "$RUNNER_TEMP/pintpath-staging-worker-bootstrap-evidence" \
             "$RUNNER_TEMP/pintpath-staging-worker-bootstrap-reconcile-authority"
@@ -563,6 +604,15 @@ jobs:
           name: pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}
           path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-reconcile-prerequisites/fenced-deployment
 
+      - name: Retrieve the exact successful staging venue-directory artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.venue_directory_run_id }}
+          name: pintpath-permanent-staging-venue-directory-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-reconcile-prerequisites/venue-directory
+
       - name: Seal and authenticate the exact restore reconciliation prerequisites
         env:
           BOOTSTRAP_PATH: ${{ inputs.bootstrap_path }}
@@ -574,6 +624,7 @@ jobs:
           PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-scale-evidence
           PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: reconcile-restore
           QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          VENUE_DIRECTORY_RUN_ID: ${{ inputs.venue_directory_run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -593,7 +644,8 @@ jobs:
           install -d -m 700 \
             "$sealed/prepare" \
             "$sealed/quiesce" \
-            "$sealed/fenced-deployment"
+            "$sealed/fenced-deployment" \
+            "$sealed/venue-directory"
           args=(
             --operation reconcile-restore
             --bootstrap-path "$BOOTSTRAP_PATH"
@@ -632,9 +684,22 @@ jobs:
           fi
           seal_unique "$root/fenced-deployment" deployment-receipt.json \
             "$sealed/fenced-deployment/deployment-receipt.json"
+          for leaf in \
+            venue-directory-plan.json \
+            venue-import-terminal.json \
+            constraint-preflight.json \
+            migration-prewrite.json \
+            migration-apply.json \
+            constraint-postflight.json \
+            venue-directory-terminal.json; do
+            seal_unique "$root/venue-directory" "$leaf" \
+              "$sealed/venue-directory/$leaf"
+          done
           args+=(
             --fenced-deployment-run-id "$FENCED_DEPLOYMENT_RUN_ID"
             --fenced-deployment-receipt-file "$sealed/fenced-deployment/deployment-receipt.json"
+            --venue-directory-run-id "$VENUE_DIRECTORY_RUN_ID"
+            --venue-directory-receipt-file "$sealed/venue-directory/venue-directory-terminal.json"
             --output "$RUNNER_TEMP/pintpath-staging-worker-bootstrap-evidence/prerequisites-verification.json"
           )
           ./node_modules/.bin/tsx \

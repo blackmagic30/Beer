@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-intent/v4",
+  "operation": "reconcile-completed-forbidden-offsite-backup-deletion",
+  "candidateSha": "d939a77d0950b27466f3b9ecd26643a2416059a7",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "externalMutationFreeze": {
+    "attestation": "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    "enforcement": "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+    "providerCasOrLockVerified": false
+  },
+  "authorizedBaseline": "cold-dead-null",
+  "variableNames": [
+    "OFFSITE_BACKUP_BUCKET",
+    "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    "OFFSITE_BACKUP_SUPABASE_URL"
+  ],
+  "mutationPlan": {
+    "readOnlyCloseout": {
+      "action": "reconcile-exact-completed-deletion-across-reviewed-successor",
+      "mutation": null,
+      "maximumAttempts": 0,
+      "mutationCredentialAvailable": false,
+      "expectedPostCleanupMetadataSha256": "54fae04fd4dda1688bae3080a2c9c2220fb257f7b5c3ea1ce8677685cc4b18dc"
+    },
+    "originalCandidateSha": "0eadad05ce6c313ed3c12492d3095609ce5872d5",
+    "originalReviewedPrHeadSha": "b8d0d0e44cf63e996388a223ba4ee2ff02ab02e5",
+    "originalTreeSha": "2f624d697d97f5682d7b69231ed4d0ec66a21e6d",
+    "originalCleanupRunId": "33246243698",
+    "originalCleanupArtifact": {
+      "id": "9712963222",
+      "digest": "sha256:aeb28aef046845e9f8ce830c2ae4a2eee762ce79810c69a1727fbef07f121ad3",
+      "exact": true
+    },
+    "failedRecoveryRunId": "33246655561",
+    "failedRecoveryArtifact": {
+      "id": "9713096183",
+      "digest": "sha256:e1a4e7017298b49df7c0afb3fcc8a354740248c5333cb21248d3bbd80d65c0b8",
+      "dispatchOnlyExact": true
+    },
+    "committedPatch": {
+      "id": "63b3cc8a-f68f-4b99-adb7-70dfdfa7d6ae",
+      "status": "COMMITTED",
+      "commitMessage": "pintpath:staging-offsite-cleanup:0eadad05ce6c313ed3c12492d3095609ce5872d5",
+      "activePatchEmpty": true,
+      "maskedAndDecryptedDeletionExact": true
+    },
+    "reviewedAuthoritySha256": "664bccef4e73d88f20ee1ba8ff65ea7817e4ddaeae7307ba63313be429634e7c",
+    "closeoutDeadline": "2026-08-30T09:49:29.000Z"
+  },
+  "retryAllowed": false,
+  "privateInputCount": 0,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false,
+  "preflightMetadataSha256": "54fae04fd4dda1688bae3080a2c9c2220fb257f7b5c3ea1ce8677685cc4b18dc"
+}

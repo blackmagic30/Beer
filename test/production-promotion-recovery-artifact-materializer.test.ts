@@ -137,7 +137,7 @@ function fixture(
       linearHistoryExact: true,
     },
     policySha256:
-      "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd",
+      "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90",
     consumer: {},
     checks: [],
     artifacts: [],

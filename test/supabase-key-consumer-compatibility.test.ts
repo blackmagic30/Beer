@@ -326,6 +326,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       expect(supabaseEndpointPattern.test(endpoint)).toBe(true);
     expect(relativePathsMatching(supabaseEndpointPattern)).toEqual([
       ".github/workflows/activate-production-promotion-recovery.yml",
+      ".github/workflows/permanent-staging-venue-directory.yml",
       ".github/workflows/production-logical-backup.yml",
       ".github/workflows/venue-directory-refresh.yml",
       "apps/android/app/src/main/java/au/pintpath/beermap/data/BeerMapApiClient.kt",
@@ -340,6 +341,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/execute-protected-disposable-supabase-project-teardown.ts",
       "scripts/execute-protected-permanent-staging-supabase-cutover.ts",
       "scripts/execute-protected-permanent-staging-variable-mutation.ts",
+      "scripts/execute-protected-permanent-staging-venue-directory.ts",
       "scripts/import-melbourne-venues.ts",
       "scripts/lib/permanent-staging-cold-recovery.ts",
       "scripts/lib/permanent-staging-cost-policy.ts",

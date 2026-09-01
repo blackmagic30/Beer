@@ -193,6 +193,9 @@ describe("protected provider mutation workflows", () => {
     const deletionProofAttestation = read(
       "docs/incident-evidence/railway-staged-deletion-proof-2026-08-29/attestation.json",
     );
+    const cleanupCloseoutAttestation = read(
+      "docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29/attestation.json",
+    );
 
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain(
@@ -212,8 +215,14 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain(
       "cancel-masked-forbidden-offsite-backup-deletion-patch",
     );
-    expect(workflow).toContain(
+    const operationOptions = workflow.match(
+      /operation:\n(?<body>[\s\S]*?)\n      prior_cleanup_run_id:/,
+    )?.groups?.body ?? "";
+    expect(operationOptions).not.toContain(
       "reconcile-completed-forbidden-offsite-backup-deletion",
+    );
+    expect(workflow).toContain(
+      "test \"$OPERATION\" != \\\n            'reconcile-completed-forbidden-offsite-backup-deletion'",
     );
     expect(workflow).toContain(
       "test \"$PRIOR_CLEANUP_RUN_ID\" = '33164687424'",
@@ -405,7 +414,24 @@ describe("protected provider mutation workflows", () => {
                 "reconcile-completed-forbidden-offsite-backup-deletion",
               originalCandidateSha:
                 "0eadad05ce6c313ed3c12492d3095609ce5872d5",
-              currentCandidateMustBeDirectChild: true,
+              closeoutCandidateWasDirectChildOfOriginal: true,
+              closeoutCandidateSha:
+                "d939a77d0950b27466f3b9ecd26643a2416059a7",
+              closeoutCandidateTreeSha:
+                "83b0b51efd2cf0ac5c2299c6cfd4c919d1973aff",
+              closeoutEvidenceAttestationPath:
+                "docs/incident-evidence/permanent-staging-cleanup-closeout-2026-08-29/attestation.json",
+              closeoutEvidenceAttestationSha256:
+                "2f7f0204e4962f33d87d59b09da5a81ee76d343b8d23a48947547ed1099f0a64",
+              closeoutRunId: "33249810569",
+              closeoutArtifactId: "9714046913",
+              closeoutArtifactDigest:
+                "sha256:625fca28703f9c4c7897c6d52a3e54cef8caee6e68f66c3b26a1565d7e4f655d",
+              closeoutArtifactBytes: 2583,
+              closeoutCompleted: true,
+              closeoutDispatchState: "RETIRED_AFTER_COMPLETION",
+              historicalRunRerunAllowed: false,
+              laterCandidateCloseoutRerunsAllowed: false,
               originalCleanupRunId: "33246243698",
               failedRecoveryRunId: "33246655561",
               expectedPostCleanupMetadataSha256:
@@ -435,7 +461,7 @@ describe("protected provider mutation workflows", () => {
       },
     });
     expect(policy).toMatchObject({
-      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v8",
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v9",
       operations: {
         legacyStagedDeletionDispatchState:
           "ENABLED_AFTER_SEALED_DISPOSABLE_PROOF",
@@ -451,6 +477,10 @@ describe("protected provider mutation workflows", () => {
     expect(crypto.createHash("sha256").update(deletionProofAttestation)
       .digest("hex")).toBe(
         "e1faa9daff1ff4927c852ccf08b917f77b7893f77a04c20bbe192f556e276de2",
+      );
+    expect(crypto.createHash("sha256").update(cleanupCloseoutAttestation)
+      .digest("hex")).toBe(
+        "2f7f0204e4962f33d87d59b09da5a81ee76d343b8d23a48947547ed1099f0a64",
       );
     expect(workflow).not.toContain(
       "Legacy staged deletion operations are disabled pending provider-verifiable deletion semantics.",

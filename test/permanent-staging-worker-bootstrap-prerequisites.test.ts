@@ -1,16 +1,20 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import {
   runStagingWorkerBootstrapPrerequisiteVerifier,
+  STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA,
   STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
   stagingWorkerBootstrapPrerequisiteInternals,
 } from "../scripts/verify-permanent-staging-worker-bootstrap-prerequisites.js";
 import {
   runPermanentStagingActivationReconciliationProbe,
 } from "../scripts/probe-permanent-staging-automatic-maintenance-activation-reconciliation.js";
+import { canonicalJson as canonicalVenueJson } from
+  "../scripts/import-melbourne-venues.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
 
@@ -23,8 +27,9 @@ const CURRENT_RUN = "9000";
 const PREPARE_RUN = "1000";
 const QUIESCE_RUN = "2000";
 const FENCED_DEPLOYMENT_RUN = "3000";
+const VENUE_DIRECTORY_RUN = "3500";
 const POLICY_SHA =
-  "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27";
+  "3178685f32c9d49e359d089d5afd7c2d8c62860899a0cc70b25760155c8d7236";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
@@ -35,6 +40,8 @@ const QUIESCE_VERIFICATION_FILE =
   "/private/quiesce/prerequisites-verification.json";
 const FENCED_DEPLOYMENT_FILE =
   "/private/fenced/deployment-receipt.json";
+const VENUE_DIRECTORY_FILE =
+  "/private/venue-directory/venue-directory-terminal.json";
 const ACTIVATE_FILE =
   "/private/activate/automatic-maintenance-worker-fence-terminal.json";
 const ACTIVATE_VERIFICATION_FILE =
@@ -48,6 +55,8 @@ const RESTORE_VERIFICATION_FILE =
   "/private/restore/prerequisites-verification.json";
 const ACTIVE_DEPLOYMENT_FILE = "/private/active/deployment-receipt.json";
 const OUTPUT_FILE = "/private/output/prerequisites-verification.json";
+const MAXIMUM_EVIDENCE_BYTES = 1024 * 1024;
+const MAXIMUM_VENUE_EVIDENCE_BYTES = 32 * 1024 * 1024;
 
 const WORKER_CHECKS = {
   policyExact: true,
@@ -363,6 +372,313 @@ function fencedDeploymentReceipt(): string {
   });
 }
 
+const VENUE_DATABASE_CONTRACT = {
+  migrationVersion: "20260901032339",
+  migrationPath:
+    "supabase/migrations/20260901032339_validate_external_venue_directory_constraints.sql",
+  migrationSha256:
+    "5068c2a678813e57fde83b29d3cb5e438ce9070705f246827b7ee8e2a70ee96c",
+  migrationBytes: 161,
+  validatedConstraints: [
+    "venues_australian_postcode_check",
+    "venues_business_status_check",
+  ],
+} as const;
+
+function venueCanonical(value: unknown): string {
+  return `${canonicalVenueJson(value)}\n`;
+}
+
+function venueLocalMigrationVersions(): string[] {
+  return fs.readdirSync("supabase/migrations")
+    .filter((name) => /^[0-9]+_[a-z0-9_]+\.sql$/.test(name))
+    .sort()
+    .map((name) => name.slice(0, name.indexOf("_")));
+}
+
+function venueConstraints(validated: boolean) {
+  return [{
+    name: "venues_australian_postcode_check",
+    type: "c",
+    validated,
+    definition: "CHECK ((postcode ~ '^[0-9]{4}$'::text))",
+  }, {
+    name: "venues_business_status_check",
+    type: "c",
+    validated,
+    definition:
+      "CHECK ((business_status = ANY (ARRAY['OPERATIONAL', 'CLOSED_TEMPORARILY', 'CLOSED_PERMANENTLY', 'FUTURE_OPENING'])))",
+  }];
+}
+
+function venueTargetLedger() {
+  return {
+    version: "20260901032339",
+    name: "validate_external_venue_directory_constraints",
+    statements: [
+      "alter table public.venues\n  validate constraint venues_business_status_check",
+      "alter table public.venues\n  validate constraint venues_australian_postcode_check",
+    ],
+  };
+}
+
+function venueDryRun(pendingFilenames: readonly string[]) {
+  return {
+    pendingFilenames,
+    stdoutSha256: sha(`dry-run-stdout-${pendingFilenames.join(",")}`),
+    stderrSha256: sha(`dry-run-stderr-${pendingFilenames.join(",")}`),
+  };
+}
+
+function venueDirectoryEvidence(
+  mode: "first_run" | "steady_state" = "steady_state",
+  venueNameBytes = 0,
+): Map<string, string> {
+  const local = venueLocalMigrationVersions();
+  const before = mode === "first_run" ? local.slice(0, -1) : local;
+  const pending = mode === "first_run"
+    ? ["20260901032339_validate_external_venue_directory_constraints.sql"]
+    : [];
+  const transitions = venueNameBytes === 0 ? [] : [{
+    ordinal: 1,
+    operation: "insert",
+    identity: {
+      venueId: null,
+      googlePlaceId: "large-venue-place-id",
+      normalizedNameAddressSha256: sha("large-venue-name-address"),
+    },
+    expectedBefore: null,
+    desiredAfter: {
+      google_place_id: "large-venue-place-id",
+      name: "v".repeat(venueNameBytes),
+      address: "1 Test Street",
+      suburb: "Melbourne",
+      state: "VIC",
+      postcode: "3000",
+      phone: "+61390000000",
+      website: "https://example.test/large-venue",
+      latitude: -37.8136,
+      longitude: 144.9631,
+      business_status: "OPERATIONAL",
+      last_checked_at: "2026-08-21T01:06:14.000Z",
+      directory_eligible: true,
+      source: "google_places",
+    },
+  }];
+  const transitionCount = transitions.length;
+  const planWithoutSha = {
+    schemaVersion: "pintpath-permanent-staging-venue-import-plan/v1",
+    candidateSha: CANDIDATE,
+    supabaseProjectRef: "bbfibbadwjxzrcdncavy",
+    databaseContract: VENUE_DATABASE_CONTRACT,
+    operation: "directory-discovery-and-status-refresh",
+    startedAt: "2026-08-21T01:06:12.000Z",
+    completedAt: "2026-08-21T01:06:15.000Z",
+    checkedAt: "2026-08-21T01:06:14.000Z",
+    inputSnapshot: {
+      rowCount: transitionCount === 0 ? 2 : 0,
+      sha256: sha("venue-directory-input"),
+    },
+    collection: {
+      discoveryCellAttemptedCount: 0,
+      discoveryCellSuccessfulCount: 0,
+      discoveryCellFailureCount: 0,
+      discoveryQueryAttemptedCount: 0,
+      discoveryQuerySuccessfulCount: 0,
+      discoveryQueryFailureCount: 0,
+      existingPlaceIdAttemptedCount: 0,
+      existingPlaceIdSuccessfulCount: 0,
+      existingPlaceIdFailureCount: 0,
+      existingPlaceIdSatisfiedByDiscoveryCount: 0,
+      existingRowMissingPlaceIdCount: 0,
+      quarantinedVenueCount: 0,
+    },
+    projected: {
+      insertCount: transitionCount,
+      updateCount: 0,
+      exclusionCount: 0,
+      totalTransitionCount: transitionCount,
+    },
+    transitions,
+  };
+  const planSha256 = sha(canonicalVenueJson(planWithoutSha));
+  const planSource = venueCanonical({ ...planWithoutSha, planSha256 });
+  const importTerminalSource = venueCanonical({
+    schemaVersion: "pintpath-permanent-staging-venue-import-terminal/v1",
+    status: "succeeded",
+    outcome: "applied",
+    candidateSha: CANDIDATE,
+    supabaseProjectRef: "bbfibbadwjxzrcdncavy",
+    databaseContract: VENUE_DATABASE_CONTRACT,
+    planSha256,
+    startedAt: "2026-08-21T01:06:20.000Z",
+    completedAt: "2026-08-21T01:06:30.000Z",
+    preflightSnapshot: {
+      rowCount: transitionCount === 0 ? 2 : 0,
+      sha256: sha("venue-directory-input"),
+    },
+    finalSnapshot: {
+      rowCount: transitionCount === 0 ? 2 : transitionCount,
+      sha256: sha("venue-directory-final"),
+    },
+    attemptedWriteCount: transitionCount,
+    successfulWriteCount: transitionCount,
+    insertedCount: transitionCount,
+    updatedCount: 0,
+    excludedCount: 0,
+    partialWrite: false,
+    samePlanRetryAllowed: false,
+    failure: null,
+  });
+  const commonObservation = {
+    candidateSha: CANDIDATE,
+    supabaseProjectRef: "bbfibbadwjxzrcdncavy",
+    databaseContract: VENUE_DATABASE_CONTRACT,
+    migrationMode: mode,
+    localMigrationVersions: local,
+    remoteMigrationVersions: before,
+    constraints: venueConstraints(mode === "steady_state"),
+    violationCounts: { businessStatus: 0, postcode: 0 },
+    targetLedger: mode === "steady_state" ? venueTargetLedger() : null,
+    dryRun: venueDryRun(pending),
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  };
+  const preflightSource = venueCanonical({
+    schemaVersion: "pintpath-permanent-staging-venue-constraint-preflight/v1",
+    ...commonObservation,
+    preflightVerifier: {
+      path: "scripts/ci/supabase-venue-directory-preflight-verify.sql",
+      sha256:
+        "9ae8804c03f7f515beaa80b6fb99ae886f200712482c21ae5eae11f9709b8c6a",
+      bytes: 6189,
+      passed: true,
+    },
+    checkedAt: "2026-08-21T01:06:11.000Z",
+    checks: {
+      structureExact: true,
+      zeroViolations: true,
+      constraintLedgerStateExact: true,
+      migrationFileExact: true,
+      pendingSetExact: true,
+      remoteLedgerExact: true,
+    },
+  });
+  const prewriteSource = venueCanonical({
+    schemaVersion: "pintpath-permanent-staging-venue-migration-prewrite/v1",
+    ...commonObservation,
+    planSha256,
+    checkedAt: "2026-08-21T01:06:16.000Z",
+    checks: {
+      planSealed: true,
+      repositoryMainExact: true,
+      stateUnchanged: true,
+      migrationFileExact: true,
+      pendingSetExact: true,
+      remoteLedgerExact: true,
+    },
+  });
+  const migrationApplySource = venueCanonical({
+    schemaVersion: "pintpath-permanent-staging-venue-migration-apply/v1",
+    candidateSha: CANDIDATE,
+    supabaseProjectRef: "bbfibbadwjxzrcdncavy",
+    databaseContract: VENUE_DATABASE_CONTRACT,
+    migrationMode: mode,
+    planSha256,
+    startedAt: "2026-08-21T01:06:17.000Z",
+    completedAt: "2026-08-21T01:06:18.000Z",
+    writeAttempts: mode === "first_run" ? 1 : 0,
+    acknowledgement: mode === "first_run" ? "received" : "not_attempted",
+    exitCode: mode === "first_run" ? 0 : null,
+    command: [
+      "supabase", "db", "push", "--linked", "--password", "<redacted>", "--yes",
+    ],
+    cliStdoutSha256: mode === "first_run" ? sha("migration-stdout") : null,
+    cliStderrSha256: mode === "first_run" ? sha("migration-stderr") : null,
+    samePlanRetryAllowed: false,
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  });
+  const postflightSource = venueCanonical({
+    schemaVersion: "pintpath-permanent-staging-venue-constraint-postflight/v1",
+    candidateSha: CANDIDATE,
+    supabaseProjectRef: "bbfibbadwjxzrcdncavy",
+    databaseContract: VENUE_DATABASE_CONTRACT,
+    migrationMode: mode,
+    planSha256,
+    migrationApplySha256: sha(migrationApplySource),
+    localMigrationVersions: local,
+    remoteMigrationVersions: local,
+    constraints: venueConstraints(true),
+    violationCounts: { businessStatus: 0, postcode: 0 },
+    targetLedger: venueTargetLedger(),
+    dryRun: venueDryRun([]),
+    strictVerifier: {
+      path: "scripts/ci/supabase-venue-directory-schema-verify.sql",
+      sha256:
+        "e2a6d9cd5a5dcbc14c6932d2ac4c44f81814249c0338e9eb54e72a1a985a6130",
+      bytes: 3956,
+      passed: true,
+    },
+    checkedAt: "2026-08-21T01:06:19.000Z",
+    checks: {
+      migrationLedgerRecorded: true,
+      noPendingMigrations: true,
+      constraintsValidated: true,
+      strictSchemaExact: true,
+      migrationFileExact: true,
+      remoteLedgerExact: true,
+      zeroViolations: true,
+    },
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  });
+  const boundarySource = venueCanonical({
+    schemaVersion: "pintpath-permanent-staging-venue-directory-terminal/v1",
+    status: "succeeded",
+    outcome: "applied_and_validated",
+    candidateSha: CANDIDATE,
+    supabaseProjectRef: "bbfibbadwjxzrcdncavy",
+    databaseContract: VENUE_DATABASE_CONTRACT,
+    migrationMode: mode,
+    planSha256,
+    importTerminalSha256: sha(importTerminalSource),
+    constraintPreflightSha256: sha(preflightSource),
+    migrationPrewriteSha256: sha(prewriteSource),
+    migrationApplySha256: sha(migrationApplySource),
+    constraintPostflightSha256: sha(postflightSource),
+    startedAt: planWithoutSha.startedAt,
+    completedAt: "2026-08-21T01:06:35.000Z",
+    migrationWriteAttempts: mode === "first_run" ? 1 : 0,
+    samePlanRetryAllowed: false,
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+    checks: {
+      importApplied: true,
+      preflightStructureExact: true,
+      preflightZeroViolations: true,
+      preflightConstraintLedgerStateExact: true,
+      pendingSetPreflightExact: true,
+      pendingSetPrewriteExact: true,
+      migrationMutationExact: true,
+      migrationLedgerRecorded: true,
+      noPendingMigrationsPostflight: true,
+      constraintsValidatedPostflight: true,
+    },
+    failure: null,
+  });
+  const root = path.dirname(VENUE_DIRECTORY_FILE);
+  return new Map([
+    [path.join(root, "venue-directory-plan.json"), planSource],
+    [path.join(root, "venue-import-terminal.json"), importTerminalSource],
+    [path.join(root, "constraint-preflight.json"), preflightSource],
+    [path.join(root, "migration-prewrite.json"), prewriteSource],
+    [path.join(root, "migration-apply.json"), migrationApplySource],
+    [path.join(root, "constraint-postflight.json"), postflightSource],
+    [VENUE_DIRECTORY_FILE, boundarySource],
+  ]);
+}
+
 function activeDeploymentReceipt(): string {
   const value = JSON.parse(fencedDeploymentReceipt());
   value.startedAt = "2026-08-21T01:11:10.000Z";
@@ -393,6 +709,7 @@ function prerequisiteEvidenceFixture(input: {
     | "prepare"
     | "quiesce"
     | "fenced-deployment"
+    | "venue-directory"
     | "restore";
   readonly workflowPath: string;
   readonly runId: string;
@@ -405,8 +722,8 @@ function prerequisiteEvidenceFixture(input: {
   readonly outcome: string;
   readonly sourceSha: string;
   readonly deploymentIdSha256: string;
-  readonly replicasBefore: number;
-  readonly replicasAfter: number;
+  readonly replicasBefore: number | null;
+  readonly replicasAfter: number | null;
   readonly prerequisiteVerificationSha256: string | null;
 }) {
   return {
@@ -438,7 +755,7 @@ function prerequisiteEvidenceFixture(input: {
 
 function priorQuiesceVerification(): string {
   return canonical({
-    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2",
+    schemaVersion: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA,
     policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
     operation: "quiesce",
     bootstrapPath: "healthy-legacy",
@@ -489,10 +806,18 @@ function priorActivationVerification(
     ["prepare", ".github/workflows/configure-automatic-maintenance-worker-fence.yml"],
     ["quiesce", ".github/workflows/bootstrap-permanent-staging-worker-fence.yml"],
     ["fenced-deployment", ".github/workflows/deploy-permanent-staging.yml"],
+    ["venue-directory", ".github/workflows/permanent-staging-venue-directory.yml"],
     ["restore", ".github/workflows/bootstrap-permanent-staging-worker-fence.yml"],
   ] as const;
+  const chronology = [
+    ["2026-08-21T01:01:00.000Z", "2026-08-21T01:02:00.000Z"],
+    ["2026-08-21T01:03:00.000Z", "2026-08-21T01:04:00.000Z"],
+    ["2026-08-21T01:05:00.000Z", "2026-08-21T01:06:00.000Z"],
+    ["2026-08-21T01:06:10.000Z", "2026-08-21T01:06:40.000Z"],
+    ["2026-08-21T01:07:00.000Z", "2026-08-21T01:08:00.000Z"],
+  ] as const;
   return canonical({
-    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v2",
+    schemaVersion: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA,
     policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
     operation,
     bootstrapPath: "healthy-legacy",
@@ -516,14 +841,16 @@ function priorActivationVerification(
           ? `pintpath-permanent-staging-worker-bootstrap-quiesce-${CANDIDATE}`
           : kind === "fenced-deployment"
             ? `pintpath-permanent-staging-fenced-deployment-${CANDIDATE}`
-            : `pintpath-permanent-staging-worker-bootstrap-restore-${CANDIDATE}`;
+            : kind === "venue-directory"
+              ? `pintpath-permanent-staging-venue-directory-${CANDIDATE}`
+              : `pintpath-permanent-staging-worker-bootstrap-restore-${CANDIDATE}`;
       const scale = kind === "quiesce" || kind === "restore";
       return prerequisiteEvidenceFixture({
         kind,
         workflowPath,
         runId,
-        startedAt: `2026-08-21T01:0${index * 2 + 1}:00.000Z`,
-        completedAt: `2026-08-21T01:0${index * 2 + 2}:00.000Z`,
+        startedAt: chronology[index]![0],
+        completedAt: chronology[index]![1],
         artifactName,
         artifactId: String(7_001 + index),
         filename: kind === "prepare"
@@ -532,29 +859,41 @@ function priorActivationVerification(
             ? "quiesce-staging-zero-receipt.json"
             : kind === "fenced-deployment"
               ? "deployment-receipt.json"
-              : "bootstrap-staging-one-receipt.json",
+              : kind === "venue-directory"
+                ? "venue-directory-terminal.json"
+                : "bootstrap-staging-one-receipt.json",
         schemaVersion: kind === "prepare"
           ? "pintpath-automatic-maintenance-worker-fence-terminal/v1"
           : scale
             ? "pintpath-permanent-staging-scale-operation/v2"
-            : "pintpath-railway-application-deployment-executor/v5",
+            : kind === "venue-directory"
+              ? "pintpath-permanent-staging-venue-directory-terminal/v1"
+              : "pintpath-railway-application-deployment-executor/v5",
         outcome: kind === "prepare"
           ? "prepared"
           : kind === "fenced-deployment"
             ? "deployed"
-            : "scaled",
+            : kind === "venue-directory"
+              ? "applied_and_validated"
+              : "scaled",
         sourceSha: kind === "prepare" || kind === "quiesce"
           ? OLD_SOURCE
           : CANDIDATE,
-        deploymentIdSha256: sha(`activation-prerequisite-deployment-${kind}`),
+        deploymentIdSha256: kind === "venue-directory"
+          ? sha("venue-directory-plan")
+          : sha(`activation-prerequisite-deployment-${kind}`),
         replicasBefore: kind === "quiesce"
           ? 1
           : kind === "fenced-deployment" || kind === "restore"
             ? 0
-            : 1,
+            : kind === "venue-directory"
+              ? null
+              : 1,
         replicasAfter: kind === "quiesce" || kind === "fenced-deployment"
           ? 0
-          : 1,
+          : kind === "venue-directory"
+            ? null
+            : 1,
         prerequisiteVerificationSha256: scale
           ? sha(`prior-verification-${kind}`)
           : null,
@@ -732,15 +1071,25 @@ function json(value: unknown): Response {
   });
 }
 
-function harness(operation: "quiesce" | "restore", options: {
+function harness(operation: "quiesce" | "restore" | "reconcile-restore", options: {
   readonly laterPrepare?: boolean;
   readonly artifactDigestInvalid?: boolean;
+  readonly venueRunWrong?: boolean;
+  readonly venueChronologyInvalid?: boolean;
+  readonly venueReceiptTampered?: boolean;
+  readonly venueCompanionMissing?: boolean;
+  readonly venueStaticOnly?: boolean;
+  readonly venueInternalChronologyInvalid?: boolean;
+  readonly venueMigrationMode?: "first_run" | "steady_state";
+  readonly venueNameBytes?: number;
 } = {}) {
   const bootstrapWorkflow =
     ".github/workflows/bootstrap-permanent-staging-worker-fence.yml";
   const workerWorkflow =
     ".github/workflows/configure-automatic-maintenance-worker-fence.yml";
   const deploymentWorkflow = ".github/workflows/deploy-permanent-staging.yml";
+  const venueDirectoryWorkflow =
+    ".github/workflows/permanent-staging-venue-directory.yml";
   const prepare = githubRun({
     id: PREPARE_RUN,
     workflow: workerWorkflow,
@@ -769,6 +1118,21 @@ function harness(operation: "quiesce" | "restore", options: {
     started: "2026-08-21T01:05:00.000Z",
     completed: "2026-08-21T01:06:00.000Z",
   });
+  const venueDirectory = githubRun({
+    id: VENUE_DIRECTORY_RUN,
+    workflow: venueDirectoryWorkflow,
+    name: "Apply and prove permanent-staging venue directory",
+    title: options.venueRunWrong
+      ? `Wrong venue directory producer | ${CANDIDATE}`
+      : `Permanent staging venue directory | apply-refresh-validate | ${CANDIDATE}`,
+    created: options.venueChronologyInvalid
+      ? "2026-08-21T01:05:20.000Z"
+      : "2026-08-21T01:06:01.000Z",
+    started: options.venueChronologyInvalid
+      ? "2026-08-21T01:05:30.000Z"
+      : "2026-08-21T01:06:10.000Z",
+    completed: "2026-08-21T01:06:40.000Z",
+  });
   const current = githubRun({
     id: CURRENT_RUN,
     workflow: bootstrapWorkflow,
@@ -791,6 +1155,8 @@ function harness(operation: "quiesce" | "restore", options: {
     `pintpath-permanent-staging-worker-bootstrap-quiesce-${CANDIDATE}`;
   const fencedArtifactName =
     `pintpath-permanent-staging-fenced-deployment-${CANDIDATE}`;
+  const venueDirectoryArtifactName =
+    `pintpath-permanent-staging-venue-directory-${CANDIDATE}`;
   const laterPrepare = {
     ...prepare,
     id: 1001,
@@ -808,6 +1174,9 @@ function harness(operation: "quiesce" | "restore", options: {
     if (url.endsWith(`/actions/runs/${QUIESCE_RUN}`)) return json(quiesce);
     if (url.endsWith(`/actions/runs/${FENCED_DEPLOYMENT_RUN}`)) {
       return json(fencedDeployment);
+    }
+    if (url.endsWith(`/actions/runs/${VENUE_DIRECTORY_RUN}`)) {
+      return json(venueDirectory);
     }
     if (url.endsWith("/git/ref/heads/main")) {
       return json({ ref: "refs/heads/main", object: { type: "commit", sha: CANDIDATE } });
@@ -865,6 +1234,16 @@ function harness(operation: "quiesce" | "restore", options: {
         artifacts: [artifact(fencedArtifactName, FENCED_DEPLOYMENT_RUN, "7003")],
       });
     }
+    if (url.includes(`/actions/runs/${VENUE_DIRECTORY_RUN}/artifacts?`)) {
+      return json({
+        total_count: 1,
+        artifacts: [artifact(
+          venueDirectoryArtifactName,
+          VENUE_DIRECTORY_RUN,
+          "7004",
+        )],
+      });
+    }
     if (url.includes("/actions/workflows/configure-automatic-maintenance-worker-fence.yml/runs?")) {
       const runs = options.laterPrepare ? [prepare, laterPrepare] : [prepare];
       return json({ total_count: runs.length, workflow_runs: runs });
@@ -875,13 +1254,58 @@ function harness(operation: "quiesce" | "restore", options: {
     if (url.includes("/actions/workflows/deploy-permanent-staging.yml/runs?")) {
       return json({ total_count: 1, workflow_runs: [fencedDeployment] });
     }
+    if (url.includes("/actions/workflows/permanent-staging-venue-directory.yml/runs?")) {
+      return json({ total_count: 1, workflow_runs: [venueDirectory] });
+    }
     return new Response("not found", { status: 404 });
   }) as unknown as typeof fetch;
+  const venueEvidence = venueDirectoryEvidence(
+    options.venueMigrationMode,
+    options.venueNameBytes,
+  );
+  if (options.venueReceiptTampered) {
+    const filename = path.join(
+      path.dirname(VENUE_DIRECTORY_FILE),
+      "migration-prewrite.json",
+    );
+    const value = JSON.parse(venueEvidence.get(filename)!);
+    value.checkedAt = "2026-08-21T01:06:16.001Z";
+    venueEvidence.set(filename, venueCanonical(value));
+  }
+  if (options.venueCompanionMissing) {
+    venueEvidence.delete(path.join(
+      path.dirname(VENUE_DIRECTORY_FILE),
+      "constraint-postflight.json",
+    ));
+  }
+  if (options.venueStaticOnly) {
+    venueEvidence.set(
+      VENUE_DIRECTORY_FILE,
+      venueEvidence.get(path.join(
+        path.dirname(VENUE_DIRECTORY_FILE),
+        "venue-import-terminal.json",
+      ))!,
+    );
+  }
+  if (options.venueInternalChronologyInvalid) {
+    const importFilename = path.join(
+      path.dirname(VENUE_DIRECTORY_FILE),
+      "venue-import-terminal.json",
+    );
+    const importValue = JSON.parse(venueEvidence.get(importFilename)!);
+    importValue.startedAt = "2026-08-21T01:06:18.500Z";
+    const importSource = venueCanonical(importValue);
+    venueEvidence.set(importFilename, importSource);
+    const boundary = JSON.parse(venueEvidence.get(VENUE_DIRECTORY_FILE)!);
+    boundary.importTerminalSha256 = sha(importSource);
+    venueEvidence.set(VENUE_DIRECTORY_FILE, venueCanonical(boundary));
+  }
   const files = new Map<string, string>([
     [PREPARE_FILE, prepareReceipt()],
     [QUIESCE_FILE, scaleReceipt()],
     [QUIESCE_VERIFICATION_FILE, priorQuiesceVerification()],
     [FENCED_DEPLOYMENT_FILE, fencedDeploymentReceipt()],
+    ...venueEvidence,
   ]);
   const argv = [
     "--operation", operation,
@@ -891,17 +1315,20 @@ function harness(operation: "quiesce" | "restore", options: {
     "--prepare-terminal-file", PREPARE_FILE,
     "--output", OUTPUT_FILE,
   ];
-  if (operation === "restore") {
+  if (operation === "restore" || operation === "reconcile-restore") {
     argv.push(
       "--quiesce-run-id", QUIESCE_RUN,
       "--quiesce-receipt-file", QUIESCE_FILE,
       "--quiesce-verification-file", QUIESCE_VERIFICATION_FILE,
       "--fenced-deployment-run-id", FENCED_DEPLOYMENT_RUN,
       "--fenced-deployment-receipt-file", FENCED_DEPLOYMENT_FILE,
+      "--venue-directory-run-id", VENUE_DIRECTORY_RUN,
+      "--venue-directory-receipt-file", VENUE_DIRECTORY_FILE,
     );
   }
   const output: string[] = [];
   const written = new Map<string, string>();
+  const readMaximumBytes = new Map<string, number>();
   return {
     argv,
     env: {
@@ -920,7 +1347,17 @@ function harness(operation: "quiesce" | "restore", options: {
         "permanent-staging-scale-evidence",
     },
     fetchImpl,
-    readPrivateFile: (filename: string) => Buffer.from(files.get(filename) ?? ""),
+    readPrivateFile: (
+      filename: string,
+      maximumBytes = MAXIMUM_EVIDENCE_BYTES,
+    ) => {
+      readMaximumBytes.set(filename, maximumBytes);
+      const bytes = Buffer.from(files.get(filename) ?? "");
+      if (bytes.byteLength < 1 || bytes.byteLength > maximumBytes) {
+        throw new Error("private evidence outside allowed byte boundary");
+      }
+      return bytes;
+    },
     writeEvidence: (filename: string, source: string) => written.set(filename, source),
     writeOutput: (source: string) => output.push(source),
     now: () => new Date(operation === "quiesce"
@@ -928,6 +1365,8 @@ function harness(operation: "quiesce" | "restore", options: {
       : "2026-08-21T01:07:30.000Z"),
     output,
     written,
+    files,
+    readMaximumBytes,
   };
 }
 
@@ -942,6 +1381,32 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
     expect(stagingWorkerBootstrapPrerequisiteInternals.validatePolicies(
       process.cwd(),
     )).toBeUndefined();
+  });
+
+  it("keeps the operator runbook aligned with the venue-gated v4 chain", () => {
+    const runbook = fs.readFileSync(
+      "docs/permanent-staging-worker-bootstrap.md",
+      "utf8",
+    );
+    const fenced = runbook.indexOf("3. Run the `fenced` phase");
+    const venue = runbook.indexOf("4. Run `apply-refresh-validate`");
+    const restore = runbook.indexOf("5. Run `restore`");
+    const activate = runbook.indexOf("6. Run staging `activate`");
+
+    expect(fenced).toBeGreaterThanOrEqual(0);
+    expect(venue).toBeGreaterThan(fenced);
+    expect(restore).toBeGreaterThan(venue);
+    expect(activate).toBeGreaterThan(restore);
+    expect(runbook).toContain("`venue_directory_run_id`");
+    expect(runbook).toContain("`--venue-directory-run-id`");
+    expect(runbook).toContain("`--venue-directory-receipt-file`");
+    expect(runbook).toContain(STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA);
+    expect(runbook).toContain(
+      STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
+    );
+    expect(runbook).toContain(
+      "ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd",
+    );
   });
 
   it("verifies prepare before authorizing the exact old-source quiescence", async () => {
@@ -974,7 +1439,7 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       String(request).startsWith("https://api.github.com/"))).toBe(true);
   });
 
-  it("verifies prepare, quiescence, and fenced zero-replica deployment before restore", async () => {
+  it("verifies prepare, quiescence, fenced deployment, and venue apply before restore", async () => {
     const fixture = harness("restore");
     const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
 
@@ -982,7 +1447,7 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
     const receipt = JSON.parse(fixture.written.get(OUTPUT_FILE)!);
     expect(receipt.expectedDeploymentSha).toBe(CANDIDATE);
     expect(receipt.prerequisites.map((item: { kind: string }) => item.kind))
-      .toEqual(["prepare", "quiesce", "fenced-deployment"]);
+      .toEqual(["prepare", "quiesce", "fenced-deployment", "venue-directory"]);
     expect(receipt.prerequisites[1]).toMatchObject({
       receipt: {
         outcome: "scaled",
@@ -999,6 +1464,200 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
         replicasAfter: 0,
       },
     });
+    expect(receipt.prerequisites[3]).toMatchObject({
+      workflowPath: ".github/workflows/permanent-staging-venue-directory.yml",
+      runId: VENUE_DIRECTORY_RUN,
+      artifactName:
+        `pintpath-permanent-staging-venue-directory-${CANDIDATE}`,
+      receipt: {
+        filename: "venue-directory-terminal.json",
+        schemaVersion:
+          "pintpath-permanent-staging-venue-directory-terminal/v1",
+        outcome: "applied_and_validated",
+        candidateSha: CANDIDATE,
+        sourceSha: CANDIDATE,
+        deploymentIdSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        replicasBefore: null,
+        replicasAfter: null,
+      },
+    });
+  });
+
+  it("accepts a venue plan above the generic evidence cap under the dedicated venue cap", async () => {
+    const fixture = harness("restore", {
+      venueNameBytes: MAXIMUM_EVIDENCE_BYTES,
+    });
+    const planFilename = path.join(
+      path.dirname(VENUE_DIRECTORY_FILE),
+      "venue-directory-plan.json",
+    );
+    expect(Buffer.byteLength(fixture.files.get(planFilename)!))
+      .toBeGreaterThan(MAXIMUM_EVIDENCE_BYTES);
+    expect(Buffer.byteLength(fixture.files.get(planFilename)!))
+      .toBeLessThanOrEqual(MAXIMUM_VENUE_EVIDENCE_BYTES);
+
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code, fixture.output.at(-1)).toBe(0);
+    expect(fixture.readMaximumBytes.get(planFilename))
+      .toBe(MAXIMUM_VENUE_EVIDENCE_BYTES);
+    expect(fixture.readMaximumBytes.get(PREPARE_FILE))
+      .toBe(MAXIMUM_EVIDENCE_BYTES);
+  });
+
+  it("preserves the generic cap for non-venue private evidence", async () => {
+    const fixture = harness("quiesce");
+    fixture.files.set(PREPARE_FILE, "x".repeat(MAXIMUM_EVIDENCE_BYTES + 1));
+
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(fixture.readMaximumBytes.get(PREPARE_FILE))
+      .toBe(MAXIMUM_EVIDENCE_BYTES);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "receipt_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
+  });
+
+  it("rejects venue private evidence above the dedicated venue cap", async () => {
+    const fixture = harness("restore");
+    const planFilename = path.join(
+      path.dirname(VENUE_DIRECTORY_FILE),
+      "venue-directory-plan.json",
+    );
+    fixture.files.set(
+      planFilename,
+      "x".repeat(MAXIMUM_VENUE_EVIDENCE_BYTES + 1),
+    );
+
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(fixture.readMaximumBytes.get(planFilename))
+      .toBe(MAXIMUM_VENUE_EVIDENCE_BYTES);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "receipt_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
+  });
+
+  it("accepts the same exact venue producer before read-only reconcile-restore", async () => {
+    const fixture = harness("reconcile-restore");
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code, fixture.output.at(-1)).toBe(0);
+    const receipt = JSON.parse(fixture.written.get(OUTPUT_FILE)!);
+    expect(receipt).toMatchObject({
+      operation: "reconcile-restore",
+      candidateSha: CANDIDATE,
+    });
+    expect(receipt.prerequisites.map((item: { kind: string }) => item.kind))
+      .toEqual(["prepare", "quiesce", "fenced-deployment", "venue-directory"]);
+  });
+
+  it("accepts first-run venue migration proof with one exact ledger write", async () => {
+    const fixture = harness("restore", { venueMigrationMode: "first_run" });
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code, fixture.output.at(-1)).toBe(0);
+  });
+
+  it("rejects restore when venue-directory evidence is missing", async () => {
+    const fixture = harness("restore");
+    const venueIndex = fixture.argv.indexOf("--venue-directory-run-id");
+    fixture.argv.splice(venueIndex, 4);
+
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+    expect(code).toBe(1);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "arguments_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects a wrong venue-directory producer authority", async () => {
+    const fixture = harness("restore", { venueRunWrong: true });
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "run_authority_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
+  });
+
+  it("rejects venue-directory evidence that overlaps fenced deployment chronology", async () => {
+    const fixture = harness("restore", { venueChronologyInvalid: true });
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "chronology_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
+  });
+
+  it("rejects a tampered venue-directory companion despite a valid terminal", async () => {
+    const fixture = harness("restore", { venueReceiptTampered: true });
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "receipt_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
+  });
+
+  it("rejects venue-directory proof with a missing dynamic companion", async () => {
+    const fixture = harness("restore", { venueCompanionMissing: true });
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "receipt_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
+  });
+
+  it("rejects the old static-only importer receipt as venue boundary proof", async () => {
+    const fixture = harness("restore", { venueStaticOnly: true });
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "receipt_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
+  });
+
+  it("rejects internally rehashed venue evidence with impossible chronology", async () => {
+    const fixture = harness("restore", { venueInternalChronologyInvalid: true });
+    const code = await runStagingWorkerBootstrapPrerequisiteVerifier(fixture);
+
+    expect(code).toBe(1);
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      failureCode: "receipt_invalid",
+      productionContactAttempted: false,
+    });
+    expect(fixture.written.size).toBe(0);
   });
 
   it("rejects an invalid GitHub artifact digest before any provider contact", async () => {
@@ -1184,6 +1843,10 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       "--fenced-deployment-run-id", FENCED_DEPLOYMENT_RUN,
       "--fenced-deployment-receipt-file", FENCED_DEPLOYMENT_FILE,
     ];
+    const venueDirectory = [
+      "--venue-directory-run-id", VENUE_DIRECTORY_RUN,
+      "--venue-directory-receipt-file", VENUE_DIRECTORY_FILE,
+    ];
     const restore = [
       "--restore-run-id", "4000",
       "--restore-receipt-file", RESTORE_FILE,
@@ -1221,8 +1884,14 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
           ...coldPrepare,
           ...coldQuiesce,
           ...fencedDeployment,
+          ...venueDirectory,
         ],
-        kinds: ["cold-prepare", "cold-quiesce", "fenced-deployment"],
+        kinds: [
+          "cold-prepare",
+          "cold-quiesce",
+          "fenced-deployment",
+          "venue-directory",
+        ],
       },
       {
         operation: "activate",
@@ -1230,12 +1899,14 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
           ...coldPrepare,
           ...coldQuiesce,
           ...fencedDeployment,
+          ...venueDirectory,
           ...restore,
         ],
         kinds: [
           "cold-prepare",
           "cold-quiesce",
           "fenced-deployment",
+          "venue-directory",
           "restore",
         ],
       },
@@ -1275,6 +1946,8 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       "--quiesce-verification-file", QUIESCE_VERIFICATION_FILE,
       "--fenced-deployment-run-id", FENCED_DEPLOYMENT_RUN,
       "--fenced-deployment-receipt-file", FENCED_DEPLOYMENT_FILE,
+      "--venue-directory-run-id", VENUE_DIRECTORY_RUN,
+      "--venue-directory-receipt-file", VENUE_DIRECTORY_FILE,
       "--restore-run-id", "4000",
       "--restore-receipt-file",
       "/private/restore/bootstrap-staging-one-receipt.json",
@@ -1286,6 +1959,7 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       "prepare",
       "quiesce",
       "fenced-deployment",
+      "venue-directory",
       "restore",
     ]);
     expect(() => stagingWorkerBootstrapPrerequisiteInternals.parseArguments([

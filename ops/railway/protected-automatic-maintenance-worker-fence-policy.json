@@ -26,9 +26,7 @@
   ],
   "operations": {
     "prepare": {
-      "allowedTargets": [
-        "permanent-staging"
-      ],
+      "allowedTargets": ["permanent-staging"],
       "enabledValue": "false",
       "skipDeploys": true,
       "deploymentMustRemainUnchanged": true,
@@ -37,9 +35,7 @@
       "nextRequiredProof": "EXACT_SCALE_1_TO_0_QUIESCENCE_PROOF"
     },
     "fence": {
-      "allowedTargets": [
-        "production"
-      ],
+      "allowedTargets": ["production"],
       "enabledValue": "false",
       "skipDeploys": true,
       "soleHealthyCandidateRequiredBeforeWrite": false,
@@ -49,10 +45,7 @@
       "oldRuntimeSafetyPrerequisite": "EXTERNAL_SQLITE_DETACHED_FROM_POSTGRES_PROOF"
     },
     "activate": {
-      "allowedTargets": [
-        "permanent-staging",
-        "production"
-      ],
+      "allowedTargets": ["permanent-staging", "production"],
       "enabledValue": "true",
       "skipDeploys": false,
       "soleHealthyCandidateRequiredBeforeWrite": true,
@@ -63,9 +56,7 @@
       "runtimeProofRequired": true
     },
     "reconcileActivate": {
-      "allowedTargets": [
-        "permanent-staging"
-      ],
+      "allowedTargets": ["permanent-staging"],
       "providerMutationAllowed": false,
       "variableMutationCredentialAllowed": false,
       "priorAmbiguousActivateRunRequired": true,
@@ -85,6 +76,7 @@
         "prepare_run_id",
         "quiesce_run_id",
         "fenced_deployment_run_id",
+        "venue_directory_run_id",
         "restore_run_id"
       ],
       "productionRoleLimitRunInputAllowed": false,
@@ -109,11 +101,7 @@
       "liveDeploymentMustMatchRolePrerequisiteDeployment": true,
       "runtimeAutomaticMaintenanceEnabledBeforeWrite": false,
       "runtimeAutomaticMaintenanceCandidateBoundBeforeWrite": true,
-      "runtimeRoutesRequiredBeforeWrite": [
-        "/health",
-        "/startup",
-        "/ready"
-      ]
+      "runtimeRoutesRequiredBeforeWrite": ["/health", "/startup", "/ready"]
     },
     "nonActivationPrerequisiteRunInputsAllowed": false
   },
@@ -136,11 +124,7 @@
     "otherProviderChangesAllowed": false
   },
   "runtimeProof": {
-    "routes": [
-      "/health",
-      "/startup",
-      "/ready"
-    ],
+    "routes": ["/health", "/startup", "/ready"],
     "maximumObservationSeconds": 900,
     "pollIntervalSeconds": 10,
     "sameCandidateRequired": true,

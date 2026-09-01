@@ -72,7 +72,7 @@
     },
     "workerFence": {
       "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
-      "workflowSha256": "c7cb09c187a92693141db89eb0b3313d4ca8c0d1bc85179a2cf1d39ffc5f17f8",
+      "workflowSha256": "7e65af353b9793d63e3719edf4f95306ea153a0bba5aee69681dbb3e64d5ba76",
       "workflowId": "configure-automatic-maintenance-worker-fence.yml",
       "workflowName": "Configure candidate-bound automatic-maintenance worker fence",
       "runNameTemplate": "Automatic maintenance worker fence | production | fence | <candidate-sha>",
@@ -81,9 +81,9 @@
       "receiptArchivePath": "automatic-maintenance-worker-fence-terminal.json",
       "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1",
       "policyPath": "ops/railway/protected-automatic-maintenance-worker-fence-policy.json",
-      "policySha256": "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27",
+      "policySha256": "3178685f32c9d49e359d089d5afd7c2d8c62860899a0cc70b25760155c8d7236",
       "producerPath": "scripts/execute-protected-automatic-maintenance-worker-fence.ts",
-      "producerSha256": "d0383dc06a1fde24cd8a744d0d2b5ca024e1458596427d8e54ac10b7a8e8a0a9",
+      "producerSha256": "07eda07c41674731ddf470686b2a4d89f573b887782d1d3c9c0b956718315b22",
       "requiredTarget": "production",
       "requiredOperation": "fence",
       "requiredOutcome": "fenced",
@@ -209,10 +209,7 @@
   "writeContract": {
     "statement": "ALTER ROLE privacy_maintenance_login CONNECTION LIMIT 8",
     "transactionRequired": true,
-    "transactionAdvisoryLock": [
-      1885957733,
-      2
-    ],
+    "transactionAdvisoryLock": [1885957733, 2],
     "maximumAlterRoleStatements": 1,
     "maximumWriteAttempts": 1,
     "automaticRetryAllowed": false,
