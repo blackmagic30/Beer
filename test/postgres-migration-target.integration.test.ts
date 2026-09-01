@@ -52,6 +52,10 @@ import {
 } from "../scripts/postgres-reviewed-price-promotion.js";
 import { createDatabase } from "../src/db/database.js";
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import {
+  POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT,
+  POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
+} from "../src/db/postgres-migration-live-schema.js";
 import { writePostgresMigrationLedgerAuthority } from "../src/db/postgres-migration-ledger.js";
 import {
   createPostgresMigrationPlan,
@@ -1455,7 +1459,30 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       tableCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables,
       columnCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns,
       foreignKeyCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.foreignKeys,
+      liveSchemaObjectCount: POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT,
+      liveSchemaSha256: POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
     });
+    const publicAccountIndexes = await targetAdmin!.query<{
+      constraintBackedIndexPresent: boolean;
+      redundantIndexAbsent: boolean;
+    }>(`
+      SELECT
+        EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_constraint AS constraint_definition
+          WHERE constraint_definition.conrelid = 'pintpath_app.accounts'::pg_catalog.regclass
+            AND constraint_definition.conname = 'accounts_public_account_id_key'
+            AND constraint_definition.contype = 'u'
+            AND constraint_definition.conindid =
+              'pintpath_app.accounts_public_account_id_key'::pg_catalog.regclass
+        ) AS "constraintBackedIndexPresent",
+        pg_catalog.to_regclass('pintpath_app.idx_accounts_public_account') IS NULL
+          AS "redundantIndexAbsent"
+    `);
+    expect(publicAccountIndexes.rows).toEqual([{
+      constraintBackedIndexPresent: true,
+      redundantIndexAbsent: true,
+    }]);
 
     const input = await createMigrationInput(temporaryRoot, bindingUrl, inspection.targetIdentitySha256);
     const applyReceipt = await applyPostgresMigrationWithConnection(

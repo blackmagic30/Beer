@@ -13,8 +13,8 @@ export const POSTGRES_MIGRATION_LIVE_SCHEMA_VERSION = 1 as const;
 // src/db/postgres-schema.sql. Update only through the reviewed regeneration
 // command after examining the canonical object diff.
 export const POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256 =
-  "42b345c6898df93ee0836f67832e881d56c6bf9b61601a34b9964da2896e0e02" as const;
-export const POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT = 1556 as const;
+  "861ae08b4486b491cb54aa081edda8ed1ebbf2c35cfb0cd792400c4e6d519c88" as const;
+export const POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT = 1555 as const;
 
 export interface PostgresMigrationLiveSchemaConnection {
   query<Row extends QueryResultRow = QueryResultRow>(
