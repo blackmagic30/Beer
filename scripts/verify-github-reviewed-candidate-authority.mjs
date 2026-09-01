@@ -19,6 +19,7 @@ const MAX_CANDIDATE_AGE_HOURS = 7 * 24;
 const MAX_CANDIDATE_AGE_MS = MAX_CANDIDATE_AGE_HOURS * 60 * 60 * 1000;
 const RECOVERY_GRACE_HOURS = 24;
 const RECOVERY_GRACE_MS = RECOVERY_GRACE_HOURS * 60 * 60 * 1000;
+const PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_SETTLEMENT_MS = 60_000;
 const NONTERMINAL_RUN_STATUSES = new Set([
   "in_progress",
   "pending",
@@ -51,6 +52,18 @@ const WORKER_FENCE_WORKFLOW_ID =
 const DEPLOYMENT_WORKFLOW_PATH =
   ".github/workflows/deploy-permanent-staging.yml";
 const DEPLOYMENT_WORKFLOW_ID = "deploy-permanent-staging.yml";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION =
+  "production-postgres-source-repin";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION =
+  "production-postgres-source-repin-reconcile";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_PATH =
+  ".github/workflows/repin-production-postgres-source.yml";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_ID =
+  "repin-production-postgres-source.yml";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_JOB_NAME =
+  "Lock or reconcile the protected production Postgres source";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_WRITE_STEP =
+  "Apply or reconcile the exact production Postgres source lock";
 const PROVIDER_JOB_NAME = "One protected variable mutation plan";
 const PROVIDER_WRITE_STEP =
   "Execute one reviewed protected Railway mutation plan";
@@ -244,6 +257,8 @@ function parseArguments(argv) {
   const coldQuiesceReconcile =
     operation === "cold-recovery-reconcile-quiesce";
   const runnerLossReconcile = RUNNER_LOSS_RECOVERY_OPERATIONS.has(operation);
+  const productionPostgresSourceRepinReconcile =
+    operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION;
   const offsiteCleanupRecovery =
     OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(operation);
   const incidentMaskedCleanupCancel =
@@ -254,6 +269,8 @@ function parseArguments(argv) {
     !SHA.test(candidateSha) ||
     (!cutover &&
       !runtimeVariable &&
+      operation !== PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION &&
+      operation !== PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION &&
       !PROVIDER_OPERATIONS.has(operation) &&
       !COLD_RECOVERY_OPERATIONS.has(operation) &&
       !RUNNER_LOSS_RECOVERY_OPERATIONS.has(operation)) ||
@@ -267,7 +284,8 @@ function parseArguments(argv) {
         cutoverMode !== null
       : replacementRunId !== null || deploymentRunId !== null || cutoverMode !== null) ||
     (offsiteCleanupRecovery || incidentMaskedCleanupCancel ||
-      offsiteCleanupSuccessorCloseout || runnerLossReconcile
+      offsiteCleanupSuccessorCloseout || runnerLossReconcile ||
+      productionPostgresSourceRepinReconcile
       ? !RUN_ID.test(priorRunId ?? "")
       : priorRunId !== null) ||
     (coldQuiesceReconcile
@@ -321,6 +339,27 @@ function operationConfiguration(
       jobName: null,
       writeStep: null,
       priorSkippedWriteAllowed: false,
+    });
+  }
+  if (operation === PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION) {
+    return Object.freeze({
+      workflowPath: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_PATH,
+      workflowId: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_ID,
+      displayTitle: `Production Postgres source lock | apply | ${candidateSha}`,
+      jobName: PRODUCTION_POSTGRES_SOURCE_REPIN_JOB_NAME,
+      writeStep: PRODUCTION_POSTGRES_SOURCE_REPIN_WRITE_STEP,
+      priorSkippedWriteAllowed: true,
+    });
+  }
+  if (operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION) {
+    return Object.freeze({
+      workflowPath: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_PATH,
+      workflowId: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_ID,
+      displayTitle:
+        `Production Postgres source lock | reconcile | ${candidateSha}`,
+      jobName: PRODUCTION_POSTGRES_SOURCE_REPIN_JOB_NAME,
+      writeStep: PRODUCTION_POSTGRES_SOURCE_REPIN_WRITE_STEP,
+      priorSkippedWriteAllowed: true,
     });
   }
   if (COLD_RECOVERY_OPERATIONS.has(operation)) {
@@ -663,6 +702,193 @@ async function verifyOperationHistory(input, configuration, currentRun) {
     safePriorRunIds.push(String(run.id));
   }
   return safePriorRunIds.sort((left, right) => Number(left) - Number(right));
+}
+
+async function verifyProductionPostgresSourceRepinReconciliationHistory(
+  input,
+  currentRun,
+) {
+  const applyConfiguration = operationConfiguration(
+    PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+    input.candidateSha,
+    null,
+    null,
+  );
+  const reconcileConfiguration = operationConfiguration(
+    PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+    input.candidateSha,
+    null,
+    null,
+  );
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_ID,
+  });
+  const candidateRuns = history.filter((run) =>
+    run?.head_sha === input.candidateSha);
+  if (new Set(candidateRuns.map((run) => run?.id)).size !== candidateRuns.length) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  let currentSeen = false;
+  let selectedOriginal = null;
+  const safePriorSkippedWriteRunIds = [];
+  for (const observed of candidateRuns) {
+    const configuration = observed?.display_title ===
+        applyConfiguration.displayTitle
+      ? applyConfiguration
+      : observed?.display_title === reconcileConfiguration.displayTitle
+      ? reconcileConfiguration
+      : null;
+    if (configuration === null) {
+      fail("production_postgres_source_repin_reconciliation_history_invalid");
+    }
+    const run = validateRunIdentity(observed, {
+      runId: observed?.id,
+      candidateSha: input.candidateSha,
+      workflowPath: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_PATH,
+      displayTitle: configuration.displayTitle,
+      failureCode:
+        "production_postgres_source_repin_reconciliation_history_invalid",
+    });
+    if (run.createdAt < input.mergedAtMs ||
+      run.createdAt > input.currentStartedAtMs) {
+      fail("production_postgres_source_repin_reconciliation_history_invalid");
+    }
+    if (run.id === currentRun.id) {
+      if (configuration !== reconcileConfiguration || currentSeen ||
+        !isNonterminalRun(run) ||
+        run.created_at !== currentRun.created_at ||
+        run.run_started_at !== currentRun.run_started_at) {
+        fail("production_postgres_source_repin_reconciliation_history_invalid");
+      }
+      currentSeen = true;
+      continue;
+    }
+    const disposition = await priorRunWriteDisposition(
+      input,
+      run,
+      configuration,
+    );
+    if (configuration === applyConfiguration &&
+      String(run.id) === input.priorRunId) {
+      if (selectedOriginal !== null || disposition !== "may-have-written") {
+        fail("production_postgres_source_repin_reconciliation_history_invalid");
+      }
+      selectedOriginal = Object.freeze({
+        run,
+        updatedAt: run.updatedAt,
+      });
+      continue;
+    }
+    if (disposition !== "skipped") {
+      fail("production_postgres_source_repin_reconciliation_history_invalid");
+    }
+    safePriorSkippedWriteRunIds.push(String(run.id));
+  }
+  if (!currentSeen || selectedOriginal === null ||
+    selectedOriginal.updatedAt >= currentRun.startedAt ||
+    currentRun.startedAt - selectedOriginal.updatedAt <
+      PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_SETTLEMENT_MS ||
+    currentRun.startedAt - selectedOriginal.updatedAt > RECOVERY_GRACE_MS) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  for (const skippedRunId of safePriorSkippedWriteRunIds) {
+    const skipped = candidateRuns.find((run) => String(run?.id) === skippedRunId);
+    if (parseTimestamp(
+      skipped?.updated_at,
+      "production_postgres_source_repin_reconciliation_history_invalid",
+    ) >= currentRun.startedAt) {
+      fail("production_postgres_source_repin_reconciliation_history_invalid");
+    }
+  }
+  return Object.freeze({
+    safePriorSkippedWriteRunIds: safePriorSkippedWriteRunIds.sort(
+      (left, right) => Number(left) - Number(right),
+    ),
+    safePriorReadOnlyRunIds: [],
+    reconciledPriorAmbiguousDisableRunId: null,
+    priorAmbiguousProductionPostgresSourceRepinRunId: input.priorRunId,
+    exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
+    secondProductionPostgresRemediationDismissPreventedExact: true,
+    runnerLossRecoveryOriginalRunCompletedAt: new Date(
+      selectedOriginal.updatedAt,
+    ).toISOString(),
+    runnerLossRecoverySettlementSeconds:
+      PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_SETTLEMENT_MS / 1_000,
+    runnerLossRecoveryGraceHours: RECOVERY_GRACE_HOURS,
+    runnerLossRecoveryWithinGraceExact: true,
+  });
+}
+
+async function verifyProductionPostgresSourceRepinApplyHistory(
+  input,
+  currentRun,
+) {
+  const applyConfiguration = operationConfiguration(
+    PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+    input.candidateSha,
+    null,
+    null,
+  );
+  const reconcileConfiguration = operationConfiguration(
+    PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+    input.candidateSha,
+    null,
+    null,
+  );
+  const history = await listWorkflowHistory({
+    ...input,
+    workflowId: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_ID,
+  });
+  const candidateRuns = history.filter((run) =>
+    run?.head_sha === input.candidateSha);
+  if (new Set(candidateRuns.map((run) => run?.id)).size !== candidateRuns.length) {
+    fail("history_invalid");
+  }
+  let currentSeen = false;
+  const safePriorSkippedWriteRunIds = [];
+  for (const observed of candidateRuns) {
+    const configuration = observed?.display_title === applyConfiguration.displayTitle
+      ? applyConfiguration
+      : observed?.display_title === reconcileConfiguration.displayTitle
+      ? reconcileConfiguration
+      : null;
+    if (configuration === null) fail("history_invalid");
+    const run = validateRunIdentity(observed, {
+      runId: observed?.id,
+      candidateSha: input.candidateSha,
+      workflowPath: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_PATH,
+      displayTitle: configuration.displayTitle,
+      failureCode: "history_invalid",
+    });
+    if (run.createdAt < input.mergedAtMs ||
+      run.createdAt > input.currentStartedAtMs) {
+      fail("history_invalid");
+    }
+    if (run.id === currentRun.id) {
+      if (configuration !== applyConfiguration || currentSeen ||
+        !isNonterminalRun(run) ||
+        run.created_at !== currentRun.created_at ||
+        run.run_started_at !== currentRun.run_started_at) {
+        fail("history_invalid");
+      }
+      currentSeen = true;
+      continue;
+    }
+    if (await priorRunWriteDisposition(input, run, configuration) !== "skipped") {
+      fail("prior_write_ambiguous");
+    }
+    if (run.updatedAt >= currentRun.startedAt) fail("history_invalid");
+    safePriorSkippedWriteRunIds.push(String(run.id));
+  }
+  if (!currentSeen) fail("history_invalid");
+  return Object.freeze({
+    safePriorSkippedWriteRunIds: safePriorSkippedWriteRunIds.sort(
+      (left, right) => Number(left) - Number(right),
+    ),
+    safePriorReadOnlyRunIds: [],
+    reconciledPriorAmbiguousDisableRunId: null,
+  });
 }
 
 function coldConfigurationForTitle(displayTitle, candidateSha) {
@@ -2187,6 +2413,8 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
   if (
     currentRun.createdAt < mergedAtMs ||
     (!RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation) &&
+      input.operation !==
+        PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION &&
       !OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(input.operation) &&
       currentRun.startedAt - mergedAtMs > MAX_CANDIDATE_AGE_MS)
   ) fail("candidate_history_expired");
@@ -2223,6 +2451,16 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       : null;
   const operationHistory = input.operation === "supabase-legacy-key-cutover"
     ? await verifyCutoverOperationHistory(historyInput, configuration, currentRun)
+    : input.operation === PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION
+    ? await verifyProductionPostgresSourceRepinApplyHistory(
+      historyInput,
+      currentRun,
+    )
+    : input.operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION
+    ? await verifyProductionPostgresSourceRepinReconciliationHistory({
+      ...historyInput,
+      priorRunId: input.priorRunId,
+    }, currentRun)
     : input.operation === "cold-recovery-reconcile-quiesce"
     ? await verifyColdQuiesceReconciliationHistory({
       ...historyInput,
@@ -2393,6 +2631,26 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
           operationHistory.exactPriorStagingActivateCandidateRunBound,
         secondStagingActivateVariableWritePreventedExact:
           operationHistory.secondStagingActivateVariableWritePreventedExact,
+      }
+      : {}),
+    ...(input.operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION
+      ? {
+        priorAmbiguousProductionPostgresSourceRepinRunId:
+          operationHistory.priorAmbiguousProductionPostgresSourceRepinRunId,
+        exactPriorProductionPostgresSourceRepinCandidateRunBound:
+          operationHistory
+            .exactPriorProductionPostgresSourceRepinCandidateRunBound,
+        secondProductionPostgresRemediationDismissPreventedExact:
+          operationHistory
+            .secondProductionPostgresRemediationDismissPreventedExact,
+        runnerLossRecoveryOriginalRunCompletedAt:
+          operationHistory.runnerLossRecoveryOriginalRunCompletedAt,
+        runnerLossRecoverySettlementSeconds:
+          operationHistory.runnerLossRecoverySettlementSeconds,
+        runnerLossRecoveryGraceHours:
+          operationHistory.runnerLossRecoveryGraceHours,
+        runnerLossRecoveryWithinGraceExact:
+          operationHistory.runnerLossRecoveryWithinGraceExact,
       }
       : {}),
     ...(RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation)

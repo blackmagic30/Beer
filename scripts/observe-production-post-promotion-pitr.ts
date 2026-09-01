@@ -250,7 +250,7 @@ function verifyClosedRouteForCapture(
     || value.operation !== "close"
     || value.candidateSha !== candidateSha
     || value.githubEnvironment !== "production-route-close"
-    || value.policySha256 !== "79639878b7938386421fdfb0258aec732f93fadd1e2823b697882de568076d0a"
+    || value.policySha256 !== "848504e20c7c67edcc25c69f3be6c7168047faeb5e3a997344a69aba74bdcae1"
     || value.domain !== "pintpath.au"
     || value.targetPort !== null
     || value.deploymentIdSha256 !== deploymentIdSha256

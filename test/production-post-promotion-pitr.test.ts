@@ -140,7 +140,7 @@ describe("production post-promotion PITR observer", () => {
       startedAt: "2026-08-14T00:02:30.000Z",
       completedAt: "2026-08-14T00:03:00.000Z",
       githubEnvironment: "production-route-close",
-      policySha256: "79639878b7938386421fdfb0258aec732f93fadd1e2823b697882de568076d0a",
+      policySha256: "848504e20c7c67edcc25c69f3be6c7168047faeb5e3a997344a69aba74bdcae1",
       projectIdSha256: "8".repeat(64),
       environmentIdSha256: "9".repeat(64),
       serviceIdSha256: "a".repeat(64),

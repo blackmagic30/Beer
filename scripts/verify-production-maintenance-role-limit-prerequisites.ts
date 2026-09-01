@@ -32,7 +32,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "e64c1d5e09f1d17288de72caa7b79392eef95f127924dbec2538e4bba25cb3db" as const;
+  "b9cf711daa228c4fc8b1a289320b64cf4c32de2c92003f99afd4e5e7b66b5317" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -58,11 +58,11 @@ const FENCE_WORKFLOW_SHA256 =
 const FENCE_POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json" as const;
 const FENCE_POLICY_SHA256 =
-  "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461" as const;
+  "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27" as const;
 const FENCE_PRODUCER_PATH =
   "scripts/execute-protected-automatic-maintenance-worker-fence.ts" as const;
 const FENCE_PRODUCER_SHA256 =
-  "ae45432738c30b21217619946664dbf4726736371743e78279ff47d1463ca660" as const;
+  "d0383dc06a1fde24cd8a744d0d2b5ca024e1458596427d8e54ac10b7a8e8a0a9" as const;
 const FENCE_TERMINAL_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-terminal/v1" as const;
 const DEPLOYMENT_WORKFLOW = ".github/workflows/deploy-production.yml" as const;
@@ -90,11 +90,11 @@ const PRODUCTION_SCALE_PRODUCER_SHA256 =
 const DEPLOYMENT_POLICY_PATH =
   "ops/railway/production-app-deployment-policy.json" as const;
 const DEPLOYMENT_POLICY_SHA256 =
-  "73bebbbbd71f2bc297c486b6dcb137b5a224fc0dcd944d5e30e1ce5a321cfa43" as const;
+  "e6fbbafd835a038e9bf7e803466b2519d56ffb1d4b4cc5d55a946dcda7a9c487" as const;
 const DEPLOYMENT_PRODUCER_PATH =
   "scripts/lib/permanent-staging-app-deployment-executor.ts" as const;
 const DEPLOYMENT_PRODUCER_SHA256 =
-  "35dea44121eb5ac9de6a89602838fd54394574005ed11594284d75d1f7f77492" as const;
+  "051b0fb59e359985a69fda2761d330ed07d86372ba2efefc72d90cff6bd6943d" as const;
 const DEPLOYMENT_RECEIPT_SCHEMA =
   "pintpath-railway-application-deployment-executor/v5" as const;
 const GITHUB_API_ORIGIN = "https://api.github.com" as const;

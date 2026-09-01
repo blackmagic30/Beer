@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-railway-production-staging-mutation-policy/v1",
+  "schemaVersion": "pintpath-railway-production-staging-mutation-policy/v2",
   "policyId": "pintpath-production-staging-mutation-boundary",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
   "environments": [
@@ -15,10 +15,16 @@
   "productionPostgres": {
     "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
     "serviceId": "4a2334a1-71e7-4745-970a-2cd95da10169",
-    "deploymentId": "ccb513ee-c850-49a1-a205-9ab8ab7534cc",
-    "snapshotId": "f2a08518-2336-4837-a77b-11852cf2a8ab",
-    "sourceImage": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:6008e0827c45d3fa6e6eba2140a8932598fe10cea7f0fafafc4af9ab1715e8ad",
-    "imageDigest": "sha256:6008e0827c45d3fa6e6eba2140a8932598fe10cea7f0fafafc4af9ab1715e8ad",
+    "deploymentId": "f31d3dbd-a997-42cf-b3a8-970b8c337841",
+    "snapshotId": "03f6d2ff-e78e-42a5-a78f-216a4a1f498d",
+    "deploymentRecordedSourceImage": "ghcr.io/railwayapp-templates/postgres-ssl:17",
+    "desiredServiceSourceImage": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+    "imageDigest": "sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+    "requiredAutoUpdates": {
+      "type": "disabled",
+      "schedule": null,
+      "tagMode": null
+    },
     "requireImmutableSource": true
   }
 }

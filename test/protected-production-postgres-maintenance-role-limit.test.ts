@@ -66,9 +66,9 @@ function prerequisitesVerification(candidateSha = CANDIDATE): string {
       artifactDigest: `sha256:${hash}`,
       artifactSizeBytes: 4096,
       policySha256:
-        "03cc4fb1b8321ccf86453bfa8fdc631afdbccec02a8ef6391ddef00fd16dd461",
+        "685539a691f290e2d870d69de452fe1fcbd0635065276e9a51b51864aaf29d27",
       producerSha256:
-        "ae45432738c30b21217619946664dbf4726736371743e78279ff47d1463ca660",
+        "d0383dc06a1fde24cd8a744d0d2b5ca024e1458596427d8e54ac10b7a8e8a0a9",
       producerWorkflowSha256:
         "c7cb09c187a92693141db89eb0b3313d4ca8c0d1bc85179a2cf1d39ffc5f17f8",
       terminalSha256: hash,
@@ -86,9 +86,9 @@ function prerequisitesVerification(candidateSha = CANDIDATE): string {
       artifactDigest: `sha256:${hash}`,
       artifactSizeBytes: 8192,
       policySha256:
-        "73bebbbbd71f2bc297c486b6dcb137b5a224fc0dcd944d5e30e1ce5a321cfa43",
+        "e6fbbafd835a038e9bf7e803466b2519d56ffb1d4b4cc5d55a946dcda7a9c487",
       producerSha256:
-        "35dea44121eb5ac9de6a89602838fd54394574005ed11594284d75d1f7f77492",
+        "051b0fb59e359985a69fda2761d330ed07d86372ba2efefc72d90cff6bd6943d",
       producerWorkflowSha256:
         "414163692a141fc581498e8faf9d810f441710c0312df4a814ceabd36f03b511",
       receiptSha256: hash,

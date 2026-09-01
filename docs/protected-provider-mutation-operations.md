@@ -28,6 +28,17 @@ to Railway:
 - `.github/workflows/permanent-staging-postgres-build-canary.yml` uploads the
   exact no-ingress Postgres build canary once and accepts only its canonical,
   credential-free, stopped build-only receipt.
+- `.github/workflows/repin-production-postgres-source.yml` is the standalone
+  recovery for the one policy-pinned production Postgres drift from the
+  approved digest-only reference to Railway's mutable `:17` tag with its
+  vulnerability updater armed. It may dismiss that exact armed notice once,
+  then stage and commit only the reviewed same-digest source lock plus canonical
+  disabled auto-update metadata with deploys skipped. It must not change the
+  running deployment, instance, snapshot, volume, replica count, or region.
+  The approved digest is the already-running PostgreSQL 17.11 deployment,
+  which fixes CVE-2026-15741. The armed notice's `currentVersion: 17.10` is the
+  pre-remediation baseline retained in Railway metadata, not the desired or
+  running version; the checked-in policy enforces that distinction.
 - `.github/workflows/close-production-route.yml` deletes the one canonical
   `pintpath.au` custom domain after the exact candidate has deployed, passed
   same-SHA smoke, and converged to two replicas.
@@ -60,6 +71,12 @@ history by candidate+operation. The legacy guard's exact title is
 and keys complete candidate history by the selected read-only reconcile or
 write-capable disable mode. Runtime-variable history is keyed by candidate+target+variable
 through `Configure runtime variable | <target> | <variable> | <candidate>`.
+The production Postgres source recovery is a separate apply/reconcile pair
+bound to `Production Postgres source lock | apply | <candidate>` or
+`Production Postgres source lock | reconcile | <candidate>`, its standalone
+workflow, job, and exact deploy-suppressed writer step. It is not
+permanent-staging provider history and does not consume staging deployment
+lifecycle evidence.
 Every guard requires a complete authenticated Actions history from the
 associated PR's `merged_at` through the authenticated current `run_started_at`,
 not its `created_at`, because retained queued runs can start out of creation
@@ -84,6 +101,43 @@ and job reruns are never a substitute for a new guarded dispatch. The general
 runtime-variable guard is stricter: any prior run for the exact
 candidate+target+variable blocks redispatch, even if its write step was skipped;
 use a newly reviewed candidate instead.
+
+The permanent-staging provider workflow therefore runs the immutable Railway
+production/staging boundary as a separate fail-closed step before it stages any
+provider value. The tracked executor repeats the same boundary immediately
+before its one write. A failure in the earlier read-only step leaves the exact
+named write step `skipped` and preserves the documented same-candidate dispatch
+rule. Once the named write step starts, any failure remains ambiguous at the
+GitHub authority layer even when an executor log says `attempts: 0`; repair the
+pre-write cause and use a newly reviewed candidate instead of weakening the
+history guard.
+
+The production Postgres source recovery applies the same separation more
+strictly: a metadata-only recovery preflight must first prove that every
+canonical boundary check is true except `sourceImageExact` and
+`autoUpdatesDisabledExact`, and `sourceReferenceImmutable`, and that the live
+service source, config ETag, armed vulnerability notice, schedule, deployment,
+instance, snapshot, and volume are the exact policy-pinned baseline. The named
+writer step remains skipped on any other apply state. The apply executor repeats
+that proof immediately before dismissing the exact notice once, stages the
+same observed digest together with canonical disabled auto-update metadata,
+double-reads the exact active and selected patch, commits with
+`skipDeploys:true`, and proves the complete runtime identity set unchanged.
+The production and staging metadata tokens must be distinct from a third
+production source-write token.
+
+Do not rerun either GitHub job. A prior same-candidate run permits another
+fresh apply only when GitHub proves every prior apply/reconcile writer was
+skipped. If an apply writer started and its result is ambiguous, wait at least
+60 seconds and dispatch `reconcile` within 24 hours with that exact prior run
+ID and durable intent artifact. Authority accepts exactly one such ambiguous
+apply and rejects any second possibly-writing run. Reconciliation never
+dismisses again: desired state plus an empty patch is read-only success; the
+exact dismissed state plus the exact staged patch permits commit only; the
+exact dismissed state plus an empty patch permits one stage and commit; the
+original armed state plus an empty patch is `not_applied` with no write; every
+other state fails closed. Never retry, roll back, or treat desired state alone
+as success.
 
 Narrow recovery exceptions remain write-safe. A mode-bound read-only
 legacy-key reconciliation may follow exactly one failed, cancelled, or timed-out
@@ -186,7 +240,10 @@ and self-review gates disabled for these operator-dispatched workflows. Authorit
 still requires the exact protected-main candidate, original workflow run,
 environment-scoped credentials, reviewed-candidate history, and the workflow's
 fail-closed preflight and reconciliation. Do not add an Environment approval gate
-unless the repository owner explicitly changes this policy:
+unless the repository owner explicitly changes this policy. The production
+Postgres source-lock environment is the documented exception: enable its final
+independent-review gate immediately before the first production dispatch, after
+ordinary patching is complete.
 
 - `permanent-staging-provider-mutation`
 - `permanent-staging-scale-evidence`
@@ -194,6 +251,7 @@ unless the repository owner explicitly changes this policy:
 - `production-runtime-configuration`
 - `permanent-staging-supabase-legacy-disable`
 - `permanent-staging-postgres-build-canary`
+- `production-postgres-source-repin`
 - `postgres-ha-pitr-permanent-staging`
 - `postgres-ha-pitr-production`
 - `disposable-restore-teardown`
@@ -247,6 +305,14 @@ Additional workflow-only protected secrets are exact and environment-scoped:
   `PINTPATH_SUPABASE_STAGING_NEW_SECRET_KEY`,
   `PINTPATH_SUPABASE_STAGING_OLD_ANON_KEY`, and
   `PINTPATH_SUPABASE_STAGING_OLD_SERVICE_ROLE_KEY`.
+- `production-postgres-source-repin` holds
+  `PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN`,
+  `PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`, and the distinct
+  `PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN`. Before the first
+  production dispatch, restrict it to protected `main`, require the designated
+  independent reviewer, prevent self-review, and disable administrator bypass.
+  Environment approval applies to this production workflow job, not to ordinary
+  repository patches.
 
 The Supabase legacy-cutover environment also holds separate project-scoped
 `PINTPATH_SUPABASE_STAGING_SECRETS_READ_TOKEN` and
@@ -303,10 +369,12 @@ derived digest in evidence. The application then performs cryptographic
 certificate/pin validation and fail-closed owned-file materialization at boot.
 
 The production and staging metadata tokens must be read-only, separately held,
-environment-scoped Railway project tokens. Each mutation token must be a third,
-separately held token scoped only to permanent staging and only to the minimum
-provider capability. The executors verify token project/environment scope and
-reject reused metadata/mutation tokens.
+environment-scoped Railway project tokens. Each staging mutation token must be
+a third, separately held token scoped only to permanent staging and only to the
+minimum provider capability. The production source-lock mutation token must be
+a separate production-environment token used only by that one protected
+environment and workflow. The executors verify token project/environment scope
+and reject reused metadata/mutation tokens.
 
 The two PITR environments each hold these four secrets:
 

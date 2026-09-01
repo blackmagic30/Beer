@@ -262,6 +262,12 @@ jobs:
         if: inputs.operation == 'supabase-key-replacement'
         run: npm run supabase:keys:consumer-compatibility:check
 
+      - name: Fail closed on the Railway boundary before staging protected values
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
       - name: Stage Google Maps API key in private custody
         if: inputs.operation == 'provider-google-maps-api-key'
         env:

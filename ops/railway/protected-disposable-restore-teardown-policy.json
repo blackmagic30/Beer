@@ -19,7 +19,7 @@
   },
   "mutationBoundary": {
     "policyPath": "ops/railway/production-staging-mutation-policy.json",
-    "policySha256": "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed",
+    "policySha256": "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
     "immediatePreflightRequired": true,
     "unconditionalPostflightRequired": true
   },

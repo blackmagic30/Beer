@@ -51,6 +51,20 @@ const STAGING_BOOTSTRAP_PATH =
 const WORKER_FENCE_PATH =
   ".github/workflows/configure-automatic-maintenance-worker-fence.yml";
 const DEPLOYMENT_PATH = ".github/workflows/deploy-permanent-staging.yml";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION =
+  "production-postgres-source-repin";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION =
+  "production-postgres-source-repin-reconcile";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_PATH =
+  ".github/workflows/repin-production-postgres-source.yml";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE =
+  `Production Postgres source lock | apply | ${CANDIDATE}`;
+const PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE =
+  `Production Postgres source lock | reconcile | ${CANDIDATE}`;
+const PRODUCTION_POSTGRES_SOURCE_REPIN_JOB =
+  "Lock or reconcile the protected production Postgres source";
+const PRODUCTION_POSTGRES_SOURCE_REPIN_WRITE_STEP =
+  "Apply or reconcile the exact production Postgres source lock";
 const PROVIDER_OPERATIONS = [
   "provider-google-maps-api-key",
   "provider-google-maps-map-id",
@@ -111,6 +125,12 @@ function workflowRun(input: {
 
 function jobs(run: Run, stepConclusion: string) {
   const cutover = run.path.startsWith(CUTOVER_PATH);
+  const productionPostgresSourceRepin =
+    run.path.startsWith(PRODUCTION_POSTGRES_SOURCE_REPIN_PATH) &&
+    [
+      PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+    ].includes(run.display_title);
   const coldPrepare = run.path.startsWith(COLD_RECOVERY_PATH) &&
     run.display_title ===
       `Permanent staging cold recovery | prepare | ${CANDIDATE}`;
@@ -256,13 +276,17 @@ function jobs(run: Run, stepConclusion: string) {
     jobs: [{
       run_id: run.id,
       run_attempt: 1,
-      name: cutover
+      name: productionPostgresSourceRepin
+        ? PRODUCTION_POSTGRES_SOURCE_REPIN_JOB
+        : cutover
         ? "Reconcile or disable exact permanent-staging legacy keys"
         : "One protected variable mutation plan",
       status: "completed",
       conclusion: run.conclusion,
       steps: [{
-        name: cutover
+        name: productionPostgresSourceRepin
+          ? PRODUCTION_POSTGRES_SOURCE_REPIN_WRITE_STEP
+          : cutover
           ? "Canary replacement keys and reconcile or disable legacy keys once"
           : "Execute one reviewed protected Railway mutation plan",
         status: "completed",
@@ -288,6 +312,7 @@ function harness(options: {
   coldRecoveryRuns?: Run[];
   bootstrapRuns?: Run[];
   workerRuns?: Run[];
+  productionPostgresSourceRepinRuns?: Run[];
   deploymentRuns?: Run[];
   jobEvidence?: Record<number, unknown>;
   mergedAt?: string;
@@ -317,6 +342,13 @@ function harness(options: {
   const cutover = operation === "supabase-legacy-key-cutover";
   const cutoverMode = options.cutoverMode ?? DISABLE_CUTOVER_MODE;
   const runtime = operation === "runtime-variable";
+  const productionPostgresSourceRepinApply =
+    operation === PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION;
+  const productionPostgresSourceRepinReconcile =
+    operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION;
+  const productionPostgresSourceRepin =
+    productionPostgresSourceRepinApply ||
+    productionPostgresSourceRepinReconcile;
   const coldPrepare = operation === "cold-recovery-prepare";
   const coldPrepareReconcile =
     operation === "cold-recovery-reconcile-prepare";
@@ -332,6 +364,10 @@ function harness(options: {
     ? 600
     : runtime
     ? 650
+    : productionPostgresSourceRepinReconcile
+    ? 661
+    : productionPostgresSourceRepinApply
+    ? 660
     : coldPrepare
     ? 675
     : coldPrepareReconcile
@@ -354,6 +390,8 @@ function harness(options: {
         ? CUTOVER_PATH
         : runtime
         ? RUNTIME_PATH
+        : productionPostgresSourceRepin
+        ? PRODUCTION_POSTGRES_SOURCE_REPIN_PATH
         : coldRecovery
         ? COLD_RECOVERY_PATH
         : restoreReconcile
@@ -365,6 +403,10 @@ function harness(options: {
         ? cutoverTitle(cutoverMode)
         : runtime
         ? `Configure runtime variable | ${target} | ${variableName} | ${CANDIDATE}`
+        : productionPostgresSourceRepinReconcile
+        ? PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE
+        : productionPostgresSourceRepinApply
+        ? PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE
         : coldRecovery
         ? `Permanent staging cold recovery | ${coldPrepare
           ? "prepare"
@@ -416,7 +458,8 @@ function harness(options: {
       displayTitle: title("supabase-key-replacement"),
       createdAt: "2026-08-14T00:45:00.000Z",
     })]
-    : runtime || coldRecovery || restoreReconcile || activateReconcile
+    : runtime || productionPostgresSourceRepin || coldRecovery ||
+        restoreReconcile || activateReconcile
     ? []
     : cleanupCloseout
     ? [
@@ -428,6 +471,20 @@ function harness(options: {
     : [current]);
   const cutoverRuns = options.cutoverRuns ?? (cutover ? [current] : []);
   const runtimeRuns = options.runtimeRuns ?? (runtime ? [current] : []);
+  const ambiguousProductionPostgresSourceRepin = workflowRun({
+    id: 659,
+    path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+    displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+    status: "completed",
+    conclusion: "failure",
+    createdAt: "2026-08-14T01:00:00.000Z",
+    updatedAt: "2026-08-14T01:59:00.000Z",
+  });
+  const productionPostgresSourceRepinRuns =
+    options.productionPostgresSourceRepinRuns ??
+      (productionPostgresSourceRepinReconcile
+        ? [ambiguousProductionPostgresSourceRepin, current]
+        : productionPostgresSourceRepinApply ? [current] : []);
   const selectedPrepare = workflowRun({
     id: 675,
     path: COLD_RECOVERY_PATH,
@@ -773,6 +830,14 @@ function harness(options: {
         workflow_runs: runtimeRuns,
       });
     }
+    if (url.includes(
+      "/actions/workflows/repin-production-postgres-source.yml/runs?",
+    )) {
+      return response({
+        total_count: productionPostgresSourceRepinRuns.length,
+        workflow_runs: productionPostgresSourceRepinRuns,
+      });
+    }
     if (url.includes("/actions/workflows/recover-permanent-staging-cold-zero.yml/runs?")) {
       return response({
         total_count: coldRecoveryRuns.length,
@@ -826,6 +891,9 @@ function harness(options: {
           ? jobs(ambiguousRestore, "cancelled")
           : activateReconcile && runId === ambiguousActivate.id
           ? jobs(ambiguousActivate, "cancelled")
+          : productionPostgresSourceRepinReconcile &&
+              runId === ambiguousProductionPostgresSourceRepin.id
+          ? jobs(ambiguousProductionPostgresSourceRepin, "failure")
           : {
         total_count: 0,
         jobs: [],
@@ -862,6 +930,8 @@ function harness(options: {
         ? options.priorRunId ?? "679"
         : activateReconcile
         ? options.priorRunId ?? "689"
+        : productionPostgresSourceRepinReconcile
+        ? options.priorRunId ?? "659"
         : incident
         ? options.priorRunId ?? String(INCIDENT_PRIOR_RUN_ID)
         : cleanupCloseout
@@ -1855,6 +1925,379 @@ describe("reviewed candidate mutation authority", () => {
       reviewedAuthorityExact: true,
       freshDispatchWriteGuardExact: true,
     });
+  });
+
+  it("binds the production Postgres source re-pin to its standalone reviewed workflow", async () => {
+    const fixture = harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+    });
+    let summary = "";
+    await expect(runGithubReviewedCandidateAuthority([
+      "--candidate-sha",
+      CANDIDATE,
+      "--operation",
+      PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+    ], {
+      env: fixture.env,
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(0);
+    expect(JSON.parse(summary)).toMatchObject({
+      ok: true,
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      workflowPath: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      workflowRunId: "660",
+      workflowRunAttempt: 1,
+      safePriorSkippedWriteRunIds: [],
+      reviewedAuthorityExact: true,
+      freshDispatchWriteGuardExact: true,
+    });
+    expect(JSON.parse(summary)).not.toHaveProperty("stagingLifecycleSealed");
+    expect(fixture.fetchImpl.mock.calls.some(([url]) =>
+      String(url).includes("/actions/workflows/deploy-permanent-staging.yml/runs?"),
+    )).toBe(false);
+  });
+
+  it("binds production Postgres source reconciliation to one exact ambiguous apply after settlement", async () => {
+    const fixture = harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+    });
+    await expect(fixture.verify()).resolves.toMatchObject({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      workflowPath: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      workflowRunId: "661",
+      workflowRunAttempt: 1,
+      safePriorSkippedWriteRunIds: [],
+      priorAmbiguousProductionPostgresSourceRepinRunId: "659",
+      exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
+      secondProductionPostgresRemediationDismissPreventedExact: true,
+      runnerLossRecoveryOriginalRunCompletedAt:
+        "2026-08-14T01:59:00.000Z",
+      runnerLossRecoverySettlementSeconds: 60,
+      runnerLossRecoveryGraceHours: 24,
+      runnerLossRecoveryWithinGraceExact: true,
+      reviewedAuthorityExact: true,
+      freshDispatchWriteGuardExact: true,
+    });
+  });
+
+  it("requires the production Postgres reconciliation CLI to bind a prior run", async () => {
+    const fixture = harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+    });
+    let summary = "";
+    await expect(runGithubReviewedCandidateAuthority([
+      "--candidate-sha", CANDIDATE,
+      "--operation", PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      "--prior-run-id", "659",
+    ], {
+      env: fixture.env,
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(0);
+    expect(JSON.parse(summary)).toMatchObject({
+      ok: true,
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      workflowRunId: "661",
+      priorAmbiguousProductionPostgresSourceRepinRunId: "659",
+      runnerLossRecoverySettlementSeconds: 60,
+      runnerLossRecoveryGraceHours: 24,
+    });
+
+    summary = "";
+    await expect(runGithubReviewedCandidateAuthority([
+      "--candidate-sha", CANDIDATE,
+      "--operation", PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+    ], {
+      env: fixture.env,
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(1);
+    expect(JSON.parse(summary)).toMatchObject({
+      ok: false,
+      failureCode: "github_reviewed_candidate_authority_arguments_invalid",
+    });
+
+    const applyFixture = harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+    });
+    summary = "";
+    await expect(runGithubReviewedCandidateAuthority([
+      "--candidate-sha", CANDIDATE,
+      "--operation", PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      "--prior-run-id", "659",
+    ], {
+      env: applyFixture.env,
+      fetchImpl: applyFixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(1);
+    expect(JSON.parse(summary)).toMatchObject({
+      ok: false,
+      failureCode: "github_reviewed_candidate_authority_arguments_invalid",
+    });
+  });
+
+  it("rejects a missing, wrong, skipped, successful, or unsettled production Postgres recovery source", async () => {
+    const ambiguous = workflowRun({
+      id: 659,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+      updatedAt: "2026-08-14T01:30:00.000Z",
+    });
+    const current = workflowRun({
+      id: 661,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-14T02:00:00.000Z",
+    });
+    const failureCode =
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid";
+
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorRunId: "658",
+      productionPostgresSourceRepinRuns: [ambiguous, current],
+      jobEvidence: { 659: jobs(ambiguous, "failure") },
+    }).verify()).rejects.toThrow(failureCode);
+
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      productionPostgresSourceRepinRuns: [ambiguous, current],
+      jobEvidence: { 659: jobs(ambiguous, "skipped") },
+    }).verify()).rejects.toThrow(failureCode);
+
+    const successful = {
+      ...ambiguous,
+      conclusion: "success",
+    };
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      productionPostgresSourceRepinRuns: [successful, current],
+    }).verify()).rejects.toThrow(failureCode);
+
+    const unsettled = {
+      ...ambiguous,
+      updated_at: "2026-08-14T01:59:30.000Z",
+    };
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      productionPostgresSourceRepinRuns: [unsettled, current],
+      jobEvidence: { 659: jobs(unsettled, "failure") },
+    }).verify()).rejects.toThrow(failureCode);
+  });
+
+  it("rejects another ambiguous apply or reconcile before production Postgres recovery", async () => {
+    const selected = workflowRun({
+      id: 659,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+      updatedAt: "2026-08-14T01:15:00.000Z",
+    });
+    const current = workflowRun({
+      id: 661,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-14T02:00:00.000Z",
+    });
+    const failureCode =
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid";
+    for (const displayTitle of [
+      PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+    ]) {
+      const secondAmbiguous = workflowRun({
+        id: 658,
+        path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+        displayTitle,
+        conclusion: "cancelled",
+        createdAt: "2026-08-14T01:20:00.000Z",
+        updatedAt: "2026-08-14T01:30:00.000Z",
+      });
+      await expect(harness({
+        operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+        productionPostgresSourceRepinRuns: [
+          selected,
+          secondAmbiguous,
+          current,
+        ],
+        jobEvidence: {
+          659: jobs(selected, "failure"),
+          658: jobs(secondAmbiguous, "cancelled"),
+        },
+      }).verify()).rejects.toThrow(failureCode);
+    }
+  });
+
+  it("rejects production Postgres recovery when the selected writer evidence is substituted", async () => {
+    const prior = workflowRun({
+      id: 659,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+      updatedAt: "2026-08-14T01:30:00.000Z",
+    });
+    const current = workflowRun({
+      id: 661,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-14T02:00:00.000Z",
+    });
+    const exact = jobs(prior, "failure");
+    const wrongStep = {
+      ...exact,
+      jobs: [{
+        ...exact.jobs[0],
+        steps: [{
+          name: "A substituted production write step",
+          status: "completed",
+          conclusion: "failure",
+        }],
+      }],
+    };
+    const wrongJob = {
+      ...exact,
+      jobs: [{
+        ...exact.jobs[0],
+        name: "A substituted production job",
+      }],
+    };
+    for (const evidence of [wrongStep, wrongJob]) {
+      await expect(harness({
+        operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+        productionPostgresSourceRepinRuns: [prior, current],
+        jobEvidence: { 659: evidence },
+      }).verify()).rejects.toThrow(
+        "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+      );
+    }
+  });
+
+  it("allows a production Postgres source re-pin redispatch only after an exact skipped write step", async () => {
+    const prior = workflowRun({
+      id: 659,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      status: "completed",
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+    });
+    const current = workflowRun({
+      id: 660,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-14T02:00:00.000Z",
+    });
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      productionPostgresSourceRepinRuns: [prior, current],
+      jobEvidence: { 659: jobs(prior, "skipped") },
+    }).verify()).resolves.toMatchObject({
+      safePriorSkippedWriteRunIds: ["659"],
+    });
+
+    for (const evidence of [
+      jobs(prior, "failure"),
+      {
+        total_count: 1,
+        jobs: [{
+          ...jobs(prior, "skipped").jobs[0],
+          steps: [{
+            name: "A different write step",
+            status: "completed",
+            conclusion: "skipped",
+          }],
+        }],
+      },
+      {
+        total_count: 1,
+        jobs: [{
+          ...jobs(prior, "skipped").jobs[0],
+          name: "A different production job",
+        }],
+      },
+    ]) {
+      await expect(harness({
+        operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+        productionPostgresSourceRepinRuns: [prior, current],
+        jobEvidence: { 659: evidence },
+      }).verify()).rejects.toThrow(
+        "github_reviewed_candidate_authority_prior_write_ambiguous",
+      );
+    }
+
+    const priorRetry = { ...prior, run_attempt: 2 };
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      productionPostgresSourceRepinRuns: [priorRetry, current],
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_history_invalid",
+    );
+
+    const priorReconcile = workflowRun({
+      id: 658,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "completed",
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:30:00.000Z",
+      updatedAt: "2026-08-14T01:45:00.000Z",
+    });
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      productionPostgresSourceRepinRuns: [priorReconcile, current],
+      jobEvidence: { 658: jobs(priorReconcile, "failure") },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_prior_write_ambiguous",
+    );
+  });
+
+  it("rejects production Postgres source re-pin reruns and non-main authority", async () => {
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      current: { run_attempt: 2 },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_current_run_invalid",
+    );
+
+    const fixture = harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+    });
+    fixture.env.GITHUB_REF = "refs/heads/not-main";
+    await expect(fixture.verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_environment_invalid",
+    );
+
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      current: {
+        path: `${PROVIDER_PATH}@main`,
+        display_title: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_current_run_invalid",
+    );
+
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      current: {
+        display_title: `Production Postgres source re-pin | ${"f".repeat(40)}`,
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_current_run_invalid",
+    );
   });
 
   it("allows only a prior same-operation run proven skipped before the write", async () => {

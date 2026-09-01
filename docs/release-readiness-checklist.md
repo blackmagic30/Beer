@@ -7,13 +7,22 @@ This checklist adapts the external Pint Path test-pack assumptions to this repos
 The repository now has protected, one-operation workflows for application
 source upload, reviewed runtime/provider variables, the permanent-staging
 Supabase cutover and Postgres build canary, bounded staging/production scale,
+the exact deploy-suppressed production Postgres source re-pin recovery,
 Postgres HA/PITR enable-and-verify, exact disposable-restore teardown, the
 four-job post-promotion recovery activation, and the one canonical production
 `pintpath.au` close/open state machine.
 Each is executable only after its own protected approval, exact current-`main`
-authority, and immediate `readiness:railway:mutation-boundary` preflight; its
-tracked executor owns one exact write and unconditional postflight. The
-standalone boundary and sealed-variable checks remain read-only evidence, not
+authority, and immediate `readiness:railway:mutation-boundary` preflight. The
+source-lock repair alone requires the documented exact mutable/armed baseline
+and permits only `sourceImageExact`, `autoUpdatesDisabledExact`, and
+`sourceReferenceImmutable` to be false before its reviewed no-deploy write; its
+postflight must restore the fully passing canonical boundary. Each tracked
+executor owns its exact bounded write and unconditional postflight. The
+approved digest is already the observed PostgreSQL 17.11 runtime that fixes
+CVE-2026-15741. The armed notice's `currentVersion: 17.10` is retained only as
+the exact pre-remediation baseline and must not be interpreted as the runtime
+being locked. The standalone boundary and sealed-variable checks remain
+read-only evidence, not
 mutation authority. Any other route/domain mutation, arbitrary service/resource/volume
 changes, Railway-native restart/redeploy/rollback, and every unlisted mutation
 remain non-executable. If the matching executor or any required authority is
@@ -36,6 +45,15 @@ conclusion `skipped`; this is the only `skipped-before-write` retry case. Genera
 runtime-variable writes use the same
 authority keyed by candidate+target+variable and allow no prior matching run,
 including one skipped before write.
+
+The production Postgres source lock uses its own serialized apply/reconcile
+history. Apply must persist and upload its secret-free intent before the
+production mutation credential is referenced. If its writer starts and the
+result becomes ambiguous, never rerun it: after the fixed settlement interval,
+use one reconcile dispatch bound to the exact prior run and artifact within the
+24-hour recovery window. Reconciliation may only read desired state, commit the
+already exact staged patch, stage-and-commit from the exact dismissed state, or
+report the original armed state as not applied; all other states fail closed.
 
 ## Automated Local Gates
 
