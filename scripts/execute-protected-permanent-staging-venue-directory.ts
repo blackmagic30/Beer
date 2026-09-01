@@ -14,7 +14,7 @@ import {
 export const VENUE_DIRECTORY_POLICY_PATH =
   "ops/supabase/permanent-staging-venue-directory-policy.json" as const;
 export const VENUE_DIRECTORY_POLICY_SHA256 =
-  "ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd" as const;
+  "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f" as const;
 export const VENUE_DIRECTORY_PLAN_SCHEMA =
   "pintpath-permanent-staging-venue-import-plan/v1" as const;
 export const VENUE_DIRECTORY_IMPORT_TERMINAL_SCHEMA =
@@ -192,6 +192,32 @@ const DATABASE_CONTRACT = Object.freeze({
     "venues_business_status_check",
   ]),
 });
+const FIRST_RUN_MIGRATION_INVENTORY = Object.freeze([
+  Object.freeze({
+    version: DATABASE_CONTRACT.migrationVersion,
+    filename:
+      "20260901032339_validate_external_venue_directory_constraints.sql",
+    path: DATABASE_CONTRACT.migrationPath,
+    sha256: DATABASE_CONTRACT.migrationSha256,
+    bytes: DATABASE_CONTRACT.migrationBytes,
+  }),
+  Object.freeze({
+    version: "20260901122942",
+    filename:
+      "20260901122942_remove_redundant_accounts_public_account_index.sql",
+    path:
+      "supabase/migrations/20260901122942_remove_redundant_accounts_public_account_index.sql",
+    sha256:
+      "70ba85af2938a7356740b5216b6577ad311e961359aa72746dd6ac2d25ef46ee",
+    bytes: 4709,
+  }),
+] as const);
+const FIRST_RUN_MIGRATION_VERSIONS = Object.freeze(
+  FIRST_RUN_MIGRATION_INVENTORY.map((migration) => migration.version),
+);
+const FIRST_RUN_MIGRATION_FILENAMES = Object.freeze(
+  FIRST_RUN_MIGRATION_INVENTORY.map((migration) => migration.filename),
+);
 
 type JsonRecord = Record<string, unknown>;
 type Mode =
@@ -385,16 +411,16 @@ function readJsonCanonical(
 
 function validateRepositoryInputs(dependencies: Dependencies): void {
   const policy = path.resolve(dependencies.cwd, VENUE_DIRECTORY_POLICY_PATH);
-  const migration = path.resolve(dependencies.cwd, DATABASE_CONTRACT.migrationPath);
   const preflightVerifier = path.resolve(dependencies.cwd, PREFLIGHT_VERIFIER.path);
   const strictVerifier = path.resolve(dependencies.cwd, STRICT_VERIFIER.path);
   let policySource: string;
-  let migrationSource: string;
+  let migrationSources: readonly string[];
   let preflightVerifierSource: string;
   let strictVerifierSource: string;
   try {
     policySource = fs.readFileSync(policy, "utf8");
-    migrationSource = fs.readFileSync(migration, "utf8");
+    migrationSources = FIRST_RUN_MIGRATION_INVENTORY.map((migration) =>
+      fs.readFileSync(path.resolve(dependencies.cwd, migration.path), "utf8"));
     preflightVerifierSource = fs.readFileSync(preflightVerifier, "utf8");
     strictVerifierSource = fs.readFileSync(strictVerifier, "utf8");
     JSON.parse(policySource);
@@ -403,8 +429,11 @@ function validateRepositoryInputs(dependencies: Dependencies): void {
   }
   if (sha256(policySource) !== VENUE_DIRECTORY_POLICY_SHA256
     || policySource !== `${JSON.stringify(JSON.parse(policySource), null, 2)}\n`
-    || Buffer.byteLength(migrationSource) !== DATABASE_CONTRACT.migrationBytes
-    || sha256(migrationSource) !== DATABASE_CONTRACT.migrationSha256
+    || migrationSources.some((source, index) => {
+      const migration = FIRST_RUN_MIGRATION_INVENTORY[index]!;
+      return Buffer.byteLength(source) !== migration.bytes
+        || sha256(source) !== migration.sha256;
+    })
     || Buffer.byteLength(preflightVerifierSource) !== PREFLIGHT_VERIFIER.bytes
     || sha256(preflightVerifierSource) !== PREFLIGHT_VERIFIER.sha256
     || Buffer.byteLength(strictVerifierSource) !== STRICT_VERIFIER.bytes
@@ -941,11 +970,10 @@ function observeDatabase(
   const pendingFilenames = [...stderr.matchAll(/^ • ([0-9]+_[a-z0-9_]+\.sql)$/gm)]
     .map((match) => match[1] ?? "");
   const localVersions = localMigrationVersions(dependencies);
-  const targetFilename = `${DATABASE_CONTRACT.migrationVersion}_validate_external_venue_directory_constraints.sql`;
   const firstRun = JSON.stringify(remoteMigrationVersions)
-      === JSON.stringify(localVersions.slice(0, -1))
+      === JSON.stringify(localVersions.slice(0, -FIRST_RUN_MIGRATION_INVENTORY.length))
     && constraintsExact(constraints, false) && targetLedger === null
-    && JSON.stringify(pendingFilenames) === JSON.stringify([targetFilename]);
+    && JSON.stringify(pendingFilenames) === JSON.stringify(FIRST_RUN_MIGRATION_FILENAMES);
   const steadyState = JSON.stringify(remoteMigrationVersions) === JSON.stringify(localVersions)
     && constraintsExact(constraints, true) && targetLedgerExact(targetLedger)
     && pendingFilenames.length === 0 && stdout.includes("Remote database is up to date.");
@@ -1045,7 +1073,9 @@ function localMigrationVersions(dependencies: Dependencies): string[] {
     .filter((name) => /^[0-9]+_[a-z0-9_]+\.sql$/.test(name))
     .sort()
     .map((name) => name.slice(0, name.indexOf("_")));
-  if (versions.length < 2 || versions.at(-1) !== DATABASE_CONTRACT.migrationVersion
+  if (versions.length <= FIRST_RUN_MIGRATION_INVENTORY.length
+    || JSON.stringify(versions.slice(-FIRST_RUN_MIGRATION_INVENTORY.length))
+      !== JSON.stringify(FIRST_RUN_MIGRATION_VERSIONS)
     || new Set(versions).size !== versions.length) fail("migration_inventory_invalid");
   return versions;
 }
@@ -1122,7 +1152,8 @@ function databaseObservationExact(
   timestamp(value.checkedAt, "database_evidence_invalid");
   const mode = migrationMode(value.migrationMode);
   const local = localMigrationVersions(dependencies);
-  const before = mode === "first_run" ? local.slice(0, -1) : local;
+  const before = mode === "first_run"
+    ? local.slice(0, -FIRST_RUN_MIGRATION_INVENTORY.length) : local;
   if (!Array.isArray(value.localMigrationVersions)
     || JSON.stringify(value.localMigrationVersions) !== JSON.stringify(local)
     || !Array.isArray(value.remoteMigrationVersions)
@@ -1136,7 +1167,7 @@ function databaseObservationExact(
       ? !targetLedgerExact(value.targetLedger) : value.targetLedger !== null)
     || !dryRunExact(value.dryRun,
       phase === "postflight" || mode === "steady_state"
-        ? [] : [`${DATABASE_CONTRACT.migrationVersion}_validate_external_venue_directory_constraints.sql`])) {
+        ? [] : FIRST_RUN_MIGRATION_FILENAMES)) {
     fail("database_evidence_invalid");
   }
   if (phase === "preflight") {

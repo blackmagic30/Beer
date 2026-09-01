@@ -384,6 +384,10 @@ const VENUE_DATABASE_CONTRACT = {
     "venues_business_status_check",
   ],
 } as const;
+const VENUE_FIRST_RUN_MIGRATION_FILENAMES = [
+  "20260901032339_validate_external_venue_directory_constraints.sql",
+  "20260901122942_remove_redundant_accounts_public_account_index.sql",
+] as const;
 
 function venueCanonical(value: unknown): string {
   return `${canonicalVenueJson(value)}\n`;
@@ -435,9 +439,10 @@ function venueDirectoryEvidence(
   venueNameBytes = 0,
 ): Map<string, string> {
   const local = venueLocalMigrationVersions();
-  const before = mode === "first_run" ? local.slice(0, -1) : local;
+  const before = mode === "first_run"
+    ? local.slice(0, -VENUE_FIRST_RUN_MIGRATION_FILENAMES.length) : local;
   const pending = mode === "first_run"
-    ? ["20260901032339_validate_external_venue_directory_constraints.sql"]
+    ? VENUE_FIRST_RUN_MIGRATION_FILENAMES
     : [];
   const transitions = venueNameBytes === 0 ? [] : [{
     ordinal: 1,
@@ -1405,7 +1410,7 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
     );
     expect(runbook).toContain(
-      "ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd",
+      "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f",
     );
   });
 

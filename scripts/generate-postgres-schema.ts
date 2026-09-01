@@ -15,6 +15,9 @@ const databaseModulePath = path.resolve(process.cwd(), "src/db/database.ts");
 const outputSchemaPath = path.resolve(process.cwd(), "src/db/postgres-schema.sql");
 const supabaseMigrationsDirectory = path.resolve(process.cwd(), "supabase/migrations");
 const supabaseMigrationSuffix = "_create_pintpath_postgres_runtime.sql";
+const redundantPostgresSourceIndexes = new Set([
+  "idx_accounts_public_account",
+]);
 
 interface TableDefinition {
   name: string;
@@ -1008,6 +1011,7 @@ export function generatePostgresSchema(input: {
     ...tables.map((table) => convertSqliteTableDdl(table, contractTableByName.get(table.name)!)),
     ...Array.from(indexByName.values())
       .sort((first, second) => indexName(first).localeCompare(indexName(second)))
+      .filter((statement) => !redundantPostgresSourceIndexes.has(indexName(statement)))
       .map(convertSqliteIndexDdl),
   ].join("\n\n");
   const sourceChecksum = crypto.createHash("sha256").update(input.sqliteSchema).digest("hex");

@@ -1170,6 +1170,9 @@ Keep alcohol-linked rewards and Pub Golf disabled after general launch. They req
 ## Phase 10 — operationalise the approved manual daily deletion contract
 
 The first release uses an approved manual daily operation. Automation is desirable later but is not the first-release contract.
+Operate the candidate-bound protected staging proof and its bounded fail-closed
+recovery through the
+[`permanent-staging account-deletion rehearsal runbook`](./permanent-staging-account-deletion-rehearsal.md).
 
 Before staging sign-off:
 

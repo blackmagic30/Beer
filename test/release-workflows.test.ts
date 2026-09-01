@@ -1029,12 +1029,12 @@ describe("release workflow contracts", () => {
   it("pins every workflow action to an audited immutable release", () => {
     const source = allWorkflows().map(workflow).join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 49],
-      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 41],
+      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 65],
+      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 56],
       ["actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961", 2],
-      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 43],
+      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 69],
       ["actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3", 1],
-      ["actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", 58],
+      ["actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", 81],
       [
         "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
         2,
@@ -1082,7 +1082,7 @@ describe("release workflow contracts", () => {
         line.includes("uses: actions/checkout@") ? index : -1,
       )
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(49);
+    expect(checkoutIndexes).toHaveLength(65);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain(
         "persist-credentials: false",

@@ -20,7 +20,7 @@ export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_VERSION = 4 as const;
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_CLASSIFICATION =
   "UNVERIFIED_PASSIVE_PHYSICAL_SCHEMA_OBSERVATION_ONLY" as const;
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_BASE_DDL_SHA256 =
-  "8afc13da7e86d433fe988b6f53f856da609d556fc6de46413daffa5a67c6e03f" as const;
+  "10973ed4a9d44b6ee9724b8ccb85a932f49b7b1bfe1b8c9e93710efd2fd16e94" as const;
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_INERT_KERNEL_SHA256 =
   "329308dda329342387db8d6ab0cabab4ba87e16a174eb843aa6b54108a995bb1" as const;
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_MAX_BYTES = 16 * 1024 * 1024;
@@ -113,14 +113,14 @@ export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_COUNTS = Object.freeze
   relations: 62,
   columns: 780,
   constraints: 252,
-  indexes: 271,
+  indexes: 270,
   triggers: 317,
   policies: 244,
   routines: 10,
   roles: 5,
   aclEntries: 945,
   defaultAcls: 0,
-  dependencies: 1_934,
+  dependencies: 1_933,
   sharedDependencies: 384,
 } satisfies Readonly<Record<PostgresLogicalPhysicalSchemaV4Category, number>>);
 
@@ -547,7 +547,7 @@ function staticPolicyValue(): object {
 }
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_POLICY_SHA256 =
-  "8af8ccc7ba5e0a3de345e8ebacc526caa0d4d5ae78c19e59f46a8146531a9ecb" as const;
+  "ebbe8299606f4970c6f6e14484ff3940a3ae3ccf96828ddab6e1825ca6b3024e" as const;
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_CATEGORY_SHA256 = Object.freeze({
   database: "adbacf15a9f25c46d49ae9c10fcf073388211dd5ba92f2b4d59447d8ed30d677",
@@ -555,19 +555,19 @@ export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_CATEGORY_SHA256 = Obje
   relations: "fd56fd7c2975ec238e1ace66755a6143f6945a09ce8f77828833fc32df11fe0c",
   columns: "5a908a630085fbd7eb9105930173a3a6d28b119210fe2a7b43f29d7a02217aa4",
   constraints: "93fa40632e9ac1c50c2ecc1e0d30927601a41d18f85d1bbc78105518d1628c85",
-  indexes: "c7c62ceb448dc0e370ce0a06852e31f8da4733f7f93315ad79548eb38b8c37d7",
+  indexes: "80c2122477518a94faa3668a3ef15f31d43616efc443fddd09daee10232f62c6",
   triggers: "a0efdaf692dc0e1dc68ce886216e4e325bae27b12ff677740218eb715fe2125d",
   policies: "d7dd673fe4bae936265c61d505bc0a52fc7f0a32987aed40f88fcb3021473a61",
   routines: "2c98140120c7288a7796abdbb39d00d956349e2af59a8c4d8f8155f8e86afcdb",
   roles: "c66910184733a287b30abbb12c56fb59733e68856dd9e9d0be18a47bd164e089",
   aclEntries: "a4a567b621bdf4972f9abfd12f96ca5a18e193ba154aaa12ab7df19e15119bad",
   defaultAcls: "9288051af2942af4443fbf11f35e7b03ed2442016f8b51c800a245764f1aec4e",
-  dependencies: "c1366fdd4d7f13fbb6621273ae9c1d5e4ef7d0741b17b17b7ec90c06ae32ca75",
+  dependencies: "ff28ad5a14bd1e8854be9cd04216f44ec694bd8e4c1458eabc89458a3e2f74d3",
   sharedDependencies: "55efb8b06dcf17e843ac77ede172b2cc07c177aa6e31cb6f55cde57715cb98c8",
 } satisfies Readonly<Record<PostgresLogicalPhysicalSchemaV4Category, string>>);
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_PORTABLE_SCHEMA_SHA256 =
-  "b0e3adb5830091be60b3f1c5134f05bd955f5ac39ad01d0495242648d67d3237" as const;
+  "1a372599743ac9c5982e9413088568fd5bf27d34549440063082d96b0ba7ee22" as const;
 
 function validateRoleMapping(value: unknown): asserts value is PostgresLogicalPhysicalSchemaV4RoleMapping {
   const keys = [

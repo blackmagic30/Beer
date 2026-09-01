@@ -1230,9 +1230,6 @@ CREATE INDEX idx_accounts_email
 CREATE INDEX idx_accounts_email_verified
       ON accounts (email_verified_at, updated_at DESC);
 
-CREATE UNIQUE INDEX idx_accounts_public_account
-      ON accounts (public_account_id);
-
 CREATE INDEX idx_accounts_stripe_customer
   ON accounts (stripe_customer_id);
 

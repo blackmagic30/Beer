@@ -35,14 +35,14 @@ describe("passive physical-schema V4 contract", () => {
       relations: 62,
       columns: 780,
       constraints: 252,
-      indexes: 271,
+      indexes: 270,
       triggers: 317,
       policies: 244,
       routines: 10,
       roles: 5,
       aclEntries: 945,
       defaultAcls: 0,
-      dependencies: 1_934,
+      dependencies: 1_933,
       sharedDependencies: 384,
     });
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_RELATIONS).toHaveLength(62);
@@ -54,7 +54,7 @@ describe("passive physical-schema V4 contract", () => {
     expect(Object.values(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_CATEGORY_SHA256)
       .every((value) => /^[a-f0-9]{64}$/.test(value))).toBe(true);
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_PORTABLE_SCHEMA_SHA256)
-      .toBe("b0e3adb5830091be60b3f1c5134f05bd955f5ac39ad01d0495242648d67d3237");
+      .toBe("1a372599743ac9c5982e9413088568fd5bf27d34549440063082d96b0ba7ee22");
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_ROLE_SYMBOLS).toEqual({
       databaseOwner: "$database_owner",
       logicalBackup: "$pintpath_logical_backup_current_database",

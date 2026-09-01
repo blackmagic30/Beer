@@ -12,6 +12,36 @@ function databaseTest(name: string) {
 }
 
 describe("Supabase auth/upload RLS migrations", () => {
+  it("removes only the exact redundant Postgres public-account index after proving the exact unique constraint", () => {
+    const sql = migration("20260901122942_remove_redundant_accounts_public_account_index.sql");
+
+    expect(sql).toContain("attribute_definition.attname = 'public_account_id'");
+    expect(sql).toContain("constraint_definition.conname = 'accounts_public_account_id_key'");
+    expect(sql).toContain("constraint_definition.contype = 'u'");
+    expect(sql).toContain("constraint_definition.convalidated");
+    expect(sql).toContain("constraint_definition.conkey =");
+    expect(sql).toContain("array[public_account_attribute]::pg_catalog.int2[]");
+    expect(sql).toContain("constraint_index.indrelid = accounts_relation");
+    expect(sql).toContain("constraint_index.indisunique");
+    expect(sql).toContain("constraint_index.indisvalid");
+    expect(sql).toContain("constraint_index.indisready");
+    expect(sql).toContain("constraint_index.indislive");
+    expect(sql).toContain("constraint_index.indkey[0] = public_account_attribute");
+    expect(sql).toContain("constraint_index.indpred is null");
+    expect(sql).toContain("constraint_index.indexprs is null");
+    expect(sql).toContain("redundant_index.indrelid = accounts_relation");
+    expect(sql).toContain("redundant_index.indisunique");
+    expect(sql).toContain("redundant_index.indkey[0] = public_account_attribute");
+    expect(sql).toContain("redundant_index_definition.relam = constraint_index_definition.relam");
+    expect(sql).toContain("redundant_index.indkey = constraint_index.indkey");
+    expect(sql).toContain("redundant_index.indcollation = constraint_index.indcollation");
+    expect(sql).toContain("redundant_index.indclass = constraint_index.indclass");
+    expect(sql).toContain("redundant_index.indoption = constraint_index.indoption");
+    expect(sql).toContain("the existing object is not the exact redundant unique index");
+    expect(sql).toContain("execute 'drop index pintpath_app.idx_accounts_public_account'");
+    expect(sql).not.toMatch(/drop\s+(?:table|schema|constraint)/i);
+  });
+
   it("keeps local resets deterministic without an imaginary production seed", () => {
     const config = fs.readFileSync(path.resolve(process.cwd(), "supabase/config.toml"), "utf8");
 

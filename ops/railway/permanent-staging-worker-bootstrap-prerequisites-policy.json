@@ -38,7 +38,7 @@
     },
     "venueDirectory": {
       "path": "ops/supabase/permanent-staging-venue-directory-policy.json",
-      "sha256": "ae007a0d34792e2bda42125b572c61aa3fdcfdfe463a5838070457211edce2cd"
+      "sha256": "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f"
     }
   },
   "producers": {

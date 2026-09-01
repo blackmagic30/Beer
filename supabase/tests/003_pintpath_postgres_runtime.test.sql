@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public, pg_catalog;
 
-select plan(23);
+select plan(25);
 
 select ok(
   to_regnamespace('pintpath_app') is not null
@@ -21,6 +21,48 @@ select is(
   ),
   57::bigint,
   'the application schema contains 56 runtime tables plus schema metadata'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_constraint constraint_definition
+    join pg_index constraint_index
+      on constraint_index.indexrelid = constraint_definition.conindid
+    join pg_attribute public_account_attribute
+      on public_account_attribute.attrelid = constraint_definition.conrelid
+     and public_account_attribute.attname = 'public_account_id'
+     and public_account_attribute.attnum > 0
+     and not public_account_attribute.attisdropped
+    where constraint_definition.conrelid = 'pintpath_app.accounts'::regclass
+      and constraint_definition.conname = 'accounts_public_account_id_key'
+      and constraint_definition.contype = 'u'
+      and constraint_definition.convalidated
+      and not constraint_definition.condeferrable
+      and not constraint_definition.condeferred
+      and constraint_definition.conkey =
+        array[public_account_attribute.attnum]::smallint[]
+      and constraint_index.indrelid = constraint_definition.conrelid
+      and constraint_index.indisunique
+      and constraint_index.indisvalid
+      and constraint_index.indisready
+      and constraint_index.indislive
+      and constraint_index.indimmediate
+      and not constraint_index.indisprimary
+      and not constraint_index.indisexclusion
+      and not constraint_index.indnullsnotdistinct
+      and constraint_index.indnkeyatts = 1
+      and constraint_index.indnatts = 1
+      and constraint_index.indkey[0] = public_account_attribute.attnum
+      and constraint_index.indpred is null
+      and constraint_index.indexprs is null
+  ),
+  'accounts public identifiers retain the exact validated constraint-backed unique index'
+);
+
+select ok(
+  to_regclass('pintpath_app.idx_accounts_public_account') is null,
+  'accounts public identifiers have no redundant explicit unique index'
 );
 
 select ok(

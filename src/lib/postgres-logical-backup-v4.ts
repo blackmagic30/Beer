@@ -40,7 +40,7 @@ export const POSTGRES_LOGICAL_BACKUP_V4_CAPABILITY = Object.freeze({
 export const POSTGRES_LOGICAL_BACKUP_V4_BASE_DDL_FILE =
   "src/db/postgres-schema.sql" as const;
 export const POSTGRES_LOGICAL_BACKUP_V4_BASE_DDL_SHA256 =
-  "8afc13da7e86d433fe988b6f53f856da609d556fc6de46413daffa5a67c6e03f" as const;
+  "10973ed4a9d44b6ee9724b8ccb85a932f49b7b1bfe1b8c9e93710efd2fd16e94" as const;
 export const POSTGRES_LOGICAL_BACKUP_V4_MIGRATION_CONTRACT_SHA256 =
   "78f49d0af57a19f92154f717c3b5c9c7e3bdc02bbda68809a8f2257bf7ef879d" as const;
 export const POSTGRES_LOGICAL_BACKUP_V4_KERNEL_CONTRACT_SHA256 =
