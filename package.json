@@ -154,7 +154,7 @@
     "@aws-sdk/credential-providers": "3.1106.0",
     "@supabase/supabase-js": "2.112.3",
     "@types/qrcode": "^1.5.6",
-    "better-sqlite3": "^12.8.0",
+    "better-sqlite3": "^13.0.3",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
