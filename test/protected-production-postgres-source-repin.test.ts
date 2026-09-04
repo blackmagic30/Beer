@@ -29,7 +29,7 @@ const VOLUME_INSTANCE_ID = "74cbfae2-3383-40b4-8464-21a403ca509d";
 const VOLUME_ID = "a3585b0a-b57a-4b69-ad45-05f798e739e1";
 const PATCH_ID = "11111111-1111-4111-8111-111111111111";
 const BASELINE_ETAG =
-  "7bc537f25b01f8cc6d865552c829d8291e14d8fabb9982d2e63ca0cee8954e83";
+  "e50589bf4093433313fd07b844b6e25eeb69878679626006edb9784629989bf9";
 const MUTABLE_SOURCE = "ghcr.io/railwayapp-templates/postgres-ssl:17";
 const IMAGE_DIGEST =
   "sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8";
@@ -601,7 +601,7 @@ function mutationCalls(provider: ReturnType<typeof providerMock>) {
 describe("protected production Postgres source lock", () => {
   it("pins and validates the complete reviewed v2 policy contract", () => {
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256).toBe(
-      "5785c34046e45116155a9344b30f907e15c4492410cc84e70da3e111a4173fc1",
+      "08b50ddc1999f850de83a55b8fdc5b27a4ff4f9a9430443fd797ba58e230a5b4",
     );
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256).toBe(
       "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
@@ -784,6 +784,46 @@ describe("protected production Postgres source lock", () => {
         fs.statSync(path.join(evidence.directory, leaf)).mode & 0o077,
       ).toBe(0);
     }
+  });
+
+  it("accepts Railway's synthesized timestamps on the canonical empty patch sentinel", async () => {
+    const evidence = createEvidence();
+    const state = providerState("armed");
+    state.data.staged.createdAt = "2026-09-04T21:17:08.430Z";
+    state.data.staged.updatedAt = "2026-09-04T21:17:08.430Z";
+    const provider = providerMock({ states: [state] });
+
+    const result = await run("prepare", evidence, provider, [
+      baselineBoundary(),
+    ]);
+
+    expect(result.code, result.output).toBe(0);
+    expect(result.receipt).toMatchObject({
+      outcome: "prepared",
+      totalMutationCalls: 0,
+      checks: { baselineExact: true, durableIntentExact: true },
+    });
+    expect(mutationCalls(provider)).toHaveLength(0);
+  });
+
+  it("rejects reversed synthesized timestamps on the empty patch sentinel", async () => {
+    const evidence = createEvidence();
+    const state = providerState("armed");
+    state.data.staged.createdAt = "2026-09-04T21:17:09.430Z";
+    state.data.staged.updatedAt = "2026-09-04T21:17:08.430Z";
+    const provider = providerMock({ states: [state] });
+
+    const result = await run("prepare", evidence, provider, [
+      baselineBoundary(),
+    ]);
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      totalMutationCalls: 0,
+      checks: { baselineExact: false },
+    });
+    expect(mutationCalls(provider)).toHaveLength(0);
   });
 
   it("rejects a symlinked reviewed-authority file before contacting Railway", async () => {

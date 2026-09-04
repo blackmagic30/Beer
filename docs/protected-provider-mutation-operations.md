@@ -241,9 +241,11 @@ still requires the exact protected-main candidate, original workflow run,
 environment-scoped credentials, reviewed-candidate history, and the workflow's
 fail-closed preflight and reconciliation. Do not add an Environment approval gate
 unless the repository owner explicitly changes this policy. The production
-Postgres source-lock environment is the documented exception: enable its final
-independent-review gate immediately before the first production dispatch, after
-ordinary patching is complete.
+Postgres source-lock environment is the documented exception: enable a deliberate
+release-owner approval gate immediately before the first production dispatch,
+after ordinary patching is complete. A solo repository owner may be the required
+reviewer with self-review allowed; reserve independent review for the final
+production deployment gate.
 
 - `permanent-staging-provider-mutation`
 - `permanent-staging-scale-evidence`
@@ -310,9 +312,11 @@ Additional workflow-only protected secrets are exact and environment-scoped:
   `PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`, and the distinct
   `PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN`. Before the first
   production dispatch, restrict it to protected `main`, require the designated
-  independent reviewer, prevent self-review, and disable administrator bypass.
-  Environment approval applies to this production workflow job, not to ordinary
-  repository patches.
+  release owner, and disable administrator bypass. For a solo owner, allow
+  self-review so the explicit approval remains an auditable operator pause without
+  requiring a second account. Teams may instead designate an independent reviewer
+  and prevent self-review. Environment approval applies to this production
+  workflow job, not to ordinary repository patches.
 
 The Supabase legacy-cutover environment also holds separate project-scoped
 `PINTPATH_SUPABASE_STAGING_SECRETS_READ_TOKEN` and

@@ -155,7 +155,7 @@ describe("protected provider mutation workflows", () => {
         approvedImageDigest:
           "sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
         baselineConfigEtag:
-          "7bc537f25b01f8cc6d865552c829d8291e14d8fabb9982d2e63ca0cee8954e83",
+          "e50589bf4093433313fd07b844b6e25eeb69878679626006edb9784629989bf9",
       },
       autoUpdates: {
         desired: { schedule: null, tagMode: null, type: "disabled" },
