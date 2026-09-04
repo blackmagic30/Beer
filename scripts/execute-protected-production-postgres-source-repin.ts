@@ -60,7 +60,7 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "5785c34046e45116155a9344b30f907e15c4492410cc84e70da3e111a4173fc1";
+  "08b50ddc1999f850de83a55b8fdc5b27a4ff4f9a9430443fd797ba58e230a5b4";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
@@ -82,7 +82,7 @@ const IMAGE_DIGEST =
   "sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8";
 const IMMUTABLE_SOURCE = `ghcr.io/railwayapp-templates/postgres-ssl@${IMAGE_DIGEST}`;
 const BASELINE_CONFIG_ETAG =
-  "7bc537f25b01f8cc6d865552c829d8291e14d8fabb9982d2e63ca0cee8954e83";
+  "e50589bf4093433313fd07b844b6e25eeb69878679626006edb9784629989bf9";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_CONFIRMATION =
   "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_FREEZE_ATTESTATION =
@@ -1426,8 +1426,9 @@ function patchEmpty(patch: ProviderPatch): boolean {
     patch.environmentId === PRODUCTION_ENVIRONMENT_ID &&
     patch.status === "STAGED" &&
     patch.message === null &&
-    patch.createdAt === null &&
-    patch.updatedAt === null &&
+    (patch.createdAt === null ||
+      patch.updatedAt === null ||
+      Date.parse(patch.createdAt) <= Date.parse(patch.updatedAt)) &&
     patch.appliedAt === null &&
     patch.lastAppliedError === null &&
     Object.keys(patch.patch).length === 0
