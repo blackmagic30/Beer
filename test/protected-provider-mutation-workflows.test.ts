@@ -52,6 +52,7 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("operation_mode:");
     expect(workflow).toContain("prior_run_id:");
+    expect(workflow).toContain("prior_candidate_sha:");
     expect(workflow).toContain("prior_run_grace_attestation:");
     expect(workflow).toContain(
       "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY",
@@ -66,6 +67,9 @@ describe("protected provider mutation workflows", () => {
       "--operation production-postgres-source-repin-reconcile",
     );
     expect(workflow).toContain('--prior-run-id "$PRIOR_RUN_ID"');
+    expect(workflow).toContain(
+      '--prior-candidate-sha "$PRIOR_CANDIDATE_SHA"',
+    );
     expect(workflow).toContain("--phase prepare");
     expect(workflow).toContain('--phase "$OPERATION_MODE"');
     expect(workflow).toContain(
@@ -77,6 +81,26 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain(".artifacts[0].workflow_run.id == $priorRunId");
     expect(workflow).toContain(
       ".artifacts[0].workflow_run.head_sha == $candidate",
+    );
+    expect(workflow).toContain(
+      "pintpath-production-postgres-source-lock-intent-${{ inputs.prior_candidate_sha }}-${{ inputs.prior_run_id }}",
+    );
+    expect(workflow).toContain(
+      "pintpath-production-postgres-source-lock-apply-${{ inputs.prior_candidate_sha }}-${{ inputs.prior_run_id }}",
+    );
+    expect(workflow).toContain("9956146300");
+    expect(workflow).toContain("9956147717");
+    expect(workflow).toContain(
+      "03f39ec4e154809d7f778067fed83ba908af4a30e4b17a5a70809c1bbe6654f3",
+    );
+    expect(workflow).toContain(
+      "56829b4867083450e79eca099c75e1535453256cc4341611674f5228e34ec785",
+    );
+    expect(workflow).toContain(
+      "608420a0186048d2f60b376774444f116d411029a359734e8d0b5fcdf296f431",
+    );
+    expect(workflow).toContain(
+      "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
     );
     expect(workflow).toContain(
       "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST",
@@ -158,7 +182,23 @@ describe("protected provider mutation workflows", () => {
           "e50589bf4093433313fd07b844b6e25eeb69878679626006edb9784629989bf9",
       },
       autoUpdates: {
+        dismissed: {
+          remediationNotice: null,
+          schedule: [
+            { day: 6, endHour: 24, startHour: 10 },
+            { day: 0, endHour: 18, startHour: 0 },
+          ],
+          tagMode: "sha",
+          type: "disabled",
+        },
         desired: { schedule: null, tagMode: null, type: "disabled" },
+      },
+      crossCandidateRecoveryIncident: {
+        priorCandidateSha:
+          "52049a1ef414e274e47197e28726387c90d96990",
+        priorRunId: "33923801697",
+        dismissedConfigEtag:
+          "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f",
       },
       mutationBoundary: {
         policySha256: boundaryPolicySha,

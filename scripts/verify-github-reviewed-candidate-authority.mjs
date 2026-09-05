@@ -218,7 +218,7 @@ function parseTimestamp(value, code) {
 }
 
 function parseArguments(argv) {
-  if (!Array.isArray(argv) || argv.length < 4 || argv.length > 10 || argv.length % 2) {
+  if (!Array.isArray(argv) || argv.length < 4 || argv.length > 12 || argv.length % 2) {
     fail("arguments_invalid");
   }
   const values = new Map();
@@ -233,6 +233,7 @@ function parseArguments(argv) {
         "--deployment-run-id",
         "--cutover-mode",
         "--prior-run-id",
+        "--prior-candidate-sha",
         "--prepare-run-id",
         "--target",
         "--variable-name",
@@ -249,6 +250,7 @@ function parseArguments(argv) {
   const deploymentRunId = values.get("--deployment-run-id") ?? null;
   const cutoverMode = values.get("--cutover-mode") ?? null;
   const priorRunId = values.get("--prior-run-id") ?? null;
+  const priorCandidateSha = values.get("--prior-candidate-sha") ?? null;
   const prepareRunId = values.get("--prepare-run-id") ?? null;
   const target = values.get("--target") ?? null;
   const variableName = values.get("--variable-name") ?? null;
@@ -291,6 +293,9 @@ function parseArguments(argv) {
       productionPostgresSourceRepinReconcile
       ? !RUN_ID.test(priorRunId ?? "")
       : priorRunId !== null) ||
+    (productionPostgresSourceRepinReconcile
+      ? !SHA.test(priorCandidateSha ?? "")
+      : priorCandidateSha !== null) ||
     (coldQuiesceReconcile
       ? !RUN_ID.test(prepareRunId ?? "") || prepareRunId === priorRunId
       : prepareRunId !== null) ||
@@ -307,6 +312,7 @@ function parseArguments(argv) {
     deploymentRunId,
     cutoverMode,
     priorRunId,
+    priorCandidateSha,
     prepareRunId,
     target,
     variableName,
@@ -465,6 +471,53 @@ function validateRunIdentity(value, expected) {
     updatedAt < startedAt
   ) fail(expected.failureCode);
   return Object.freeze({ ...value, createdAt, startedAt, updatedAt });
+}
+
+async function verifyProductionPostgresSourceRepinRecoveryCandidates(
+  input,
+  policy,
+  currentPull,
+  currentMergedAtMs,
+) {
+  const crossCandidate = input.priorCandidateSha !== input.candidateSha;
+  if (!crossCandidate) {
+    return Object.freeze({
+      priorPull: currentPull,
+      priorMergedAtMs: currentMergedAtMs,
+      crossCandidate: false,
+    });
+  }
+  const priorPull = await verifyReviewedPullRequest(
+    input.fetchImpl,
+    input.token,
+    policy,
+    input.priorCandidateSha,
+  );
+  const priorMergedAtMs = parseTimestamp(
+    priorPull.mergedAt,
+    "production_postgres_source_repin_reconciliation_history_invalid",
+  );
+  const currentCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${input.candidateSha}`,
+  );
+  if (
+    priorMergedAtMs >= currentMergedAtMs ||
+    currentCommit?.sha !== input.candidateSha ||
+    currentCommit?.tree?.sha !== currentPull.treeSha ||
+    !Array.isArray(currentCommit?.parents) ||
+    currentCommit.parents.length !== 1 ||
+    currentCommit.parents[0]?.sha !== input.priorCandidateSha
+  ) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  return Object.freeze({
+    priorPull,
+    priorMergedAtMs,
+    crossCandidate: true,
+  });
 }
 
 async function listWorkflowHistory(input) {
@@ -711,13 +764,11 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
   input,
   currentRun,
 ) {
-  const applyConfiguration = operationConfiguration(
-    PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+  const allowedCandidateShas = new Set([
+    input.priorCandidateSha,
     input.candidateSha,
-    null,
-    null,
-  );
-  const reconcileConfiguration = operationConfiguration(
+  ]);
+  const currentReconcileConfiguration = operationConfiguration(
     PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
     input.candidateSha,
     null,
@@ -725,19 +776,33 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
   );
   const history = await listWorkflowHistory({
     ...input,
+    mergedAt: input.historyStartAt,
     workflowId: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_ID,
   });
-  const candidateRuns = history.filter((run) =>
-    run?.head_sha === input.candidateSha);
-  if (new Set(candidateRuns.map((run) => run?.id)).size !== candidateRuns.length) {
+  if (
+    history.some((run) => !allowedCandidateShas.has(run?.head_sha)) ||
+    new Set(history.map((run) => run?.id)).size !== history.length
+  ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
   let currentSeen = false;
   let selectedOriginal = null;
   const safePriorSkippedWriteRunIds = [];
-  for (const observed of candidateRuns) {
-    const configuration = observed?.display_title ===
-        applyConfiguration.displayTitle
+  for (const observed of history) {
+    const observedCandidateSha = observed?.head_sha;
+    const applyConfiguration = operationConfiguration(
+      PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      observedCandidateSha,
+      null,
+      null,
+    );
+    const reconcileConfiguration = operationConfiguration(
+      PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      observedCandidateSha,
+      null,
+      null,
+    );
+    const configuration = observed?.display_title === applyConfiguration.displayTitle
       ? applyConfiguration
       : observed?.display_title === reconcileConfiguration.displayTitle
       ? reconcileConfiguration
@@ -747,18 +812,20 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     }
     const run = validateRunIdentity(observed, {
       runId: observed?.id,
-      candidateSha: input.candidateSha,
+      candidateSha: observedCandidateSha,
       workflowPath: PRODUCTION_POSTGRES_SOURCE_REPIN_WORKFLOW_PATH,
       displayTitle: configuration.displayTitle,
       failureCode:
         "production_postgres_source_repin_reconciliation_history_invalid",
     });
-    if (run.createdAt < input.mergedAtMs ||
+    if (run.createdAt < input.historyStartAtMs ||
       run.createdAt > input.currentStartedAtMs) {
       fail("production_postgres_source_repin_reconciliation_history_invalid");
     }
     if (run.id === currentRun.id) {
-      if (configuration !== reconcileConfiguration || currentSeen ||
+      if (run.head_sha !== input.candidateSha ||
+        configuration.displayTitle !== currentReconcileConfiguration.displayTitle ||
+        currentSeen ||
         !isNonterminalRun(run) ||
         run.created_at !== currentRun.created_at ||
         run.run_started_at !== currentRun.run_started_at) {
@@ -772,7 +839,8 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
       run,
       configuration,
     );
-    if (configuration === applyConfiguration &&
+    if (run.head_sha === input.priorCandidateSha &&
+      configuration.displayTitle === applyConfiguration.displayTitle &&
       String(run.id) === input.priorRunId) {
       if (selectedOriginal !== null || disposition !== "may-have-written") {
         fail("production_postgres_source_repin_reconciliation_history_invalid");
@@ -789,6 +857,8 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     safePriorSkippedWriteRunIds.push(String(run.id));
   }
   if (!currentSeen || selectedOriginal === null ||
+    (input.crossCandidate &&
+      selectedOriginal.updatedAt >= input.currentCandidateMergedAtMs) ||
     selectedOriginal.updatedAt >= currentRun.startedAt ||
     currentRun.startedAt - selectedOriginal.updatedAt <
       PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_SETTLEMENT_MS ||
@@ -796,7 +866,7 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
   for (const skippedRunId of safePriorSkippedWriteRunIds) {
-    const skipped = candidateRuns.find((run) => String(run?.id) === skippedRunId);
+    const skipped = history.find((run) => String(run?.id) === skippedRunId);
     if (parseTimestamp(
       skipped?.updated_at,
       "production_postgres_source_repin_reconciliation_history_invalid",
@@ -811,6 +881,10 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     safePriorReadOnlyRunIds: [],
     reconciledPriorAmbiguousDisableRunId: null,
     priorAmbiguousProductionPostgresSourceRepinRunId: input.priorRunId,
+    priorProductionPostgresSourceRepinIntentCandidateSha:
+      input.priorCandidateSha,
+    crossCandidateProductionPostgresSourceRepinRecoveryExact:
+      input.priorCandidateSha !== input.candidateSha,
     exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
     secondProductionPostgresRemediationDismissPreventedExact: true,
     runnerLossRecoveryOriginalRunCompletedAt: new Date(
@@ -2367,6 +2441,8 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
   const policy = parseGithubReleaseChecksPolicy(policySource);
   const token = input.env.GITHUB_TOKEN ?? "";
   const currentRunIdSource = input.env.GITHUB_RUN_ID ?? "";
+  const productionPostgresSourceRepinReconcile =
+    input.operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION;
   if (
     !policy ||
     policy.repository !== REPOSITORY ||
@@ -2377,7 +2453,10 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     input.env.GITHUB_RUN_ATTEMPT !== "1" ||
     !RUN_ID.test(currentRunIdSource) ||
     token.length < 16 ||
-    /[\r\n\0]/.test(token)
+    /[\r\n\0]/.test(token) ||
+    (productionPostgresSourceRepinReconcile
+      ? !SHA.test(input.priorCandidateSha ?? "")
+      : input.priorCandidateSha != null)
   ) fail("environment_invalid");
   const currentRunId = Number(currentRunIdSource);
   if (!Number.isSafeInteger(currentRunId)) fail("environment_invalid");
@@ -2421,6 +2500,20 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       !OFFSITE_CLEANUP_RECOVERY_OPERATIONS.has(input.operation) &&
       currentRun.startedAt - mergedAtMs > MAX_CANDIDATE_AGE_MS)
   ) fail("candidate_history_expired");
+  const productionPostgresSourceRepinRecoveryCandidateAuthority =
+    productionPostgresSourceRepinReconcile
+      ? await verifyProductionPostgresSourceRepinRecoveryCandidates(
+        {
+          fetchImpl: input.fetchImpl,
+          token,
+          candidateSha: input.candidateSha,
+          priorCandidateSha: input.priorCandidateSha,
+        },
+        policy,
+        pull,
+        mergedAtMs,
+      )
+      : null;
   const historyInput = {
     fetchImpl: input.fetchImpl,
     token,
@@ -2463,6 +2556,14 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     ? await verifyProductionPostgresSourceRepinReconciliationHistory({
       ...historyInput,
       priorRunId: input.priorRunId,
+      priorCandidateSha: input.priorCandidateSha,
+      historyStartAt:
+        productionPostgresSourceRepinRecoveryCandidateAuthority.priorPull.mergedAt,
+      historyStartAtMs:
+        productionPostgresSourceRepinRecoveryCandidateAuthority.priorMergedAtMs,
+      currentCandidateMergedAtMs: mergedAtMs,
+      crossCandidate:
+        productionPostgresSourceRepinRecoveryCandidateAuthority.crossCandidate,
     }, currentRun)
     : input.operation === "cold-recovery-reconcile-quiesce"
     ? await verifyColdQuiesceReconciliationHistory({
@@ -2640,6 +2741,12 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       ? {
         priorAmbiguousProductionPostgresSourceRepinRunId:
           operationHistory.priorAmbiguousProductionPostgresSourceRepinRunId,
+        priorProductionPostgresSourceRepinIntentCandidateSha:
+          operationHistory
+            .priorProductionPostgresSourceRepinIntentCandidateSha,
+        crossCandidateProductionPostgresSourceRepinRecoveryExact:
+          operationHistory
+            .crossCandidateProductionPostgresSourceRepinRecoveryExact,
         exactPriorProductionPostgresSourceRepinCandidateRunBound:
           operationHistory
             .exactPriorProductionPostgresSourceRepinCandidateRunBound,

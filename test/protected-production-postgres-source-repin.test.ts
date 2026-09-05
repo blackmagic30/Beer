@@ -39,6 +39,11 @@ const STAGING_METADATA_TOKEN = "staging-metadata-token-unique";
 const MUTATION_TOKEN = "production-source-writer-token-unique";
 const RUN_ID = "12345";
 const PRIOR_RUN_ID = "12344";
+const INCIDENT_CANDIDATE =
+  "52049a1ef414e274e47197e28726387c90d96990";
+const INCIDENT_RUN_ID = "33923801697";
+const INCIDENT_DISMISSED_ETAG =
+  "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f";
 
 const BOUNDARY_CHECK_NAMES = [
   "policyValid",
@@ -123,6 +128,26 @@ function deployment(instanceId = RUNNING_INSTANCE_ID) {
   };
 }
 
+function removedDeployment(
+  id: string,
+  instanceId: string,
+  snapshotId: string,
+  instances: { id: string; status: string }[] = [
+    { id: instanceId, status: "REMOVED" },
+  ],
+) {
+  return {
+    id,
+    projectId: PROJECT_ID,
+    environmentId: PRODUCTION_ENVIRONMENT_ID,
+    serviceId: SERVICE_ID,
+    status: "REMOVED",
+    deploymentStopped: true,
+    snapshotId,
+    instances,
+  };
+}
+
 function emptyPatch() {
   return {
     id: "<empty>",
@@ -152,12 +177,12 @@ function stagedPatch() {
   };
 }
 
-function committedPatch(runId: string) {
+function committedPatch(runId: string, candidateSha = CANDIDATE) {
   return {
     id: PATCH_ID,
     environmentId: PRODUCTION_ENVIRONMENT_ID,
     status: "COMMITTED",
-    message: `pintpath:production-postgres-source-lock:${CANDIDATE}:${runId}`,
+    message: `pintpath:production-postgres-source-lock:${candidateSha}:${runId}`,
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:03.000Z",
     appliedAt: "2026-09-01T00:00:02.000Z",
@@ -185,6 +210,7 @@ function providerState(
     autoUpdatesOverride?: unknown;
     historyOverride?: unknown[];
     configEtag?: string;
+    intentCandidateSha?: string;
   } = {},
 ) {
   const instanceId = options.runningInstanceId ?? RUNNING_INSTANCE_ID;
@@ -194,7 +220,12 @@ function providerState(
   const history =
     options.historyOverride ??
     (kind === "desired"
-      ? [committedPatch(options.runId ?? RUN_ID)]
+      ? [
+          committedPatch(
+            options.runId ?? RUN_ID,
+            options.intentCandidateSha ?? CANDIDATE,
+          ),
+        ]
       : kind === "staged"
         ? [stagedPatch()]
         : []);
@@ -219,6 +250,19 @@ function providerState(
           edges: [
             {
               node: {
+                id: "6100f33b-7425-4a3f-b53c-5d0ae666b429",
+                environmentId: PRODUCTION_ENVIRONMENT_ID,
+                serviceId: "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+                volumeId: "372b736a-fa8b-4ca0-88bc-68760fc98d69",
+                deletedAt: null,
+                isPendingDeletion: false,
+                mountPath: "/data",
+                region: "europe-west4-drams3a",
+                volume: { id: "372b736a-fa8b-4ca0-88bc-68760fc98d69" },
+              },
+            },
+            {
+              node: {
                 id: VOLUME_INSTANCE_ID,
                 environmentId: PRODUCTION_ENVIRONMENT_ID,
                 serviceId: SERVICE_ID,
@@ -228,6 +272,19 @@ function providerState(
                 mountPath: "/var/lib/postgresql/data",
                 region: "asia-southeast1-eqsg3a",
                 volume: { id: VOLUME_ID },
+              },
+            },
+            {
+              node: {
+                id: "f11459c6-a360-4636-abf8-b6ba25bba64f",
+                environmentId: PRODUCTION_ENVIRONMENT_ID,
+                serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+                volumeId: "ba8ef214-9f16-4c35-9bbd-7169a8a91e68",
+                deletedAt: null,
+                isPendingDeletion: false,
+                mountPath: "/app/data",
+                region: "asia-southeast1-eqsg3a",
+                volume: { id: "ba8ef214-9f16-4c35-9bbd-7169a8a91e68" },
               },
             },
           ],
@@ -256,7 +313,47 @@ function providerState(
         activeDeployments: [exactDeployment],
       },
       deployments: {
-        edges: [{ node: exactDeployment }],
+        edges: [
+          { node: exactDeployment },
+          {
+            node: removedDeployment(
+              "ccb513ee-c850-49a1-a205-9ab8ab7534cc",
+              "a73d456f-d2a1-4d8d-aaea-c87b3c8a73d5",
+              "f2a08518-2336-4837-a77b-11852cf2a8ab",
+            ),
+          },
+          {
+            node: removedDeployment(
+              "fe94a81a-aeb3-46ae-ad7f-b1907f0cfe5e",
+              "6ed6d2ad-c657-4c30-9941-1f58b5766e1f",
+              "b78b9bea-25fd-431d-b1f6-8a65c0e24843",
+            ),
+          },
+          {
+            node: removedDeployment(
+              "c6004774-7680-41ec-a816-d872221d5890",
+              "f17fa8b4-74e9-431c-8765-ff3e09f121fd",
+              "3f601066-8b66-4315-8f2e-ef499d17fad8",
+            ),
+          },
+          {
+            node: removedDeployment(
+              "e0e040eb-310d-40fa-b2b8-14897d80e683",
+              "4a9190b5-2c74-4e94-ae3c-718179ff569f",
+              "e87dbeb5-c86c-47f7-bccc-fe6bdd25a4b1",
+              [
+                {
+                  id: "4a9190b5-2c74-4e94-ae3c-718179ff569f",
+                  status: "REMOVED",
+                },
+                {
+                  id: "a1fce5d4-337f-4a00-9904-3e39e3cec3d4",
+                  status: "REMOVED",
+                },
+              ],
+            ),
+          },
+        ],
         pageInfo: { hasNextPage: false, endCursor: "deployments-end" },
       },
       baselineDeployment: {
@@ -335,6 +432,7 @@ function writeReconcileAuthority(
   priorRunId: string,
   safePrior: string[] = [],
   originalRunCompletedAt = "2026-09-01T00:08:00.000Z",
+  priorCandidateSha = CANDIDATE,
 ) {
   fs.writeFileSync(
     filename,
@@ -359,6 +457,10 @@ function writeReconcileAuthority(
       reviewedAuthorityExact: true,
       freshDispatchWriteGuardExact: true,
       priorAmbiguousProductionPostgresSourceRepinRunId: priorRunId,
+      priorProductionPostgresSourceRepinIntentCandidateSha:
+        priorCandidateSha,
+      crossCandidateProductionPostgresSourceRepinRecoveryExact:
+        priorCandidateSha !== CANDIDATE,
       exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
       secondProductionPostgresRemediationDismissPreventedExact: true,
       runnerLossRecoveryOriginalRunCompletedAt: originalRunCompletedAt,
@@ -399,6 +501,8 @@ function environment(
       ? {
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_GRACE:
             "I_ATTEST_PRIOR_SOURCE_LOCK_RUN_ENDED_AND_NO_WRITER_IS_ACTIVE",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_CANDIDATE_SHA:
+            CANDIDATE,
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_ID: PRIOR_RUN_ID,
         }
       : {}),
@@ -409,6 +513,7 @@ function argsFor(
   phase: Phase,
   evidence: ReturnType<typeof createEvidence>,
   intentFile?: string,
+  priorCandidateSha = CANDIDATE,
 ) {
   return [
     "--phase",
@@ -419,6 +524,9 @@ function argsFor(
     evidence.authorityFile,
     "--evidence-dir",
     evidence.directory,
+    ...(phase === "reconcile"
+      ? ["--prior-candidate-sha", priorCandidateSha]
+      : []),
     ...(phase === "prepare" ? [] : ["--intent-file", intentFile!]),
   ];
 }
@@ -517,10 +625,11 @@ async function run(
   env = environment(phase),
   intentFile?: string,
   now: () => number = () => Date.parse("2026-09-01T00:10:00.000Z"),
+  priorCandidateSha = CANDIDATE,
 ) {
   let output = "";
   const code = await runProtectedProductionPostgresSourceRepin({
-    argv: argsFor(phase, evidence, intentFile),
+    argv: argsFor(phase, evidence, intentFile, priorCandidateSha),
     env,
     cwd: process.cwd(),
     fetchImpl: provider.fetchImpl as typeof fetch,
@@ -560,6 +669,59 @@ async function prepare(runId = RUN_ID): Promise<{
   };
 }
 
+function historicalIncidentPrepared(): {
+  evidence: ReturnType<typeof createEvidence>;
+  intentFile: string;
+  intentSha: string;
+} {
+  const evidence = createEvidence(INCIDENT_RUN_ID, []);
+  const intentFile = path.join(evidence.directory, "source-lock-intent.json");
+  const intent = {
+    schemaVersion: "pintpath-production-postgres-source-lock-intent/v2",
+    operation: "production-postgres-source-repin",
+    candidateSha: INCIDENT_CANDIDATE,
+    githubRunId: INCIDENT_RUN_ID,
+    reviewedAuthoritySha256:
+      "5526eab8a9ed4f252ac9976af2bcfbd354a8d3adab2016f46936c652d37c73c6",
+    reviewedPullRequestNumber: 81,
+    projectId: PROJECT_ID,
+    environmentId: PRODUCTION_ENVIRONMENT_ID,
+    serviceId: SERVICE_ID,
+    serviceInstanceId: SERVICE_INSTANCE_ID,
+    deploymentId: DEPLOYMENT_ID,
+    snapshotId: SNAPSHOT_ID,
+    runningInstanceId: RUNNING_INSTANCE_ID,
+    volumeInstanceId: VOLUME_INSTANCE_ID,
+    volumeId: VOLUME_ID,
+    sourceBefore: MUTABLE_SOURCE,
+    sourceAfter: IMMUTABLE_SOURCE,
+    baselineConfigEtag: BASELINE_ETAG,
+    runtimeBeforeSha256:
+      "55087986055cb1f247c4011e07e0b8ea856daa15f9fd04b90d33c0dec2482b48",
+    armedAutoUpdatesSha256:
+      "b7a7680c3c8e27e2c29eae1de29d1f710f3f8715a40335fbeb4dd792bbfe28c2",
+    requestedPatchSha256:
+      "833695a9060fa01b798dd73ac440080652253baac0e3c43b04a149515ed34dcd",
+    providerNormalizedPatchSha256:
+      "01806817d0d79894a0d1ab3cff8e484a5ec6a04840b91fbbc2d05813c026e55a",
+    commitMessage: `pintpath:production-postgres-source-lock:${INCIDENT_CANDIDATE}:${INCIDENT_RUN_ID}`,
+    externalMutationFreeze:
+      "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    retryAllowed: false,
+    deploymentAllowed: false,
+    secretMaterialIncluded: false,
+    rawProviderMetadataIncluded: false,
+  };
+  fs.writeFileSync(intentFile, `${JSON.stringify(intent, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  const intentSha = sha256(fs.readFileSync(intentFile));
+  expect(intentSha).toBe(
+    "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+  );
+  return { evidence, intentFile, intentSha };
+}
+
 function boundEnvironment(
   phase: "apply" | "reconcile",
   prepared: Awaited<ReturnType<typeof prepare>>,
@@ -568,15 +730,47 @@ function boundEnvironment(
 ) {
   const intent = JSON.parse(fs.readFileSync(prepared.intentFile, "utf8")) as {
     githubRunId: string;
+    candidateSha: string;
   };
+  const crossCandidate =
+    phase === "reconcile" && intent.candidateSha !== CANDIDATE;
   return {
     ...environment(phase, currentRunId, { priorGrace }),
+    ...(phase === "reconcile"
+      ? {
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_CANDIDATE_SHA:
+            intent.candidateSha,
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_ID:
+            intent.githubRunId,
+        }
+      : {}),
     PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_SHA256: prepared.intentSha,
-    PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_ID: "777",
-    PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST: `sha256:${"d".repeat(64)}`,
-    PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_NAME: `pintpath-production-postgres-source-lock-intent-${CANDIDATE}-${intent.githubRunId}`,
+    PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_ID: crossCandidate
+      ? "9956146300"
+      : "777",
+    PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST:
+      crossCandidate
+        ? "sha256:03f39ec4e154809d7f778067fed83ba908af4a30e4b17a5a70809c1bbe6654f3"
+        : `sha256:${"d".repeat(64)}`,
+    PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_NAME: `pintpath-production-postgres-source-lock-intent-${intent.candidateSha}-${intent.githubRunId}`,
     PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_RUN_ID:
       intent.githubRunId,
+    ...(crossCandidate
+      ? {
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_ID:
+            "9956147717",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_DIGEST:
+            "sha256:56829b4867083450e79eca099c75e1535453256cc4341611674f5228e34ec785",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_SIZE:
+            "5869",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_TERMINAL_SHA256:
+            "608420a0186048d2f60b376774444f116d411029a359734e8d0b5fcdf296f431",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_RECEIPT_SHA256:
+            "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_EVIDENCE_EXACT:
+            "true",
+        }
+      : {}),
   };
 }
 
@@ -601,7 +795,7 @@ function mutationCalls(provider: ReturnType<typeof providerMock>) {
 describe("protected production Postgres source lock", () => {
   it("pins and validates the complete reviewed v2 policy contract", () => {
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256).toBe(
-      "08b50ddc1999f850de83a55b8fdc5b27a4ff4f9a9430443fd797ba58e230a5b4",
+      "00ae7aa221bab26d662822843ed624fcfb15fadcb892a2cdf2dd35574bcf3d90",
     );
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256).toBe(
       "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
@@ -1191,6 +1385,172 @@ describe("protected production Postgres source lock", () => {
           call.operationName === "PintPathProductionPostgresSourceLockStage",
       ),
     ).toBe(false);
+  });
+
+  it("recovers only the pinned cross-candidate incident from exact dismissed+empty state without another dismiss", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-01T00:08:00.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const provider = providerMock({
+      states: [
+        providerState("dismissed", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("desired", {
+          runId: INCIDENT_RUN_ID,
+          intentCandidateSha: INCIDENT_CANDIDATE,
+          configEtag: "d".repeat(64),
+        }),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [baselineBoundary(), stagedBoundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code, result.output).toBe(0);
+    expect(result.receipt).toMatchObject({
+      candidateSha: CANDIDATE,
+      outcome: "reconciled_stage_and_commit",
+      intentSha256:
+        "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+      attempts: { dismiss: 0, stage: 1, commit: 1 },
+      totalMutationCalls: 2,
+      deploymentAllowed: false,
+      retryAllowed: false,
+      checks: {
+        artifactBindingExact: true,
+        priorRunGraceExact: true,
+        baselineExact: true,
+        precommitRaceAbsent: true,
+        desiredStateExact: true,
+      },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockStage",
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+  });
+
+  it("cross-candidate recovery rejects a changed incident ETag before any write", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-01T00:08:00.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const provider = providerMock({
+      states: [providerState("dismissed", { configEtag: "e".repeat(64) })],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      attempts: { dismiss: 0, stage: 0, commit: 0 },
+      checks: { baselineExact: false },
+    });
+    expect(mutationCalls(provider)).toEqual([]);
+  });
+
+  it.each([
+    ["2026-09-04T21:17:08.430Z", null],
+    [null, "2026-09-04T21:17:08.430Z"],
+  ])(
+    "cross-candidate recovery rejects a one-sided empty-patch timestamp pair before any write (%s, %s)",
+    async (createdAt, updatedAt) => {
+      const prepared = historicalIncidentPrepared();
+      writeReconcileAuthority(
+        prepared.evidence.authorityFile,
+        RUN_ID,
+        INCIDENT_RUN_ID,
+        [],
+        "2026-09-01T00:08:00.000Z",
+        INCIDENT_CANDIDATE,
+      );
+      const malformed = providerState("dismissed", {
+        configEtag: INCIDENT_DISMISSED_ETAG,
+      });
+      malformed.data.staged.createdAt = createdAt;
+      malformed.data.staged.updatedAt = updatedAt;
+      const provider = providerMock({ states: [malformed] });
+      const result = await run(
+        "reconcile",
+        prepared.evidence,
+        provider,
+        [],
+        boundEnvironment("reconcile", prepared, RUN_ID, true),
+        prepared.intentFile,
+        () => Date.parse("2026-09-01T00:10:00.000Z"),
+        INCIDENT_CANDIDATE,
+      );
+      expect(result.code).toBe(1);
+      expect(result.receipt).toMatchObject({
+        outcome: "failed_before_write",
+        totalMutationCalls: 0,
+        checks: { baselineExact: false },
+      });
+      expect(mutationCalls(provider)).toEqual([]);
+    },
+  );
+
+  it("cross-candidate recovery refuses commit when the ETag changes while staging", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-01T00:08:00.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const provider = providerMock({
+      states: [
+        providerState("dismissed", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: "e".repeat(64) }),
+      ],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [baselineBoundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 0, stage: 1, commit: 0 },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockStage",
+    ]);
   });
 
   it.each(SOURCE_LOCK_NON_EXEMPT_BOUNDARY_CHECKS)(
