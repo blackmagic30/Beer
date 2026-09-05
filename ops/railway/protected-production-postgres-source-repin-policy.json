@@ -57,6 +57,7 @@
       "type": "vuln"
     },
     "dismissed": {
+      "remediationNotice": null,
       "schedule": [
         {
           "day": 6,
@@ -70,7 +71,7 @@
         }
       ],
       "tagMode": "sha",
-      "type": "vuln"
+      "type": "disabled"
     },
     "desired": {
       "schedule": null,
@@ -92,7 +93,10 @@
     "freshApplyHistoryIncludesApplyAndReconcileRuns": true,
     "priorSameCandidateRunAllowedOnlyWhenWriterSkipped": true,
     "reconcilePriorRunIdRequired": true,
+    "reconcilePriorIntentCandidateShaRequired": true,
     "reconcileSelectedPriorRunMustBeOneAmbiguousApply": true,
+    "reconcileCrossCandidateDirectSingleParentSuccessorRequired": true,
+    "reconcileCrossCandidateRecoveryPinnedIncidentOnly": true,
     "reconcileSecondMayHaveWrittenRunAllowed": false,
     "reconcilePriorRunCompletionRequired": true,
     "reconcileSettlementSeconds": 60,
@@ -133,10 +137,27 @@
       "priorRunArtifactIdentityAndDigestRequired": true,
       "reviewedAuthorityMustBindExactPriorRun": true,
       "priorRunGraceAttestationRequired": true,
+      "crossCandidatePriorTerminalArtifactRequired": true,
+      "crossCandidateEntryMustBeDismissedWithEmptyStagedPatch": true,
+      "crossCandidateConfigEtagPreservedThroughPrecommit": true,
+      "crossCandidateFinalConfigEtagMustChange": true,
       "additionalDismissAllowed": false,
       "maximumStageAttempts": 1,
       "maximumCommitAttempts": 1
     }
+  },
+  "crossCandidateRecoveryIncident": {
+    "priorCandidateSha": "52049a1ef414e274e47197e28726387c90d96990",
+    "priorRunId": "33923801697",
+    "intentArtifactId": "9956146300",
+    "intentArtifactDigest": "sha256:03f39ec4e154809d7f778067fed83ba908af4a30e4b17a5a70809c1bbe6654f3",
+    "intentSha256": "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+    "terminalArtifactId": "9956147717",
+    "terminalArtifactDigest": "sha256:56829b4867083450e79eca099c75e1535453256cc4341611674f5228e34ec785",
+    "terminalArtifactSize": "5869",
+    "applyTerminalSha256": "608420a0186048d2f60b376774444f116d411029a359734e8d0b5fcdf296f431",
+    "applyReceiptSha256": "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
+    "dismissedConfigEtag": "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f"
   },
   "mutationPlan": {
     "confirmation": "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY",
@@ -224,6 +245,8 @@
     "terminalEvidenceRequired": true,
     "finalReceiptEvidenceRequired": true,
     "providerCredentialsAllowedInEvidence": false,
+    "crossCandidatePriorTerminalArtifactRequired": true,
+    "crossCandidatePriorTerminalAndReceiptHashesRequired": true,
     "secretMaterialAllowed": false,
     "secretDerivedCommitmentsAllowed": false,
     "rawProviderMetadataAllowed": false

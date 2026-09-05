@@ -18,6 +18,7 @@ export const PRODUCTION_POSTGRES_SOURCE_LOCK_PHASES = [
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_CLI = {
   phase: "--phase",
   candidateSha: "--candidate-sha",
+  priorCandidateSha: "--prior-candidate-sha",
   githubAuthority: "--github-authority",
   evidenceDirectory: "--evidence-dir",
   intentFile: "--intent-file",
@@ -49,7 +50,21 @@ export const PRODUCTION_POSTGRES_SOURCE_LOCK_ENVIRONMENT_BINDINGS = {
   intentArtifactRunId:
     "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_RUN_ID",
   priorRunId: "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_ID",
+  priorCandidateSha:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_CANDIDATE_SHA",
   priorRunGrace: "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_GRACE",
+  priorTerminalArtifactId:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_ID",
+  priorTerminalArtifactDigest:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_DIGEST",
+  priorTerminalArtifactSize:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_SIZE",
+  priorApplyTerminalSha256:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_TERMINAL_SHA256",
+  priorApplyReceiptSha256:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_RECEIPT_SHA256",
+  priorTerminalEvidenceExact:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_EVIDENCE_EXACT",
 } as const;
 
 const POLICY_PATH =
@@ -60,7 +75,7 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "08b50ddc1999f850de83a55b8fdc5b27a4ff4f9a9430443fd797ba58e230a5b4";
+  "00ae7aa221bab26d662822843ed624fcfb15fadcb892a2cdf2dd35574bcf3d90";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
@@ -83,6 +98,25 @@ const IMAGE_DIGEST =
 const IMMUTABLE_SOURCE = `ghcr.io/railwayapp-templates/postgres-ssl@${IMAGE_DIGEST}`;
 const BASELINE_CONFIG_ETAG =
   "e50589bf4093433313fd07b844b6e25eeb69878679626006edb9784629989bf9";
+const CROSS_CANDIDATE_RECOVERY = {
+  priorCandidateSha: "52049a1ef414e274e47197e28726387c90d96990",
+  priorRunId: "33923801697",
+  intentArtifactId: "9956146300",
+  intentArtifactDigest:
+    "sha256:03f39ec4e154809d7f778067fed83ba908af4a30e4b17a5a70809c1bbe6654f3",
+  intentSha256:
+    "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+  terminalArtifactId: "9956147717",
+  terminalArtifactDigest:
+    "sha256:56829b4867083450e79eca099c75e1535453256cc4341611674f5228e34ec785",
+  terminalArtifactSize: "5869",
+  applyTerminalSha256:
+    "608420a0186048d2f60b376774444f116d411029a359734e8d0b5fcdf296f431",
+  applyReceiptSha256:
+    "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
+  dismissedConfigEtag:
+    "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f",
+} as const;
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_CONFIRMATION =
   "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_FREEZE_ATTESTATION =
@@ -121,9 +155,10 @@ const ARMED_AUTO_UPDATES = {
 } as const;
 
 const DISMISSED_AUTO_UPDATES = {
+  remediationNotice: null,
   schedule: ARMED_AUTO_UPDATES.schedule,
   tagMode: "sha",
-  type: "vuln",
+  type: "disabled",
 } as const;
 
 const DESIRED_AUTO_UPDATES = {
@@ -296,6 +331,7 @@ interface BoundaryObservation {
 interface Args {
   readonly phase: Phase;
   readonly candidateSha: string;
+  readonly priorCandidateSha: string | null;
   readonly githubAuthorityFile: string;
   readonly evidenceDirectory: string;
   readonly intentFile: string | null;
@@ -310,6 +346,8 @@ interface ReviewedAuthority {
   readonly safePriorSkippedWriteRunIds: readonly string[];
   readonly recovery: {
     readonly priorRunId: string;
+    readonly intentCandidateSha: string;
+    readonly crossCandidateExact: boolean;
     readonly originalRunCompletedAt: string;
   } | null;
 }
@@ -568,6 +606,7 @@ function parseArgs(argv: readonly string[]): Args | null {
       ![
         "--phase",
         "--candidate-sha",
+        "--prior-candidate-sha",
         "--github-authority",
         "--evidence-dir",
         "--intent-file",
@@ -579,6 +618,7 @@ function parseArgs(argv: readonly string[]): Args | null {
   }
   const phase = values.get("--phase");
   const candidateSha = values.get("--candidate-sha") ?? "";
+  const priorCandidateSha = values.get("--prior-candidate-sha") ?? null;
   const githubAuthorityFile = values.get("--github-authority") ?? "";
   const evidenceDirectory = values.get("--evidence-dir") ?? "";
   const intentFile = values.get("--intent-file") ?? null;
@@ -587,6 +627,9 @@ function parseArgs(argv: readonly string[]): Args | null {
     !SHA.test(candidateSha) ||
     !path.isAbsolute(githubAuthorityFile) ||
     !path.isAbsolute(evidenceDirectory) ||
+    (phase === "reconcile"
+      ? priorCandidateSha === null || !SHA.test(priorCandidateSha)
+      : priorCandidateSha !== null) ||
     (phase === "prepare" ? intentFile !== null : intentFile === null) ||
     (intentFile !== null && !path.isAbsolute(intentFile))
   )
@@ -594,6 +637,7 @@ function parseArgs(argv: readonly string[]): Args | null {
   return {
     phase: phase as Phase,
     candidateSha,
+    priorCandidateSha,
     githubAuthorityFile,
     evidenceDirectory,
     intentFile,
@@ -729,6 +773,8 @@ function reviewedAuthorityExact(
     ] as const;
     const recoveryKeys = [
       "priorAmbiguousProductionPostgresSourceRepinRunId",
+      "priorProductionPostgresSourceRepinIntentCandidateSha",
+      "crossCandidateProductionPostgresSourceRepinRecoveryExact",
       "exactPriorProductionPostgresSourceRepinCandidateRunBound",
       "secondProductionPostgresRemediationDismissPreventedExact",
       "runnerLossRecoveryOriginalRunCompletedAt",
@@ -785,12 +831,21 @@ function reviewedAuthorityExact(
     let recovery: ReviewedAuthority["recovery"] = null;
     if (args.phase === "reconcile") {
       const priorRunId = value.priorAmbiguousProductionPostgresSourceRepinRunId;
+      const intentCandidateSha =
+        value.priorProductionPostgresSourceRepinIntentCandidateSha;
+      const crossCandidateExact =
+        value.crossCandidateProductionPostgresSourceRepinRecoveryExact;
       const originalRunCompletedAt = parseTimestamp(
         value.runnerLossRecoveryOriginalRunCompletedAt,
       );
       if (
         typeof priorRunId !== "string" ||
         !RUN_ID.test(priorRunId) ||
+        typeof intentCandidateSha !== "string" ||
+        !SHA.test(intentCandidateSha) ||
+        intentCandidateSha !== args.priorCandidateSha ||
+        typeof crossCandidateExact !== "boolean" ||
+        crossCandidateExact !== (intentCandidateSha !== args.candidateSha) ||
         priorRunId === env.GITHUB_RUN_ID ||
         value.safePriorSkippedWriteRunIds.includes(priorRunId) ||
         value.exactPriorProductionPostgresSourceRepinCandidateRunBound !==
@@ -803,7 +858,12 @@ function reviewedAuthorityExact(
         value.runnerLossRecoveryWithinGraceExact !== true
       )
         return null;
-      recovery = { priorRunId, originalRunCompletedAt };
+      recovery = {
+        priorRunId,
+        intentCandidateSha,
+        crossCandidateExact,
+        originalRunCompletedAt,
+      };
     }
     return {
       sha256: sha256(source),
@@ -835,10 +895,20 @@ function commonAuthorityExact(
     env.GITHUB_SHA === args.candidateSha &&
     env.GITHUB_RUN_ATTEMPT === "1" &&
     RUN_ID.test(env.GITHUB_RUN_ID ?? "") &&
+    (args.phase === "reconcile"
+      ? env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_CANDIDATE_SHA ===
+        args.priorCandidateSha
+      : !env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_CANDIDATE_SHA) &&
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_REPIN_CONFIRMATION ===
       CONFIRMATION &&
     env.PINTPATH_EXTERNAL_MUTATION_FREEZE_ATTESTATION === FREEZE_ATTESTATION
   );
+}
+
+function intentCandidateSha(args: Args): string {
+  return args.phase === "reconcile"
+    ? (args.priorCandidateSha ?? "")
+    : args.candidateSha;
 }
 
 function parseIntent(
@@ -883,7 +953,7 @@ function parseIntent(
       value.schemaVersion !==
         "pintpath-production-postgres-source-lock-intent/v2" ||
       value.operation !== "production-postgres-source-repin" ||
-      value.candidateSha !== args.candidateSha ||
+      value.candidateSha !== intentCandidateSha(args) ||
       !RUN_ID.test(String(value.githubRunId)) ||
       !SHA256.test(String(value.reviewedAuthoritySha256)) ||
       !Number.isSafeInteger(value.reviewedPullRequestNumber) ||
@@ -906,7 +976,7 @@ function parseIntent(
       value.providerNormalizedPatchSha256 !==
         sha256(stable(providerNormalizedPatch()) ?? "") ||
       value.commitMessage !==
-        `${COMMIT_MESSAGE_PREFIX}${args.candidateSha}:${value.githubRunId}` ||
+        `${COMMIT_MESSAGE_PREFIX}${intentCandidateSha(args)}:${value.githubRunId}` ||
       value.externalMutationFreeze !== FREEZE_ATTESTATION ||
       value.retryAllowed !== false ||
       value.deploymentAllowed !== false ||
@@ -937,9 +1007,59 @@ function artifactBindingExact(
       env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST ?? "",
     ) &&
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_NAME ===
-      `${ARTIFACT_NAME_PREFIX}${args.candidateSha}-${parsed.intent.githubRunId}` &&
+      `${ARTIFACT_NAME_PREFIX}${intentCandidateSha(args)}-${parsed.intent.githubRunId}` &&
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_RUN_ID ===
       parsed.intent.githubRunId
+  );
+}
+
+function crossCandidateIncidentBindingExact(
+  args: Args,
+  parsed: { readonly intent: Intent; readonly sha256: string },
+  authority: ReviewedAuthority,
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  const crossCandidate =
+    args.phase === "reconcile" &&
+    args.priorCandidateSha !== null &&
+    args.priorCandidateSha !== args.candidateSha;
+  const incidentValues = [
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_ID,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_DIGEST,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_SIZE,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_TERMINAL_SHA256,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_RECEIPT_SHA256,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_EVIDENCE_EXACT,
+  ];
+  if (!crossCandidate) {
+    return incidentValues.every((value) => value === undefined || value === "");
+  }
+  return (
+    authority.recovery !== null &&
+    authority.recovery.crossCandidateExact === true &&
+    authority.recovery.intentCandidateSha ===
+      CROSS_CANDIDATE_RECOVERY.priorCandidateSha &&
+    args.priorCandidateSha === CROSS_CANDIDATE_RECOVERY.priorCandidateSha &&
+    authority.recovery.priorRunId === CROSS_CANDIDATE_RECOVERY.priorRunId &&
+    parsed.intent.candidateSha === CROSS_CANDIDATE_RECOVERY.priorCandidateSha &&
+    parsed.intent.githubRunId === CROSS_CANDIDATE_RECOVERY.priorRunId &&
+    parsed.sha256 === CROSS_CANDIDATE_RECOVERY.intentSha256 &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_ID ===
+      CROSS_CANDIDATE_RECOVERY.intentArtifactId &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST ===
+      CROSS_CANDIDATE_RECOVERY.intentArtifactDigest &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_ID ===
+      CROSS_CANDIDATE_RECOVERY.terminalArtifactId &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_DIGEST ===
+      CROSS_CANDIDATE_RECOVERY.terminalArtifactDigest &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_ARTIFACT_SIZE ===
+      CROSS_CANDIDATE_RECOVERY.terminalArtifactSize &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_TERMINAL_SHA256 ===
+      CROSS_CANDIDATE_RECOVERY.applyTerminalSha256 &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_RECEIPT_SHA256 ===
+      CROSS_CANDIDATE_RECOVERY.applyReceiptSha256 &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_EVIDENCE_EXACT ===
+      "true"
   );
 }
 
@@ -1421,14 +1541,17 @@ function pinnedRuntimeExact(state: ProviderState): boolean {
 }
 
 function patchEmpty(patch: ProviderPatch): boolean {
+  const timestampsExact =
+    (patch.createdAt === null && patch.updatedAt === null) ||
+    (patch.createdAt !== null &&
+      patch.updatedAt !== null &&
+      Date.parse(patch.createdAt) <= Date.parse(patch.updatedAt));
   return (
     patch.id === "<empty>" &&
     patch.environmentId === PRODUCTION_ENVIRONMENT_ID &&
     patch.status === "STAGED" &&
     patch.message === null &&
-    (patch.createdAt === null ||
-      patch.updatedAt === null ||
-      Date.parse(patch.createdAt) <= Date.parse(patch.updatedAt)) &&
+    timestampsExact &&
     patch.appliedAt === null &&
     patch.lastAppliedError === null &&
     Object.keys(patch.patch).length === 0
@@ -1681,7 +1804,10 @@ function policyExact(cwd: string): boolean {
         freshApplyHistoryIncludesApplyAndReconcileRuns: true,
         priorSameCandidateRunAllowedOnlyWhenWriterSkipped: true,
         reconcilePriorRunIdRequired: true,
+        reconcilePriorIntentCandidateShaRequired: true,
         reconcileSelectedPriorRunMustBeOneAmbiguousApply: true,
+        reconcileCrossCandidateDirectSingleParentSuccessorRequired: true,
+        reconcileCrossCandidateRecoveryPinnedIncidentOnly: true,
         reconcileSecondMayHaveWrittenRunAllowed: false,
         reconcilePriorRunCompletionRequired: true,
         reconcileSettlementSeconds: 60,
@@ -1722,11 +1848,16 @@ function policyExact(cwd: string): boolean {
           priorRunArtifactIdentityAndDigestRequired: true,
           reviewedAuthorityMustBindExactPriorRun: true,
           priorRunGraceAttestationRequired: true,
+          crossCandidatePriorTerminalArtifactRequired: true,
+          crossCandidateEntryMustBeDismissedWithEmptyStagedPatch: true,
+          crossCandidateConfigEtagPreservedThroughPrecommit: true,
+          crossCandidateFinalConfigEtagMustChange: true,
           additionalDismissAllowed: false,
           maximumStageAttempts: 1,
           maximumCommitAttempts: 1,
         },
       },
+      crossCandidateRecoveryIncident: CROSS_CANDIDATE_RECOVERY,
       mutationPlan: {
         confirmation: CONFIRMATION,
         requestedPatch: requestedPatch(),
@@ -1787,6 +1918,8 @@ function policyExact(cwd: string): boolean {
         terminalEvidenceRequired: true,
         finalReceiptEvidenceRequired: true,
         providerCredentialsAllowedInEvidence: false,
+        crossCandidatePriorTerminalArtifactRequired: true,
+        crossCandidatePriorTerminalAndReceiptHashesRequired: true,
         secretMaterialAllowed: false,
         secretDerivedCommitmentsAllowed: false,
         rawProviderMetadataAllowed: false,
@@ -2085,6 +2218,7 @@ async function stageAndCommit(
   stateChecks: Checks,
   alreadyStaged: ProviderState | null,
   recoveryWriteAllowed: (() => boolean) | null = null,
+  requiredConfigEtag: string | null = null,
 ): Promise<{ patchId: string; commitLostAck: boolean }> {
   let staged = alreadyStaged;
   let acknowledgedPatchId: string | null = null;
@@ -2121,6 +2255,8 @@ async function stageAndCommit(
   }
   if (
     !dismissedStagedExact(staged) ||
+    (requiredConfigEtag !== null &&
+      staged.configEtag !== requiredConfigEtag) ||
     runtimeContinuitySha256(staged) !== baselineRuntimeSha256
   ) {
     throw new Error("stage_readback_invalid");
@@ -2139,6 +2275,8 @@ async function stageAndCommit(
   const second = await queryPatch(dependencies, metadataToken, patchId);
   stateChecks.stagedReadbackTwoExact =
     dismissedStagedExact(precommit) &&
+    (requiredConfigEtag === null ||
+      precommit.configEtag === requiredConfigEtag) &&
     precommit.stagedPatch.id === patchId &&
     stagedPatchReadbackExact(second);
   stateChecks.precommitRaceAbsent =
@@ -2183,9 +2321,13 @@ async function verifyPostflight(
   intent: Intent,
   runtimeSha256: string,
   stateChecks: Checks,
+  priorConfigEtag: string | null = null,
 ): Promise<boolean> {
   const after = await queryState(dependencies, metadataToken);
   stateChecks.desiredStateExact = desiredStateExact(after);
+  if (priorConfigEtag !== null && after.configEtag === priorConfigEtag) {
+    stateChecks.desiredStateExact = false;
+  }
   stateChecks.runtimeContinuityExact =
     runtimeContinuitySha256(after) === runtimeSha256;
   stateChecks.inventoryContinuityExact = stateChecks.runtimeContinuityExact;
@@ -2312,11 +2454,14 @@ export async function runProtectedProductionPostgresSourceRepin(
     stateChecks.intentExact = parsedIntent !== null;
     if (parsedIntent === null) throw new Error("intent_invalid");
     intentSha256 = parsedIntent.sha256;
-    stateChecks.artifactBindingExact = artifactBindingExact(
-      parsedIntent,
-      args,
-      dependencies.env,
-    );
+    stateChecks.artifactBindingExact =
+      artifactBindingExact(parsedIntent, args, dependencies.env) &&
+      crossCandidateIncidentBindingExact(
+        args,
+        parsedIntent,
+        authority,
+        dependencies.env,
+      );
     if (!stateChecks.artifactBindingExact) throw new Error("artifact_invalid");
     const intent = parsedIntent.intent;
 
@@ -2337,6 +2482,9 @@ export async function runProtectedProductionPostgresSourceRepin(
         dependencies.env
           .PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_ID ===
           intent.githubRunId &&
+        dependencies.env
+          .PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_CANDIDATE_SHA ===
+          intent.candidateSha &&
         dependencies.env
           .PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_GRACE ===
           PRIOR_RUN_GRACE_ATTESTATION;
@@ -2420,12 +2568,52 @@ export async function runProtectedProductionPostgresSourceRepin(
     } else {
       const current = await queryState(dependencies, productionMetadataToken);
       const runtimeSha = runtimeContinuitySha256(current);
+      const crossCandidateRecovery =
+        authority.recovery?.crossCandidateExact === true;
       stateChecks.baselineExact =
         pinnedRuntimeExact(current) &&
         runtimeSha === intent.runtimeBeforeSha256;
       if (!stateChecks.baselineExact) throw new Error("runtime_invalid");
 
-      if (
+      if (crossCandidateRecovery) {
+        stateChecks.baselineExact =
+          stateChecks.baselineExact &&
+          dismissedBaselineExact(current) &&
+          current.configEtag ===
+            CROSS_CANDIDATE_RECOVERY.dismissedConfigEtag;
+        if (
+          !stateChecks.baselineExact ||
+          !stateChecks.priorRunGraceExact
+        ) {
+          throw new Error("cross_candidate_recovery_invalid");
+        }
+        const result = await stageAndCommit(
+          dependencies,
+          productionMetadataToken,
+          mutationToken,
+          intent,
+          runtimeSha,
+          attempts,
+          stateChecks,
+          null,
+          priorRunGraceNowExact,
+          CROSS_CANDIDATE_RECOVERY.dismissedConfigEtag,
+        );
+        patchId = result.patchId;
+        if (
+          !(await verifyPostflight(
+            dependencies,
+            productionMetadataToken,
+            intent,
+            runtimeSha,
+            stateChecks,
+            CROSS_CANDIDATE_RECOVERY.dismissedConfigEtag,
+          ))
+        ) {
+          throw new Error("postflight_invalid");
+        }
+        outcome = "reconciled_stage_and_commit";
+      } else if (
         desiredStateExact(current) &&
         committedHistoryExact(current, intent) !== null
       ) {
@@ -2521,6 +2709,7 @@ export async function runProtectedProductionPostgresSourceRepin(
 
 export const protectedProductionPostgresSourceRepinInternals = {
   ARMED_AUTO_UPDATES,
+  CROSS_CANDIDATE_RECOVERY,
   DISMISSED_AUTO_UPDATES,
   DESIRED_AUTO_UPDATES,
   armedBaselineExact,

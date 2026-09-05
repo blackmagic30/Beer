@@ -13,6 +13,9 @@ import {
 const CANDIDATE = "a".repeat(40);
 const REVIEWED_HEAD = "b".repeat(40);
 const TREE = "c".repeat(40);
+const PRIOR_CANDIDATE = "d".repeat(40);
+const PRIOR_REVIEWED_HEAD = "e".repeat(40);
+const PRIOR_TREE = "f".repeat(40);
 const INCIDENT_ORIGINAL_CANDIDATE =
   "ac7130e0306802825922d21a4c61135b84edd43b";
 const INCIDENT_ORIGINAL_REVIEWED_HEAD =
@@ -127,10 +130,9 @@ function jobs(run: Run, stepConclusion: string) {
   const cutover = run.path.startsWith(CUTOVER_PATH);
   const productionPostgresSourceRepin =
     run.path.startsWith(PRODUCTION_POSTGRES_SOURCE_REPIN_PATH) &&
-    [
-      PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
-      PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
-    ].includes(run.display_title);
+    /^Production Postgres source lock \| (?:apply|reconcile) \| [a-f0-9]{40}$/.test(
+      run.display_title,
+    );
   const coldPrepare = run.path.startsWith(COLD_RECOVERY_PATH) &&
     run.display_title ===
       `Permanent staging cold recovery | prepare | ${CANDIDATE}`;
@@ -321,6 +323,11 @@ function harness(options: {
   deploymentRunId?: string;
   cutoverMode?: string;
   priorRunId?: string | null;
+  priorCandidateSha?: string | null;
+  candidateParentSha?: string;
+  priorMergedAt?: string;
+  priorCandidateTreeSha?: string;
+  priorReviewedTreeSha?: string;
   prepareRunId?: string | null;
   target?: string;
   variableName?: string;
@@ -349,6 +356,9 @@ function harness(options: {
   const productionPostgresSourceRepin =
     productionPostgresSourceRepinApply ||
     productionPostgresSourceRepinReconcile;
+  const priorCandidateSha = productionPostgresSourceRepinReconcile
+    ? options.priorCandidateSha ?? CANDIDATE
+    : null;
   const coldPrepare = operation === "cold-recovery-prepare";
   const coldPrepareReconcile =
     operation === "cold-recovery-reconcile-prepare";
@@ -426,6 +436,8 @@ function harness(options: {
         ? "2026-08-28T11:20:00.000Z"
         : cleanupCloseout
         ? "2026-08-29T10:20:00.000Z"
+        : priorCandidateSha !== null && priorCandidateSha !== CANDIDATE
+        ? "2026-08-14T03:00:00.000Z"
         : "2026-08-14T02:00:00.000Z",
     }),
     ...options.current,
@@ -474,11 +486,13 @@ function harness(options: {
   const ambiguousProductionPostgresSourceRepin = workflowRun({
     id: 659,
     path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
-    displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+    displayTitle:
+      `Production Postgres source lock | apply | ${priorCandidateSha}`,
     status: "completed",
     conclusion: "failure",
     createdAt: "2026-08-14T01:00:00.000Z",
     updatedAt: "2026-08-14T01:59:00.000Z",
+    headSha: priorCandidateSha ?? CANDIDATE,
   });
   const productionPostgresSourceRepinRuns =
     options.productionPostgresSourceRepinRuns ??
@@ -586,6 +600,8 @@ function harness(options: {
           ? "2026-08-28T11:00:00.000Z"
           : cleanupCloseout
           ? "2026-08-29T10:10:00.000Z"
+          : priorCandidateSha !== null && priorCandidateSha !== CANDIDATE
+          ? "2026-08-14T02:30:00.000Z"
           : "2026-08-14T00:30:00.000Z"),
         user: { id: 101 },
         merged_by: { id: 202 },
@@ -603,6 +619,32 @@ function harness(options: {
         author_association: "MEMBER",
       }]);
     }
+    if (url.includes(`/commits/${PRIOR_CANDIDATE}/pulls?`)) {
+      return response([{
+        number: 25,
+        state: "closed",
+        merge_commit_sha: PRIOR_CANDIDATE,
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: { repo: { full_name: REPOSITORY } },
+      }]);
+    }
+    if (url.endsWith("/pulls/25")) {
+      return response({
+        number: 25,
+        state: "closed",
+        merged: true,
+        draft: false,
+        merge_commit_sha: PRIOR_CANDIDATE,
+        merged_at: options.priorMergedAt ?? "2026-08-14T00:10:00.000Z",
+        user: { id: 101 },
+        merged_by: { id: 202 },
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: {
+          sha: PRIOR_REVIEWED_HEAD,
+          repo: { full_name: REPOSITORY },
+        },
+      });
+    }
     if (url.endsWith("/collaborators/trusted-reviewer/permission")) {
       return response({
         permission: "write",
@@ -619,7 +661,7 @@ function harness(options: {
             : cleanupCloseout
             ? options.incidentCandidateParent ??
               CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE
-            : "d".repeat(40),
+            : options.candidateParentSha ?? PRIOR_CANDIDATE,
         }],
       });
     }
@@ -628,6 +670,20 @@ function harness(options: {
         sha: REVIEWED_HEAD,
         tree: { sha: TREE },
         parents: [{ sha: "e".repeat(40) }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${PRIOR_CANDIDATE}`)) {
+      return response({
+        sha: PRIOR_CANDIDATE,
+        tree: { sha: options.priorCandidateTreeSha ?? PRIOR_TREE },
+        parents: [{ sha: "1".repeat(40) }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${PRIOR_REVIEWED_HEAD}`)) {
+      return response({
+        sha: PRIOR_REVIEWED_HEAD,
+        tree: { sha: options.priorReviewedTreeSha ?? PRIOR_TREE },
+        parents: [{ sha: "2".repeat(40) }],
       });
     }
     if (url.includes(`/commits/${INCIDENT_ORIGINAL_CANDIDATE}/pulls?`)) {
@@ -937,6 +993,9 @@ function harness(options: {
         : cleanupCloseout
         ? options.priorRunId ?? String(CLEANUP_CLOSEOUT_ORIGINAL_RUN_ID)
         : options.priorRunId ?? null,
+      priorCandidateSha: productionPostgresSourceRepinReconcile
+        ? priorCandidateSha
+        : null,
       prepareRunId: coldReconcile ? options.prepareRunId ?? "675" : null,
       target: runtime ? target : null,
       variableName: runtime ? variableName : null,
@@ -1287,6 +1346,7 @@ describe("reviewed candidate mutation authority", () => {
       ok: false,
       failureCode: "github_reviewed_candidate_authority_arguments_invalid",
     });
+
   });
 
   it.each([
@@ -1969,6 +2029,8 @@ describe("reviewed candidate mutation authority", () => {
       workflowRunAttempt: 1,
       safePriorSkippedWriteRunIds: [],
       priorAmbiguousProductionPostgresSourceRepinRunId: "659",
+      priorProductionPostgresSourceRepinIntentCandidateSha: CANDIDATE,
+      crossCandidateProductionPostgresSourceRepinRecoveryExact: false,
       exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
       secondProductionPostgresRemediationDismissPreventedExact: true,
       runnerLossRecoveryOriginalRunCompletedAt:
@@ -1981,7 +2043,145 @@ describe("reviewed candidate mutation authority", () => {
     });
   });
 
-  it("requires the production Postgres reconciliation CLI to bind a prior run", async () => {
+  it("binds a cross-candidate production Postgres reconciliation to the reviewed direct successor and complete history", async () => {
+    const selected = workflowRun({
+      id: 659,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | apply | ${PRIOR_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+      updatedAt: "2026-08-14T01:59:00.000Z",
+      headSha: PRIOR_CANDIDATE,
+    });
+    const priorSkipped = workflowRun({
+      id: 657,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | reconcile | ${PRIOR_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-08-14T00:20:00.000Z",
+      updatedAt: "2026-08-14T00:25:00.000Z",
+      headSha: PRIOR_CANDIDATE,
+    });
+    const currentSkipped = workflowRun({
+      id: 658,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      conclusion: "failure",
+      createdAt: "2026-08-14T02:35:00.000Z",
+      updatedAt: "2026-08-14T02:40:00.000Z",
+    });
+    const current = workflowRun({
+      id: 661,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-14T03:00:00.000Z",
+    });
+    const fixture = harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorCandidateSha: PRIOR_CANDIDATE,
+      productionPostgresSourceRepinRuns: [
+        priorSkipped,
+        selected,
+        currentSkipped,
+        current,
+      ],
+      jobEvidence: {
+        657: jobs(priorSkipped, "skipped"),
+        658: jobs(currentSkipped, "skipped"),
+        659: jobs(selected, "failure"),
+      },
+    });
+    await expect(fixture.verify()).resolves.toMatchObject({
+      candidateSha: CANDIDATE,
+      priorProductionPostgresSourceRepinIntentCandidateSha: PRIOR_CANDIDATE,
+      crossCandidateProductionPostgresSourceRepinRecoveryExact: true,
+      priorAmbiguousProductionPostgresSourceRepinRunId: "659",
+      safePriorSkippedWriteRunIds: ["657", "658"],
+      exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
+      runnerLossRecoverySettlementSeconds: 60,
+      runnerLossRecoveryGraceHours: 24,
+    });
+    const requestedUrls = fixture.fetchImpl.mock.calls.map(([url]) =>
+      decodeURIComponent(String(url))
+    );
+    expect(requestedUrls.some((url) =>
+      url.includes(`/commits/${PRIOR_CANDIDATE}/pulls?`)
+    )).toBe(true);
+    expect(requestedUrls.some((url) =>
+      url.includes(
+        "created=2026-08-14T00:10:00.000Z..2026-08-14T03:00:00.000Z",
+      )
+    )).toBe(true);
+  });
+
+  it("rejects cross-candidate production Postgres recovery without exact reviewed direct-successor authority", async () => {
+    const failureCode =
+      "production_postgres_source_repin_reconciliation_history_invalid";
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorCandidateSha: PRIOR_CANDIDATE,
+      candidateParentSha: "9".repeat(40),
+    }).verify()).rejects.toThrow(failureCode);
+
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorCandidateSha: PRIOR_CANDIDATE,
+      priorReviewedTreeSha: "8".repeat(40),
+    }).verify()).rejects.toThrow("reviewed_pull_request_invalid");
+  });
+
+  it("rejects unrelated candidates and recovery outside the 24-hour cross-candidate window", async () => {
+    const selected = workflowRun({
+      id: 659,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | apply | ${PRIOR_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+      updatedAt: "2026-08-14T01:30:00.000Z",
+      headSha: PRIOR_CANDIDATE,
+    });
+    const current = workflowRun({
+      id: 661,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-08-15T01:30:01.000Z",
+    });
+    const unrelated = workflowRun({
+      id: 658,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | apply | ${"7".repeat(40)}`,
+      conclusion: "failure",
+      createdAt: "2026-08-14T02:40:00.000Z",
+      headSha: "7".repeat(40),
+    });
+    const failureCode =
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid";
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorCandidateSha: PRIOR_CANDIDATE,
+      current,
+      productionPostgresSourceRepinRuns: [selected, unrelated, current],
+      jobEvidence: { 659: jobs(selected, "failure") },
+    }).verify()).rejects.toThrow(failureCode);
+
+    await expect(harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorCandidateSha: PRIOR_CANDIDATE,
+      current,
+      productionPostgresSourceRepinRuns: [selected, current],
+      jobEvidence: { 659: jobs(selected, "failure") },
+    }).verify()).rejects.toThrow(failureCode);
+  });
+
+  it("requires the production Postgres reconciliation CLI to bind a prior run and intent candidate", async () => {
     const fixture = harness({
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
     });
@@ -1990,6 +2190,7 @@ describe("reviewed candidate mutation authority", () => {
       "--candidate-sha", CANDIDATE,
       "--operation", PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
       "--prior-run-id", "659",
+      "--prior-candidate-sha", CANDIDATE,
     ], {
       env: fixture.env,
       fetchImpl: fixture.fetchImpl,
@@ -2018,6 +2219,21 @@ describe("reviewed candidate mutation authority", () => {
       failureCode: "github_reviewed_candidate_authority_arguments_invalid",
     });
 
+    summary = "";
+    await expect(runGithubReviewedCandidateAuthority([
+      "--candidate-sha", CANDIDATE,
+      "--operation", PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      "--prior-run-id", "659",
+    ], {
+      env: fixture.env,
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(1);
+    expect(JSON.parse(summary)).toMatchObject({
+      ok: false,
+      failureCode: "github_reviewed_candidate_authority_arguments_invalid",
+    });
+
     const applyFixture = harness({
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
     });
@@ -2026,6 +2242,21 @@ describe("reviewed candidate mutation authority", () => {
       "--candidate-sha", CANDIDATE,
       "--operation", PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
       "--prior-run-id", "659",
+    ], {
+      env: applyFixture.env,
+      fetchImpl: applyFixture.fetchImpl,
+      writeOutput: (value: string) => { summary += value; },
+    })).resolves.toBe(1);
+    expect(JSON.parse(summary)).toMatchObject({
+      ok: false,
+      failureCode: "github_reviewed_candidate_authority_arguments_invalid",
+    });
+
+    summary = "";
+    await expect(runGithubReviewedCandidateAuthority([
+      "--candidate-sha", CANDIDATE,
+      "--operation", PRODUCTION_POSTGRES_SOURCE_REPIN_OPERATION,
+      "--prior-candidate-sha", PRIOR_CANDIDATE,
     ], {
       env: applyFixture.env,
       fetchImpl: applyFixture.fetchImpl,
