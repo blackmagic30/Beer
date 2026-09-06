@@ -51,12 +51,19 @@ history. Apply must persist and upload its secret-free intent before the
 production mutation credential is referenced. If its writer starts and the
 result becomes ambiguous, never rerun it: after the fixed settlement interval,
 use one reconcile dispatch bound to the exact prior run and artifact within its
-fixed recovery window. The current pinned incident permits 168 hours and one
-exact reviewed PR #83 bridge whose failed run skipped the writer.
-Every ordinary recovery retains the 24-hour window. Reconciliation may only
-read desired state, commit the
-already exact staged patch, stage-and-commit from the exact dismissed state, or
-report the original armed state as not applied; all other states fail closed.
+fixed recovery window. The current pinned incident keeps the original 168-hour
+ceiling and binds the exact reviewed PR #83 bridge whose failed run skipped the
+writer, followed by the exact reviewed PR #84 candidate whose failed run made
+one stage call and no dismiss or commit call. That stage-only evidence opens a
+separate 24-hour commit-only window bound to the exact staged patch ID,
+timestamps, content, and config ETag. It does not permit another stage attempt.
+Every ordinary same-candidate recovery retains its 24-hour window.
+Reconciliation may only read desired state, commit an exactly authorized staged
+patch, perform the ordinary same-candidate stage-and-commit path where no stage
+was previously attempted, or report the original armed state as not applied;
+all other states fail closed. Pinned commit-only success must preserve the exact
+staged patch ID and creation timestamp, with application no earlier than the
+stage-only run's reviewed settlement boundary.
 
 ## Automated Local Gates
 

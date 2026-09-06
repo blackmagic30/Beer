@@ -27,7 +27,7 @@ const SNAPSHOT_ID = "03f6d2ff-e78e-42a5-a78f-216a4a1f498d";
 const RUNNING_INSTANCE_ID = "0a8b344a-8d17-4f77-8f1b-1677dcf122de";
 const VOLUME_INSTANCE_ID = "74cbfae2-3383-40b4-8464-21a403ca509d";
 const VOLUME_ID = "a3585b0a-b57a-4b69-ad45-05f798e739e1";
-const PATCH_ID = "11111111-1111-4111-8111-111111111111";
+const PATCH_ID = "05d6c851-3d44-4b27-90cf-9222fbe6e7a7";
 const BASELINE_ETAG =
   "e50589bf4093433313fd07b844b6e25eeb69878679626006edb9784629989bf9";
 const MUTABLE_SOURCE = "ghcr.io/railwayapp-templates/postgres-ssl:17";
@@ -44,6 +44,10 @@ const INCIDENT_CANDIDATE =
 const INCIDENT_RUN_ID = "33923801697";
 const RECOVERY_BRIDGE_CANDIDATE =
   "4edaddbee03e44f7d2e0cb808b2357e7e5739db5";
+const STAGED_RECOVERY_CANDIDATE =
+  "e4ae715f997a14aec247c50e1b21f69c78de0fd0";
+const STAGED_RECOVERY_RUN_ID = "34025400175";
+const STAGED_RECOVERY_RUN_COMPLETED_AT = "2026-09-06T09:47:28Z";
 const INCIDENT_DISMISSED_ETAG =
   "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f";
 
@@ -170,8 +174,8 @@ function stagedPatch() {
     environmentId: PRODUCTION_ENVIRONMENT_ID,
     status: "STAGED",
     message: null,
-    createdAt: "2026-09-01T00:00:00.000Z",
-    updatedAt: "2026-09-01T00:00:01.000Z",
+    createdAt: "2026-09-06T09:47:23.893Z",
+    updatedAt: "2026-09-06T09:47:23.893Z",
     appliedAt: null,
     lastAppliedError: null,
     patch:
@@ -180,14 +184,21 @@ function stagedPatch() {
 }
 
 function committedPatch(runId: string, candidateSha = CANDIDATE) {
+  const pinnedIncident = candidateSha === INCIDENT_CANDIDATE;
   return {
     id: PATCH_ID,
     environmentId: PRODUCTION_ENVIRONMENT_ID,
     status: "COMMITTED",
     message: `pintpath:production-postgres-source-lock:${candidateSha}:${runId}`,
-    createdAt: "2026-09-01T00:00:00.000Z",
-    updatedAt: "2026-09-01T00:00:03.000Z",
-    appliedAt: "2026-09-01T00:00:02.000Z",
+    createdAt: pinnedIncident
+      ? "2026-09-06T09:47:23.893Z"
+      : "2026-09-01T00:00:00.000Z",
+    updatedAt: pinnedIncident
+      ? "2026-09-06T09:48:31.000Z"
+      : "2026-09-01T00:00:03.000Z",
+    appliedAt: pinnedIncident
+      ? "2026-09-06T09:48:30.000Z"
+      : "2026-09-01T00:00:02.000Z",
     lastAppliedError: null,
     patch:
       protectedProductionPostgresSourceRepinInternals.providerNormalizedPatch(),
@@ -466,7 +477,12 @@ function writeReconcileAuthority(
       productionPostgresSourceRepinRecoveryChainCandidateShas:
         priorCandidateSha === CANDIDATE
           ? [CANDIDATE]
-          : [priorCandidateSha, RECOVERY_BRIDGE_CANDIDATE, CANDIDATE],
+          : [
+              priorCandidateSha,
+              RECOVERY_BRIDGE_CANDIDATE,
+              STAGED_RECOVERY_CANDIDATE,
+              CANDIDATE,
+            ],
       productionPostgresSourceRepinRecoveryBridgeExact:
         priorCandidateSha !== CANDIDATE,
       exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
@@ -476,6 +492,22 @@ function writeReconcileAuthority(
       runnerLossRecoveryGraceHours:
         priorCandidateSha === CANDIDATE ? 24 : 168,
       runnerLossRecoveryWithinGraceExact: true,
+      productionPostgresSourceRepinStagedRecoveryRunExact:
+        priorCandidateSha !== CANDIDATE,
+      productionPostgresSourceRepinStagedRecoveryArtifactMetadataExact:
+        priorCandidateSha !== CANDIDATE,
+      priorPossiblyWritingProductionPostgresSourceReconcileRunId:
+        priorCandidateSha === CANDIDATE ? null : STAGED_RECOVERY_RUN_ID,
+      noAdditionalPossiblyWritingProductionPostgresSourceLockRunsExact: true,
+      runnerLossRecoveryStageRunCompletedAt:
+        priorCandidateSha === CANDIDATE
+          ? null
+          : STAGED_RECOVERY_RUN_COMPLETED_AT,
+      runnerLossRecoveryStageSettlementSeconds:
+        priorCandidateSha === CANDIDATE ? null : 60,
+      runnerLossRecoveryStageGraceHours:
+        priorCandidateSha === CANDIDATE ? null : 24,
+      runnerLossRecoveryStageWithinGraceExact: true,
     })}\n`,
     { mode: 0o600 },
   );
@@ -778,6 +810,18 @@ function boundEnvironment(
             "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_EVIDENCE_EXACT:
             "true",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_ID:
+            "9986949361",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_DIGEST:
+            "sha256:a48e945315ded8de15dabe89e77c5ce34f4b17f9b66aeb5c41ff05212016224f",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_SIZE:
+            "4442",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_TERMINAL_SHA256:
+            "02af11abcbb0a6296a25bc6aeee79d9b7adba532d5501b509b0b95a48b5c30e6",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_RECEIPT_SHA256:
+            "c7d351b11b355b5cdea2be8451d4933f4db609fcdf72f38e69ce2909e1846d3d",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT:
+            "true",
         }
       : {}),
   };
@@ -802,9 +846,9 @@ function mutationCalls(provider: ReturnType<typeof providerMock>) {
 }
 
 describe("protected production Postgres source lock", () => {
-  it("pins and validates the complete reviewed v3 policy contract", () => {
+  it("pins and validates the complete reviewed v4 policy contract", () => {
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256).toBe(
-      "b384d6433c45a365ab70ec395213e10f7d3be881bc6b8186d2653d95a80754f7",
+      "e2588d3b59995c17d15b6ca1cf497c8a00c595ef97c7234bffaa9341a39a94fa",
     );
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256).toBe(
       "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
@@ -1396,19 +1440,18 @@ describe("protected production Postgres source lock", () => {
     ).toBe(false);
   });
 
-  it("recovers only the pinned cross-candidate incident from exact dismissed+empty state without another dismiss", async () => {
+  it("recovers only the pinned cross-candidate incident from its exact staged patch without another stage or dismiss", async () => {
     const prepared = historicalIncidentPrepared();
     writeReconcileAuthority(
       prepared.evidence.authorityFile,
       RUN_ID,
       INCIDENT_RUN_ID,
       [],
-      "2026-09-01T00:08:00.000Z",
+      "2026-09-04T22:07:38.000Z",
       INCIDENT_CANDIDATE,
     );
     const provider = providerMock({
       states: [
-        providerState("dismissed", { configEtag: INCIDENT_DISMISSED_ETAG }),
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
         providerState("desired", {
@@ -1423,20 +1466,20 @@ describe("protected production Postgres source lock", () => {
       "reconcile",
       prepared.evidence,
       provider,
-      [baselineBoundary(), stagedBoundary(), boundary()],
+      [stagedBoundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code, result.output).toBe(0);
     expect(result.receipt).toMatchObject({
       candidateSha: CANDIDATE,
-      outcome: "reconciled_stage_and_commit",
+      outcome: "reconciled_commit_only",
       intentSha256:
         "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
-      attempts: { dismiss: 0, stage: 1, commit: 1 },
-      totalMutationCalls: 2,
+      attempts: { dismiss: 0, stage: 0, commit: 1 },
+      totalMutationCalls: 1,
       deploymentAllowed: false,
       retryAllowed: false,
       checks: {
@@ -1448,17 +1491,281 @@ describe("protected production Postgres source lock", () => {
       },
     });
     expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
-      "PintPathProductionPostgresSourceLockStage",
       "PintPathProductionPostgresSourceLockCommit",
     ]);
   });
 
   it.each([
-    ["at the exact 168-hour deadline", "2026-08-25T00:10:00.000Z", 0, 2],
-    ["one millisecond after 168 hours", "2026-08-25T00:09:59.999Z", 1, 0],
+    [
+      "staged patch creation identity",
+      { createdAt: "2026-09-06T09:47:23.892Z" },
+    ],
+    [
+      "staged recovery run settlement boundary",
+      {
+        appliedAt: "2026-09-06T09:48:00.000Z",
+        updatedAt: "2026-09-06T09:48:01.000Z",
+      },
+    ],
+  ])("requires committed history to preserve the pinned %s", async (
+    _label,
+    substitution,
+  ) => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const substitutedCommittedPatch = {
+      ...committedPatch(INCIDENT_RUN_ID, INCIDENT_CANDIDATE),
+      ...substitution,
+    };
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("desired", {
+          runId: INCIDENT_RUN_ID,
+          intentCandidateSha: INCIDENT_CANDIDATE,
+          configEtag: "d".repeat(64),
+          historyOverride: [substitutedCommittedPatch],
+        }),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 0, stage: 0, commit: 1 },
+      checks: { committedHistoryExact: false },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+  });
+
+  it("cross-candidate recovery fails closed from the dismissed empty-patch state after the one pinned stage attempt", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const provider = providerMock({
+      states: [
+        providerState("dismissed", { configEtag: INCIDENT_DISMISSED_ETAG }),
+      ],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      attempts: { dismiss: 0, stage: 0, commit: 0 },
+      totalMutationCalls: 0,
+      checks: { baselineExact: false },
+    });
+    expect(mutationCalls(provider)).toEqual([]);
+  });
+
+  it.each([
+    ["patch id", (state: ReturnType<typeof providerState>) => {
+      state.data.staged.id = "11111111-1111-4111-8111-111111111111";
+    }],
+    ["created timestamp", (state: ReturnType<typeof providerState>) => {
+      state.data.staged.createdAt = "2026-09-06T09:47:23.894Z";
+    }],
+    ["updated timestamp", (state: ReturnType<typeof providerState>) => {
+      state.data.staged.updatedAt = "2026-09-06T09:47:23.894Z";
+    }],
+  ])(
+    "cross-candidate recovery rejects a substituted staged recovery %s before any write",
+    async (_label, mutate) => {
+      const prepared = historicalIncidentPrepared();
+      writeReconcileAuthority(
+        prepared.evidence.authorityFile,
+        RUN_ID,
+        INCIDENT_RUN_ID,
+        [],
+        "2026-09-04T22:07:38.000Z",
+        INCIDENT_CANDIDATE,
+      );
+      const staged = providerState("staged", {
+        configEtag: INCIDENT_DISMISSED_ETAG,
+      });
+      mutate(staged);
+      const provider = providerMock({ states: [staged] });
+      const result = await run(
+        "reconcile",
+        prepared.evidence,
+        provider,
+        [],
+        boundEnvironment("reconcile", prepared, RUN_ID, true),
+        prepared.intentFile,
+        () => Date.parse("2026-09-06T10:00:00.000Z"),
+        INCIDENT_CANDIDATE,
+      );
+      expect(result.code).toBe(1);
+      expect(result.receipt).toMatchObject({
+        outcome: "failed_before_write",
+        attempts: { dismiss: 0, stage: 0, commit: 0 },
+        checks: { baselineExact: false },
+      });
+      expect(mutationCalls(provider)).toEqual([]);
+    },
+  );
+
+  it("cross-candidate recovery rejects a substituted staged-run evidence artifact before any write", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const env = boundEnvironment("reconcile", prepared, RUN_ID, true);
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_ID =
+      "9986949362";
+    const provider = providerMock();
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [],
+      env,
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      totalMutationCalls: 0,
+      checks: { artifactBindingExact: false },
+    });
+    expect(mutationCalls(provider)).toEqual([]);
+  });
+
+  it("cross-candidate recovery rebinds the pinned patch timestamps on both patch readbacks", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const changedReadback = patchReadback();
+    changedReadback.data.active.updatedAt = "2026-09-06T09:47:23.894Z";
+    changedReadback.data.selected.updatedAt = "2026-09-06T09:47:23.894Z";
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+      ],
+      patches: [changedReadback],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      attempts: { dismiss: 0, stage: 0, commit: 0 },
+      checks: { stagedReadbackOneExact: false },
+    });
+    expect(mutationCalls(provider)).toEqual([]);
+  });
+
+  it("cross-candidate recovery rejects drift on the second pinned patch readback", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const changedSecondReadback = patchReadback();
+    changedSecondReadback.data.selected.updatedAt =
+      "2026-09-06T09:47:23.894Z";
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+      ],
+      patches: [patchReadback(), changedSecondReadback],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      attempts: { dismiss: 0, stage: 0, commit: 0 },
+      checks: {
+        stagedReadbackOneExact: true,
+        stagedReadbackTwoExact: false,
+        precommitRaceAbsent: false,
+      },
+    });
+    expect(mutationCalls(provider)).toEqual([]);
+  });
+
+  it.each([
+    ["at the exact staged-run 24-hour deadline", "2026-09-04T22:07:38.000Z", "2026-09-07T09:47:28.000Z", 0, 1],
+    ["one millisecond after the staged-run 24-hour deadline", "2026-09-04T22:07:38.000Z", "2026-09-07T09:47:28.001Z", 1, 0],
   ])(
     "cross-candidate recovery is bounded %s",
-    async (_label, originalRunCompletedAt, expectedCode, expectedWrites) => {
+    async (
+      _label,
+      originalRunCompletedAt,
+      currentTime,
+      expectedCode,
+      expectedWrites,
+    ) => {
       const prepared = historicalIncidentPrepared();
       writeReconcileAuthority(
         prepared.evidence.authorityFile,
@@ -1470,7 +1777,6 @@ describe("protected production Postgres source lock", () => {
       );
       const provider = providerMock({
         states: [
-          providerState("dismissed", { configEtag: INCIDENT_DISMISSED_ETAG }),
           providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
           providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
           providerState("desired", {
@@ -1485,10 +1791,10 @@ describe("protected production Postgres source lock", () => {
         "reconcile",
         prepared.evidence,
         provider,
-        [baselineBoundary(), stagedBoundary(), boundary()],
+        [stagedBoundary(), boundary()],
         boundEnvironment("reconcile", prepared, RUN_ID, true),
         prepared.intentFile,
-        () => Date.parse("2026-09-01T00:10:00.000Z"),
+        () => Date.parse(currentTime),
         INCIDENT_CANDIDATE,
       );
       expect(result.code, result.output).toBe(expectedCode);
@@ -1506,11 +1812,11 @@ describe("protected production Postgres source lock", () => {
       RUN_ID,
       INCIDENT_RUN_ID,
       [],
-      "2026-09-01T00:08:00.000Z",
+      "2026-09-04T22:07:38.000Z",
       INCIDENT_CANDIDATE,
     );
     const provider = providerMock({
-      states: [providerState("dismissed", { configEtag: "e".repeat(64) })],
+      states: [providerState("staged", { configEtag: "e".repeat(64) })],
     });
     const result = await run(
       "reconcile",
@@ -1519,7 +1825,7 @@ describe("protected production Postgres source lock", () => {
       [],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -1529,6 +1835,49 @@ describe("protected production Postgres source lock", () => {
       checks: { baselineExact: false },
     });
     expect(mutationCalls(provider)).toEqual([]);
+  });
+
+  it("cross-candidate recovery requires the config ETag to change after commit", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("desired", {
+          runId: INCIDENT_RUN_ID,
+          intentCandidateSha: INCIDENT_CANDIDATE,
+          configEtag: INCIDENT_DISMISSED_ETAG,
+        }),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 0, stage: 0, commit: 1 },
+      checks: { desiredStateExact: false },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
   });
 
   it.each([
@@ -1543,7 +1892,7 @@ describe("protected production Postgres source lock", () => {
         RUN_ID,
         INCIDENT_RUN_ID,
         [],
-        "2026-09-01T00:08:00.000Z",
+        "2026-09-04T22:07:38.000Z",
         INCIDENT_CANDIDATE,
       );
       const malformed = providerState("dismissed", {
@@ -1559,7 +1908,7 @@ describe("protected production Postgres source lock", () => {
         [],
         boundEnvironment("reconcile", prepared, RUN_ID, true),
         prepared.intentFile,
-        () => Date.parse("2026-09-01T00:10:00.000Z"),
+        () => Date.parse("2026-09-06T10:00:00.000Z"),
         INCIDENT_CANDIDATE,
       );
       expect(result.code).toBe(1);
@@ -1572,40 +1921,39 @@ describe("protected production Postgres source lock", () => {
     },
   );
 
-  it("cross-candidate recovery refuses commit when the ETag changes while staging", async () => {
+  it("cross-candidate recovery refuses commit when the ETag changes before commit", async () => {
     const prepared = historicalIncidentPrepared();
     writeReconcileAuthority(
       prepared.evidence.authorityFile,
       RUN_ID,
       INCIDENT_RUN_ID,
       [],
-      "2026-09-01T00:08:00.000Z",
+      "2026-09-04T22:07:38.000Z",
       INCIDENT_CANDIDATE,
     );
     const provider = providerMock({
       states: [
-        providerState("dismissed", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
         providerState("staged", { configEtag: "e".repeat(64) }),
       ],
+      patches: [patchReadback(), patchReadback()],
     });
     const result = await run(
       "reconcile",
       prepared.evidence,
       provider,
-      [baselineBoundary()],
+      [stagedBoundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
     expect(result.receipt).toMatchObject({
-      outcome: "mutation_uncertain",
-      attempts: { dismiss: 0, stage: 1, commit: 0 },
+      outcome: "failed_before_write",
+      attempts: { dismiss: 0, stage: 0, commit: 0 },
     });
-    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
-      "PintPathProductionPostgresSourceLockStage",
-    ]);
+    expect(mutationCalls(provider)).toEqual([]);
   });
 
   it.each(SOURCE_LOCK_NON_EXEMPT_BOUNDARY_CHECKS)(
@@ -1675,6 +2023,42 @@ describe("protected production Postgres source lock", () => {
         stagedReadbackTwoExact: true,
       },
     });
+  });
+
+  it("rejects divergent active and selected staged-patch metadata before commit", async () => {
+    const prepared = await prepare();
+    const mismatchedReadback = patchReadback();
+    mismatchedReadback.data.active.updatedAt =
+      "2026-09-06T09:47:23.894Z";
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        providerState("staged"),
+      ],
+      patches: [mismatchedReadback],
+    });
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [baselineBoundary(), baselineBoundary()],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 1, stage: 1, commit: 0 },
+      checks: { stagedReadbackOneExact: false },
+    });
+    expect(
+      mutationCalls(provider).some(
+        (call) =>
+          call.operationName ===
+          "PintPathProductionPostgresSourceLockCommit",
+      ),
+    ).toBe(false);
   });
 
   it("fails closed when stage may have applied but exact readback is unavailable", async () => {
@@ -1772,7 +2156,7 @@ describe("protected production Postgres source lock", () => {
     ).toHaveLength(1);
   });
 
-  it("binds a lost commit acknowledgement through exact patch history without a local patch id", async () => {
+  it("binds a lost commit acknowledgement through the exact committed patch history", async () => {
     const prepared = await prepare();
     const provider = providerMock({
       commit: "fail",
@@ -1800,6 +2184,38 @@ describe("protected production Postgres source lock", () => {
         commitAcknowledgementExact: false,
         committedHistoryExact: true,
       },
+    });
+  });
+
+  it("rejects postflight history that substitutes another patch id", async () => {
+    const prepared = await prepare();
+    const substituted = {
+      ...committedPatch(RUN_ID),
+      id: "11111111-1111-4111-8111-111111111111",
+    };
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        providerState("staged"),
+        providerState("staged"),
+        providerState("desired", { historyOverride: [substituted] }),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [baselineBoundary(), baselineBoundary(), stagedBoundary(), boundary()],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+    );
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 1, stage: 1, commit: 1 },
+      checks: { committedHistoryExact: false },
     });
   });
 
