@@ -75,7 +75,7 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "00ae7aa221bab26d662822843ed624fcfb15fadcb892a2cdf2dd35574bcf3d90";
+  "b384d6433c45a365ab70ec395213e10f7d3be881bc6b8186d2653d95a80754f7";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
@@ -100,6 +100,10 @@ const BASELINE_CONFIG_ETAG =
   "e50589bf4093433313fd07b844b6e25eeb69878679626006edb9784629989bf9";
 const CROSS_CANDIDATE_RECOVERY = {
   priorCandidateSha: "52049a1ef414e274e47197e28726387c90d96990",
+  priorReviewedHeadSha: "b4326474f809d7eff1402d803c61e065abc441b3",
+  priorTreeSha: "250da7d4f74818a7a7fc9faf499c2a4530e617ec",
+  priorPullRequestNumber: 81,
+  priorMergedAt: "2026-09-04T22:02:05Z",
   priorRunId: "33923801697",
   intentArtifactId: "9956146300",
   intentArtifactDigest:
@@ -116,7 +120,22 @@ const CROSS_CANDIDATE_RECOVERY = {
     "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
   dismissedConfigEtag:
     "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f",
+  recoveryBridgeCandidateSha:
+    "4edaddbee03e44f7d2e0cb808b2357e7e5739db5",
+  recoveryBridgeReviewedHeadSha:
+    "baa113bb975be6041d5cd7d7828c41aceb2f065c",
+  recoveryBridgeTreeSha:
+    "337cf37c8beccb7f228cf042b676f0934e7a479e",
+  recoveryBridgePullRequestNumber: 83,
+  recoveryBridgeMergedAt: "2026-09-05T23:58:45Z",
+  recoveryBridgeSkippedWriterRunId: "34000245292",
+  recoveryBridgeSkippedWriterRunCreatedAt: "2026-09-06T00:02:38Z",
+  recoveryBridgeSkippedWriterRunStartedAt: "2026-09-06T00:02:38Z",
+  recoveryBridgeSkippedWriterRunCompletedAt: "2026-09-06T00:06:44Z",
+  recoveryBridgeSkippedWriterRunConclusion: "failure",
 } as const;
+const PRODUCTION_POSTGRES_SOURCE_LOCK_RECOVERY_GRACE_HOURS = 24;
+const PRODUCTION_POSTGRES_SOURCE_LOCK_INCIDENT_RECOVERY_GRACE_HOURS = 7 * 24;
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_CONFIRMATION =
   "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_FREEZE_ATTESTATION =
@@ -775,6 +794,8 @@ function reviewedAuthorityExact(
       "priorAmbiguousProductionPostgresSourceRepinRunId",
       "priorProductionPostgresSourceRepinIntentCandidateSha",
       "crossCandidateProductionPostgresSourceRepinRecoveryExact",
+      "productionPostgresSourceRepinRecoveryChainCandidateShas",
+      "productionPostgresSourceRepinRecoveryBridgeExact",
       "exactPriorProductionPostgresSourceRepinCandidateRunBound",
       "secondProductionPostgresRemediationDismissPreventedExact",
       "runnerLossRecoveryOriginalRunCompletedAt",
@@ -835,6 +856,13 @@ function reviewedAuthorityExact(
         value.priorProductionPostgresSourceRepinIntentCandidateSha;
       const crossCandidateExact =
         value.crossCandidateProductionPostgresSourceRepinRecoveryExact;
+      const recoveryChainCandidateShas =
+        value.productionPostgresSourceRepinRecoveryChainCandidateShas;
+      const recoveryBridgeExact =
+        value.productionPostgresSourceRepinRecoveryBridgeExact;
+      const expectedRecoveryGraceHours = crossCandidateExact
+        ? PRODUCTION_POSTGRES_SOURCE_LOCK_INCIDENT_RECOVERY_GRACE_HOURS
+        : PRODUCTION_POSTGRES_SOURCE_LOCK_RECOVERY_GRACE_HOURS;
       const originalRunCompletedAt = parseTimestamp(
         value.runnerLossRecoveryOriginalRunCompletedAt,
       );
@@ -846,6 +874,17 @@ function reviewedAuthorityExact(
         intentCandidateSha !== args.priorCandidateSha ||
         typeof crossCandidateExact !== "boolean" ||
         crossCandidateExact !== (intentCandidateSha !== args.candidateSha) ||
+        !Array.isArray(recoveryChainCandidateShas) ||
+        JSON.stringify(recoveryChainCandidateShas) !== JSON.stringify(
+          crossCandidateExact
+            ? [
+              intentCandidateSha,
+              CROSS_CANDIDATE_RECOVERY.recoveryBridgeCandidateSha,
+              args.candidateSha,
+            ]
+            : [args.candidateSha],
+        ) ||
+        recoveryBridgeExact !== crossCandidateExact ||
         priorRunId === env.GITHUB_RUN_ID ||
         value.safePriorSkippedWriteRunIds.includes(priorRunId) ||
         value.exactPriorProductionPostgresSourceRepinCandidateRunBound !==
@@ -854,7 +893,7 @@ function reviewedAuthorityExact(
           true ||
         originalRunCompletedAt === null ||
         value.runnerLossRecoverySettlementSeconds !== 60 ||
-        value.runnerLossRecoveryGraceHours !== 24 ||
+        value.runnerLossRecoveryGraceHours !== expectedRecoveryGraceHours ||
         value.runnerLossRecoveryWithinGraceExact !== true
       )
         return null;
@@ -1749,7 +1788,7 @@ function policyExact(cwd: string): boolean {
     const value = JSON.parse(policy.toString("utf8")) as unknown;
     const expected = {
       schemaVersion:
-        "pintpath-protected-production-postgres-source-lock-policy/v2",
+        "pintpath-protected-production-postgres-source-lock-policy/v3",
       policyId: "pintpath-protected-production-postgres-source-lock",
       activationState: "GITHUB_ENVIRONMENT_PROTECTED",
       githubEnvironment: "production-postgres-source-repin",
@@ -1806,12 +1845,15 @@ function policyExact(cwd: string): boolean {
         reconcilePriorRunIdRequired: true,
         reconcilePriorIntentCandidateShaRequired: true,
         reconcileSelectedPriorRunMustBeOneAmbiguousApply: true,
-        reconcileCrossCandidateDirectSingleParentSuccessorRequired: true,
+        reconcileCrossCandidateLinearReviewedRecoveryChainRequired: true,
+        reconcileCrossCandidateMaximumIntermediateCandidates: 1,
         reconcileCrossCandidateRecoveryPinnedIncidentOnly: true,
         reconcileSecondMayHaveWrittenRunAllowed: false,
         reconcilePriorRunCompletionRequired: true,
         reconcileSettlementSeconds: 60,
-        reconcileGraceHours: 24,
+        reconcileGraceHours: PRODUCTION_POSTGRES_SOURCE_LOCK_RECOVERY_GRACE_HOURS,
+        reconcilePinnedIncidentGraceHours:
+          PRODUCTION_POSTGRES_SOURCE_LOCK_INCIDENT_RECOVERY_GRACE_HOURS,
       },
       mutationBoundary: {
         policyPath: BOUNDARY_POLICY_PATH,
@@ -2473,12 +2515,15 @@ export async function runProtectedProductionPostgresSourceRepin(
           ? Number.NaN
           : dependencies.now() -
             Date.parse(recoveryAuthority.originalRunCompletedAt);
+      const recoveryGraceHours = recoveryAuthority?.crossCandidateExact === true
+        ? PRODUCTION_POSTGRES_SOURCE_LOCK_INCIDENT_RECOVERY_GRACE_HOURS
+        : PRODUCTION_POSTGRES_SOURCE_LOCK_RECOVERY_GRACE_HOURS;
       const exact =
         !sameRun &&
         recoveryAuthority !== null &&
         recoveryAuthority.priorRunId === intent.githubRunId &&
         recoveryElapsedMilliseconds >= 60 * 1_000 &&
-        recoveryElapsedMilliseconds <= 24 * 60 * 60 * 1_000 &&
+        recoveryElapsedMilliseconds <= recoveryGraceHours * 60 * 60 * 1_000 &&
         dependencies.env
           .PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_ID ===
           intent.githubRunId &&

@@ -16,6 +16,19 @@ const TREE = "c".repeat(40);
 const PRIOR_CANDIDATE = "d".repeat(40);
 const PRIOR_REVIEWED_HEAD = "e".repeat(40);
 const PRIOR_TREE = "f".repeat(40);
+const SOURCE_LOCK_INCIDENT_CANDIDATE =
+  "52049a1ef414e274e47197e28726387c90d96990";
+const SOURCE_LOCK_INCIDENT_REVIEWED_HEAD =
+  "b4326474f809d7eff1402d803c61e065abc441b3";
+const SOURCE_LOCK_INCIDENT_TREE =
+  "250da7d4f74818a7a7fc9faf499c2a4530e617ec";
+const SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE =
+  "4edaddbee03e44f7d2e0cb808b2357e7e5739db5";
+const SOURCE_LOCK_RECOVERY_BRIDGE_REVIEWED_HEAD =
+  "baa113bb975be6041d5cd7d7828c41aceb2f065c";
+const SOURCE_LOCK_RECOVERY_BRIDGE_TREE =
+  "337cf37c8beccb7f228cf042b676f0934e7a479e";
+const SOURCE_LOCK_RECOVERY_BRIDGE_RUN_ID = 34000245292;
 const INCIDENT_ORIGINAL_CANDIDATE =
   "ac7130e0306802825922d21a4c61135b84edd43b";
 const INCIDENT_ORIGINAL_REVIEWED_HEAD =
@@ -328,6 +341,13 @@ function harness(options: {
   priorMergedAt?: string;
   priorCandidateTreeSha?: string;
   priorReviewedTreeSha?: string;
+  sourceLockIncidentMergedAt?: string;
+  sourceLockIncidentCandidateTreeSha?: string;
+  sourceLockIncidentReviewedTreeSha?: string;
+  recoveryBridgeParentSha?: string;
+  recoveryBridgeTreeSha?: string;
+  recoveryBridgeReviewedTreeSha?: string;
+  recoveryBridgeMergedAt?: string;
   prepareRunId?: string | null;
   target?: string;
   variableName?: string;
@@ -628,6 +648,59 @@ function harness(options: {
         head: { repo: { full_name: REPOSITORY } },
       }]);
     }
+    if (url.includes(`/commits/${SOURCE_LOCK_INCIDENT_CANDIDATE}/pulls?`)) {
+      return response([{
+        number: 81,
+        state: "closed",
+        merge_commit_sha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: { repo: { full_name: REPOSITORY } },
+      }]);
+    }
+    if (url.endsWith("/pulls/81")) {
+      return response({
+        number: 81,
+        state: "closed",
+        merged: true,
+        draft: false,
+        merge_commit_sha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+        merged_at: options.sourceLockIncidentMergedAt ??
+          "2026-09-04T22:02:05Z",
+        user: { id: 101 },
+        merged_by: { id: 202 },
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: {
+          sha: SOURCE_LOCK_INCIDENT_REVIEWED_HEAD,
+          repo: { full_name: REPOSITORY },
+        },
+      });
+    }
+    if (url.includes(`/commits/${SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE}/pulls?`)) {
+      return response([{
+        number: 83,
+        state: "closed",
+        merge_commit_sha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: { repo: { full_name: REPOSITORY } },
+      }]);
+    }
+    if (url.endsWith("/pulls/83")) {
+      return response({
+        number: 83,
+        state: "closed",
+        merged: true,
+        draft: false,
+        merge_commit_sha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+        merged_at: options.recoveryBridgeMergedAt ?? "2026-09-05T23:58:45Z",
+        user: { id: 101 },
+        merged_by: { id: 202 },
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: {
+          sha: SOURCE_LOCK_RECOVERY_BRIDGE_REVIEWED_HEAD,
+          repo: { full_name: REPOSITORY },
+        },
+      });
+    }
     if (url.endsWith("/pulls/25")) {
       return response({
         number: 25,
@@ -684,6 +757,49 @@ function harness(options: {
         sha: PRIOR_REVIEWED_HEAD,
         tree: { sha: options.priorReviewedTreeSha ?? PRIOR_TREE },
         parents: [{ sha: "2".repeat(40) }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${SOURCE_LOCK_INCIDENT_CANDIDATE}`)) {
+      return response({
+        sha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+        tree: {
+          sha: options.sourceLockIncidentCandidateTreeSha ??
+            SOURCE_LOCK_INCIDENT_TREE,
+        },
+        parents: [{ sha: "1".repeat(40) }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${SOURCE_LOCK_INCIDENT_REVIEWED_HEAD}`)) {
+      return response({
+        sha: SOURCE_LOCK_INCIDENT_REVIEWED_HEAD,
+        tree: {
+          sha: options.sourceLockIncidentReviewedTreeSha ??
+            SOURCE_LOCK_INCIDENT_TREE,
+        },
+        parents: [{ sha: "1".repeat(40) }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE}`)) {
+      return response({
+        sha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+        tree: {
+          sha: options.recoveryBridgeTreeSha ??
+            SOURCE_LOCK_RECOVERY_BRIDGE_TREE,
+        },
+        parents: [{
+          sha: options.recoveryBridgeParentSha ??
+            SOURCE_LOCK_INCIDENT_CANDIDATE,
+        }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${SOURCE_LOCK_RECOVERY_BRIDGE_REVIEWED_HEAD}`)) {
+      return response({
+        sha: SOURCE_LOCK_RECOVERY_BRIDGE_REVIEWED_HEAD,
+        tree: {
+          sha: options.recoveryBridgeReviewedTreeSha ??
+            SOURCE_LOCK_RECOVERY_BRIDGE_TREE,
+        },
+        parents: [{ sha: SOURCE_LOCK_INCIDENT_CANDIDATE }],
       });
     }
     if (url.includes(`/commits/${INCIDENT_ORIGINAL_CANDIDATE}/pulls?`)) {
@@ -2043,7 +2159,43 @@ describe("reviewed candidate mutation authority", () => {
     });
   });
 
-  it("binds a cross-candidate production Postgres reconciliation to the reviewed direct successor and complete history", async () => {
+  it("keeps ordinary same-candidate source-lock reconciliation at 24 hours", async () => {
+    const selected = workflowRun({
+      id: 659,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_TITLE,
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+      updatedAt: "2026-08-14T01:59:00.000Z",
+    });
+    const fixtureAt = (createdAt: string) => {
+      const current = workflowRun({
+        id: 661,
+        path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+        displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+        status: "in_progress",
+        conclusion: null,
+        createdAt,
+      });
+      return harness({
+        operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+        current,
+        productionPostgresSourceRepinRuns: [selected, current],
+        jobEvidence: { 659: jobs(selected, "failure") },
+      });
+    };
+    await expect(fixtureAt("2026-08-15T01:59:00.000Z").verify()).resolves
+      .toMatchObject({
+        runnerLossRecoveryGraceHours: 24,
+        runnerLossRecoveryWithinGraceExact: true,
+      });
+    await expect(fixtureAt("2026-08-15T01:59:00.001Z").verify()).rejects
+      .toThrow(
+        "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+      );
+  });
+
+  it("rejects an unpinned direct-successor cross-candidate reconciliation", async () => {
     const selected = workflowRun({
       id: 659,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
@@ -2095,30 +2247,173 @@ describe("reviewed candidate mutation authority", () => {
         659: jobs(selected, "failure"),
       },
     });
-    await expect(fixture.verify()).resolves.toMatchObject({
-      candidateSha: CANDIDATE,
-      priorProductionPostgresSourceRepinIntentCandidateSha: PRIOR_CANDIDATE,
-      crossCandidateProductionPostgresSourceRepinRecoveryExact: true,
-      priorAmbiguousProductionPostgresSourceRepinRunId: "659",
-      safePriorSkippedWriteRunIds: ["657", "658"],
-      exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
-      runnerLossRecoverySettlementSeconds: 60,
-      runnerLossRecoveryGraceHours: 24,
-    });
-    const requestedUrls = fixture.fetchImpl.mock.calls.map(([url]) =>
-      decodeURIComponent(String(url))
+    await expect(fixture.verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
     );
-    expect(requestedUrls.some((url) =>
-      url.includes(`/commits/${PRIOR_CANDIDATE}/pulls?`)
-    )).toBe(true);
-    expect(requestedUrls.some((url) =>
-      url.includes(
-        "created=2026-08-14T00:10:00.000Z..2026-08-14T03:00:00.000Z",
-      )
-    )).toBe(true);
   });
 
-  it("rejects cross-candidate production Postgres recovery without exact reviewed direct-successor authority", async () => {
+  it("binds the exact reviewed recovery bridge and its skipped writer inside the source-lock seven-day window", async () => {
+    const selected = workflowRun({
+      id: 33923801697,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | apply | ${SOURCE_LOCK_INCIDENT_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-09-04T22:02:07Z",
+      updatedAt: "2026-09-04T22:07:38Z",
+      headSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+    });
+    const bridge = workflowRun({
+      id: SOURCE_LOCK_RECOVERY_BRIDGE_RUN_ID,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | reconcile | ${SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-09-06T00:02:38Z",
+      updatedAt: "2026-09-06T00:06:44Z",
+      headSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+    });
+    const current = workflowRun({
+      id: 661,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-09-06T00:20:00Z",
+    });
+    const fixture = harness({
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorRunId: "33923801697",
+      priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+      candidateParentSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-06T00:15:00Z",
+      current,
+      productionPostgresSourceRepinRuns: [selected, bridge, current],
+      jobEvidence: {
+        33923801697: jobs(selected, "failure"),
+        34000245292: jobs(bridge, "skipped"),
+      },
+    });
+    await expect(fixture.verify()).resolves.toMatchObject({
+      candidateSha: CANDIDATE,
+      safePriorSkippedWriteRunIds: ["34000245292"],
+      priorAmbiguousProductionPostgresSourceRepinRunId: "33923801697",
+      priorProductionPostgresSourceRepinIntentCandidateSha:
+        SOURCE_LOCK_INCIDENT_CANDIDATE,
+      productionPostgresSourceRepinRecoveryChainCandidateShas: [
+        SOURCE_LOCK_INCIDENT_CANDIDATE,
+        SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+        CANDIDATE,
+      ],
+      productionPostgresSourceRepinRecoveryBridgeExact: true,
+      runnerLossRecoveryGraceHours: 168,
+      runnerLossRecoveryWithinGraceExact: true,
+    });
+  });
+
+  it("rejects a substituted recovery bridge or substituted skipped bridge run", async () => {
+    const selected = workflowRun({
+      id: 33923801697,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | apply | ${SOURCE_LOCK_INCIDENT_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-09-04T22:02:07Z",
+      updatedAt: "2026-09-04T22:07:38Z",
+      headSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+    });
+    const bridge = workflowRun({
+      id: SOURCE_LOCK_RECOVERY_BRIDGE_RUN_ID,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | reconcile | ${SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-09-06T00:02:38Z",
+      updatedAt: "2026-09-06T00:06:44Z",
+      headSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+    });
+    const current = workflowRun({
+      id: 661,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+      status: "in_progress",
+      conclusion: null,
+      createdAt: "2026-09-06T00:20:00Z",
+    });
+    const shared = {
+      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+      priorRunId: "33923801697",
+      priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+      candidateParentSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-06T00:15:00Z",
+      current,
+      productionPostgresSourceRepinRuns: [selected, bridge, current],
+      jobEvidence: {
+        33923801697: jobs(selected, "failure"),
+        34000245292: jobs(bridge, "skipped"),
+      },
+    };
+    await expect(harness({
+      ...shared,
+      recoveryBridgeParentSha: "9".repeat(40),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...shared,
+      candidateParentSha: "8".repeat(40),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...shared,
+      recoveryBridgeTreeSha: "7".repeat(40),
+      recoveryBridgeReviewedTreeSha: "7".repeat(40),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...shared,
+      recoveryBridgeMergedAt: "2026-09-05T23:58:46Z",
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...shared,
+      sourceLockIncidentMergedAt: "2026-09-04T22:02:06Z",
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...shared,
+      jobEvidence: {
+        33923801697: jobs(selected, "failure"),
+        34000245292: jobs(bridge, "failure"),
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    const substitutedBridgeRun = {
+      ...bridge,
+      updated_at: "2026-09-06T00:06:45Z",
+    };
+    await expect(harness({
+      ...shared,
+      productionPostgresSourceRepinRuns: [
+        selected,
+        substitutedBridgeRun,
+        current,
+      ],
+      jobEvidence: {
+        33923801697: jobs(selected, "failure"),
+        34000245292: jobs(substitutedBridgeRun, "skipped"),
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+  });
+
+  it("rejects cross-candidate production Postgres recovery outside the exact bridge chain", async () => {
     const failureCode =
       "production_postgres_source_repin_reconciliation_history_invalid";
     await expect(harness({
@@ -2134,16 +2429,81 @@ describe("reviewed candidate mutation authority", () => {
     }).verify()).rejects.toThrow("reviewed_pull_request_invalid");
   });
 
-  it("rejects unrelated candidates and recovery outside the 24-hour cross-candidate window", async () => {
+  it("accepts the exact pinned-incident seven-day deadline and rejects one millisecond later", async () => {
     const selected = workflowRun({
-      id: 659,
+      id: 33923801697,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
       displayTitle:
-        `Production Postgres source lock | apply | ${PRIOR_CANDIDATE}`,
+        `Production Postgres source lock | apply | ${SOURCE_LOCK_INCIDENT_CANDIDATE}`,
       conclusion: "failure",
-      createdAt: "2026-08-14T01:00:00.000Z",
-      updatedAt: "2026-08-14T01:30:00.000Z",
-      headSha: PRIOR_CANDIDATE,
+      createdAt: "2026-09-04T22:02:07Z",
+      updatedAt: "2026-09-04T22:07:38Z",
+      headSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+    });
+    const bridge = workflowRun({
+      id: SOURCE_LOCK_RECOVERY_BRIDGE_RUN_ID,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | reconcile | ${SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-09-06T00:02:38Z",
+      updatedAt: "2026-09-06T00:06:44Z",
+      headSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+    });
+    const fixtureAt = (createdAt: string) => {
+      const current = workflowRun({
+        id: 661,
+        path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+        displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+        status: "in_progress",
+        conclusion: null,
+        createdAt,
+      });
+      return harness({
+        operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
+        priorRunId: "33923801697",
+        priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+        candidateParentSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+        mergedAt: "2026-09-06T00:15:00Z",
+        current,
+        productionPostgresSourceRepinRuns: [selected, bridge, current],
+        jobEvidence: {
+          33923801697: jobs(selected, "failure"),
+          34000245292: jobs(bridge, "skipped"),
+        },
+      });
+    };
+    await expect(fixtureAt("2026-09-11T22:07:38Z").verify()).resolves
+      .toMatchObject({
+        runnerLossRecoveryGraceHours: 168,
+        runnerLossRecoveryWithinGraceExact: true,
+      });
+    await expect(fixtureAt("2026-09-11T22:07:38.001Z").verify()).rejects
+      .toThrow(
+        "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+      );
+  });
+
+  it("rejects an unexpected candidate anywhere in the pinned recovery history", async () => {
+    const selected = workflowRun({
+      id: 33923801697,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | apply | ${SOURCE_LOCK_INCIDENT_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-09-04T22:02:07Z",
+      updatedAt: "2026-09-04T22:07:38Z",
+      headSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+    });
+    const bridge = workflowRun({
+      id: SOURCE_LOCK_RECOVERY_BRIDGE_RUN_ID,
+      path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+      displayTitle:
+        `Production Postgres source lock | reconcile | ${SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE}`,
+      conclusion: "failure",
+      createdAt: "2026-09-06T00:02:38Z",
+      updatedAt: "2026-09-06T00:06:44Z",
+      headSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
     });
     const current = workflowRun({
       id: 661,
@@ -2151,7 +2511,7 @@ describe("reviewed candidate mutation authority", () => {
       displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
       status: "in_progress",
       conclusion: null,
-      createdAt: "2026-08-15T01:30:01.000Z",
+      createdAt: "2026-09-06T00:20:00Z",
     });
     const unrelated = workflowRun({
       id: 658,
@@ -2159,25 +2519,28 @@ describe("reviewed candidate mutation authority", () => {
       displayTitle:
         `Production Postgres source lock | apply | ${"7".repeat(40)}`,
       conclusion: "failure",
-      createdAt: "2026-08-14T02:40:00.000Z",
+      createdAt: "2026-09-05T02:40:00Z",
       headSha: "7".repeat(40),
     });
     const failureCode =
       "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid";
     await expect(harness({
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
-      priorCandidateSha: PRIOR_CANDIDATE,
+      priorRunId: "33923801697",
+      priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
+      candidateParentSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-06T00:15:00Z",
       current,
-      productionPostgresSourceRepinRuns: [selected, unrelated, current],
-      jobEvidence: { 659: jobs(selected, "failure") },
-    }).verify()).rejects.toThrow(failureCode);
-
-    await expect(harness({
-      operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
-      priorCandidateSha: PRIOR_CANDIDATE,
-      current,
-      productionPostgresSourceRepinRuns: [selected, current],
-      jobEvidence: { 659: jobs(selected, "failure") },
+      productionPostgresSourceRepinRuns: [
+        selected,
+        unrelated,
+        bridge,
+        current,
+      ],
+      jobEvidence: {
+        33923801697: jobs(selected, "failure"),
+        34000245292: jobs(bridge, "skipped"),
+      },
     }).verify()).rejects.toThrow(failureCode);
   });
 

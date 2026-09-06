@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-protected-production-postgres-source-lock-policy/v2",
+  "schemaVersion": "pintpath-protected-production-postgres-source-lock-policy/v3",
   "policyId": "pintpath-protected-production-postgres-source-lock",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "githubEnvironment": "production-postgres-source-repin",
@@ -95,12 +95,14 @@
     "reconcilePriorRunIdRequired": true,
     "reconcilePriorIntentCandidateShaRequired": true,
     "reconcileSelectedPriorRunMustBeOneAmbiguousApply": true,
-    "reconcileCrossCandidateDirectSingleParentSuccessorRequired": true,
+    "reconcileCrossCandidateLinearReviewedRecoveryChainRequired": true,
+    "reconcileCrossCandidateMaximumIntermediateCandidates": 1,
     "reconcileCrossCandidateRecoveryPinnedIncidentOnly": true,
     "reconcileSecondMayHaveWrittenRunAllowed": false,
     "reconcilePriorRunCompletionRequired": true,
     "reconcileSettlementSeconds": 60,
-    "reconcileGraceHours": 24
+    "reconcileGraceHours": 24,
+    "reconcilePinnedIncidentGraceHours": 168
   },
   "mutationBoundary": {
     "policyPath": "ops/railway/production-staging-mutation-policy.json",
@@ -157,7 +159,21 @@
     "terminalArtifactSize": "5869",
     "applyTerminalSha256": "608420a0186048d2f60b376774444f116d411029a359734e8d0b5fcdf296f431",
     "applyReceiptSha256": "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
-    "dismissedConfigEtag": "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f"
+    "dismissedConfigEtag": "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f",
+    "priorReviewedHeadSha": "b4326474f809d7eff1402d803c61e065abc441b3",
+    "priorTreeSha": "250da7d4f74818a7a7fc9faf499c2a4530e617ec",
+    "priorPullRequestNumber": 81,
+    "priorMergedAt": "2026-09-04T22:02:05Z",
+    "recoveryBridgeCandidateSha": "4edaddbee03e44f7d2e0cb808b2357e7e5739db5",
+    "recoveryBridgeReviewedHeadSha": "baa113bb975be6041d5cd7d7828c41aceb2f065c",
+    "recoveryBridgeTreeSha": "337cf37c8beccb7f228cf042b676f0934e7a479e",
+    "recoveryBridgePullRequestNumber": 83,
+    "recoveryBridgeMergedAt": "2026-09-05T23:58:45Z",
+    "recoveryBridgeSkippedWriterRunId": "34000245292",
+    "recoveryBridgeSkippedWriterRunCreatedAt": "2026-09-06T00:02:38Z",
+    "recoveryBridgeSkippedWriterRunStartedAt": "2026-09-06T00:02:38Z",
+    "recoveryBridgeSkippedWriterRunCompletedAt": "2026-09-06T00:06:44Z",
+    "recoveryBridgeSkippedWriterRunConclusion": "failure"
   },
   "mutationPlan": {
     "confirmation": "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY",

@@ -156,7 +156,7 @@ describe("protected provider mutation workflows", () => {
 
     expect(policy).toMatchObject({
       schemaVersion:
-        "pintpath-protected-production-postgres-source-lock-policy/v2",
+        "pintpath-protected-production-postgres-source-lock-policy/v3",
       policyId: "pintpath-protected-production-postgres-source-lock",
       activationState: "GITHUB_ENVIRONMENT_PROTECTED",
       githubEnvironment: "production-postgres-source-repin",
