@@ -87,11 +87,15 @@ window. The ordinary exception is an exact recovery identity for a selected
 original ambiguous run: the original write must still have begun inside 168
 hours, while its same-mode or read-only convergence may start for at most 24
 hours after that original run's `updated_at`. The one pinned production
-Postgres source-lock incident instead has a reviewed 168-hour recovery window.
-That exception accepts at most the exact PR #83 recovery bridge, requires its
-exact failed run to have skipped the writer, and authenticates every candidate
-in the linear chain. Later recovery failures never extend either deadline, and
-the candidate must remain the exact current protected-main head.
+Postgres source-lock incident instead keeps its reviewed 168-hour outer recovery
+window. That exception accepts the exact PR #83 recovery bridge, requires its
+exact failed run to have skipped the writer, and then binds the exact PR #84
+stage-only failure. The latter must prove zero dismiss calls, exactly one stage
+call, zero commit calls, and an exact durable artifact. It creates a narrower
+24-hour commit-only deadline and never permits a second stage. Every candidate
+is authenticated in the linear chain. Later recovery failures never extend
+either deadline, and the candidate must remain the exact current protected-main
+head.
 
 A first dispatch is eligible only when there is no prior matching run. A fresh
 dispatch after prior matches is eligible only when every prior run is an
@@ -135,15 +139,20 @@ fresh apply only when GitHub proves every prior apply/reconcile writer was
 skipped. If an apply writer started and its result is ambiguous, wait at least
 60 seconds and dispatch `reconcile` inside the policy's fixed recovery window
 with that exact prior run ID and durable intent artifact. The current pinned
-source-lock incident permits 168 hours; every ordinary recovery retains its
-24-hour limit unless separately reviewed. Authority accepts exactly one such
-ambiguous apply and rejects any second possibly-writing run. Reconciliation
-never dismisses again: desired state plus an empty patch is read-only success; the
-exact dismissed state plus the exact staged patch permits commit only; the
-exact dismissed state plus an empty patch permits one stage and commit; the
-original armed state plus an empty patch is `not_applied` with no write; every
-other state fails closed. Never retry, roll back, or treat desired state alone
-as success.
+source-lock incident keeps the original 168-hour outer limit; every ordinary
+recovery retains its 24-hour limit unless separately reviewed. The pinned chain
+additionally accepts only the exact PR #84 stage-only run and its artifact, then
+enforces a 24-hour commit-only limit from that run's completion. Authority
+rejects any other possibly-writing run. Reconciliation never dismisses again:
+desired state plus an empty patch is read-only success; the exact authorized
+staged patch permits commit only; the pinned cross-candidate incident with an
+empty staged patch fails closed because its one stage attempt has already
+occurred; an ordinary same-candidate recovery may stage and commit from its
+exact dismissed state; the original armed state plus an empty patch is
+`not_applied` with no write; every other state fails closed. Never retry, roll
+back, or treat desired state alone as success. Commit-only success must preserve
+the exact staged patch ID and creation timestamp, and its applied timestamp must
+not precede the reviewed stage-only run's settlement boundary.
 
 Narrow recovery exceptions remain write-safe. A mode-bound read-only
 legacy-key reconciliation may follow exactly one failed, cancelled, or timed-out
