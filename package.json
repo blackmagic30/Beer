@@ -149,10 +149,10 @@
     "check": "npm run lint && npm run build && npm run smoke:artifact && npm run test && npm run security:scan && npm run deployment:guard:check"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1106.0",
-    "@aws-sdk/client-sts": "3.1106.0",
-    "@aws-sdk/credential-providers": "3.1106.0",
-    "@supabase/supabase-js": "2.112.3",
+    "@aws-sdk/client-s3": "3.1126.0",
+    "@aws-sdk/client-sts": "3.1126.0",
+    "@aws-sdk/credential-providers": "3.1126.0",
+    "@supabase/supabase-js": "2.115.0",
     "@types/qrcode": "^1.5.6",
     "better-sqlite3": "^12.8.0",
     "compression": "^1.8.1",
@@ -165,7 +165,7 @@
     "parse5": "8.0.1",
     "pg": "8.23.0",
     "qrcode": "^1.5.4",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
