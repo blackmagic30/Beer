@@ -82,12 +82,16 @@ associated PR's `merged_at` through the authenticated current `run_started_at`,
 not its `created_at`, because retained queued runs can start out of creation
 order. That `run_started_at` must be no more than 168 hours after `merged_at`.
 An older candidate or incomplete history fails closed and requires a newly
-reviewed and merged candidate, not a waiver or longer lookup window. The only
-exception is an exact recovery identity for a selected original ambiguous run:
-the original write must still have begun inside 168 hours, while its same-mode
-or read-only convergence may start for at most 24 hours after that original
-run's `updated_at`. Later recovery failures never extend that deadline, and the
-candidate must remain the exact current protected-main head.
+reviewed and merged candidate, not an unreviewed waiver or longer lookup
+window. The ordinary exception is an exact recovery identity for a selected
+original ambiguous run: the original write must still have begun inside 168
+hours, while its same-mode or read-only convergence may start for at most 24
+hours after that original run's `updated_at`. The one pinned production
+Postgres source-lock incident instead has a reviewed 168-hour recovery window.
+That exception accepts at most the exact PR #83 recovery bridge, requires its
+exact failed run to have skipped the writer, and authenticates every candidate
+in the linear chain. Later recovery failures never extend either deadline, and
+the candidate must remain the exact current protected-main head.
 
 A first dispatch is eligible only when there is no prior matching run. A fresh
 dispatch after prior matches is eligible only when every prior run is an
@@ -129,10 +133,12 @@ production source-write token.
 Do not rerun either GitHub job. A prior same-candidate run permits another
 fresh apply only when GitHub proves every prior apply/reconcile writer was
 skipped. If an apply writer started and its result is ambiguous, wait at least
-60 seconds and dispatch `reconcile` within 24 hours with that exact prior run
-ID and durable intent artifact. Authority accepts exactly one such ambiguous
-apply and rejects any second possibly-writing run. Reconciliation never
-dismisses again: desired state plus an empty patch is read-only success; the
+60 seconds and dispatch `reconcile` inside the policy's fixed recovery window
+with that exact prior run ID and durable intent artifact. The current pinned
+source-lock incident permits 168 hours; every ordinary recovery retains its
+24-hour limit unless separately reviewed. Authority accepts exactly one such
+ambiguous apply and rejects any second possibly-writing run. Reconciliation
+never dismisses again: desired state plus an empty patch is read-only success; the
 exact dismissed state plus the exact staged patch permits commit only; the
 exact dismissed state plus an empty patch permits one stage and commit; the
 original armed state plus an empty patch is `not_applied` with no write; every

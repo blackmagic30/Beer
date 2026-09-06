@@ -20,6 +20,26 @@ const MAX_CANDIDATE_AGE_MS = MAX_CANDIDATE_AGE_HOURS * 60 * 60 * 1000;
 const RECOVERY_GRACE_HOURS = 24;
 const RECOVERY_GRACE_MS = RECOVERY_GRACE_HOURS * 60 * 60 * 1000;
 const PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_SETTLEMENT_MS = 60_000;
+const PRODUCTION_POSTGRES_SOURCE_REPIN_INCIDENT_RECOVERY_GRACE_HOURS = 7 * 24;
+const PRODUCTION_POSTGRES_SOURCE_REPIN_INCIDENT_RECOVERY_GRACE_MS =
+  PRODUCTION_POSTGRES_SOURCE_REPIN_INCIDENT_RECOVERY_GRACE_HOURS * 60 * 60 * 1000;
+const PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_BRIDGE = Object.freeze({
+  priorCandidateSha: "52049a1ef414e274e47197e28726387c90d96990",
+  priorReviewedHeadSha: "b4326474f809d7eff1402d803c61e065abc441b3",
+  priorTreeSha: "250da7d4f74818a7a7fc9faf499c2a4530e617ec",
+  priorPullRequestNumber: 81,
+  priorMergedAt: "2026-09-04T22:02:05Z",
+  candidateSha: "4edaddbee03e44f7d2e0cb808b2357e7e5739db5",
+  reviewedHeadSha: "baa113bb975be6041d5cd7d7828c41aceb2f065c",
+  treeSha: "337cf37c8beccb7f228cf042b676f0934e7a479e",
+  pullRequestNumber: 83,
+  mergedAt: "2026-09-05T23:58:45Z",
+  skippedWriterRunId: "34000245292",
+  skippedWriterRunCreatedAt: "2026-09-06T00:02:38Z",
+  skippedWriterRunStartedAt: "2026-09-06T00:02:38Z",
+  skippedWriterRunCompletedAt: "2026-09-06T00:06:44Z",
+  skippedWriterRunConclusion: "failure",
+});
 const NONTERMINAL_RUN_STATUSES = new Set([
   "in_progress",
   "pending",
@@ -485,6 +505,7 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
       priorPull: currentPull,
       priorMergedAtMs: currentMergedAtMs,
       crossCandidate: false,
+      recoveryBridge: null,
     });
   }
   const priorPull = await verifyReviewedPullRequest(
@@ -503,13 +524,53 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     REPOSITORY,
     `/git/commits/${input.candidateSha}`,
   );
+  const currentCommitExact =
+    currentCommit?.sha === input.candidateSha &&
+    currentCommit?.tree?.sha === currentPull.treeSha &&
+    Array.isArray(currentCommit?.parents) &&
+    currentCommit.parents.length === 1;
+  if (priorMergedAtMs >= currentMergedAtMs || !currentCommitExact) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  const expected = PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_BRIDGE;
   if (
-    priorMergedAtMs >= currentMergedAtMs ||
-    currentCommit?.sha !== input.candidateSha ||
-    currentCommit?.tree?.sha !== currentPull.treeSha ||
-    !Array.isArray(currentCommit?.parents) ||
-    currentCommit.parents.length !== 1 ||
-    currentCommit.parents[0]?.sha !== input.priorCandidateSha
+    input.priorCandidateSha !== expected.priorCandidateSha ||
+    priorPull.number !== expected.priorPullRequestNumber ||
+    priorPull.reviewedPrHeadSha !== expected.priorReviewedHeadSha ||
+    priorPull.treeSha !== expected.priorTreeSha ||
+    priorPull.mergedAt !== expected.priorMergedAt ||
+    currentCommit.parents[0]?.sha !== expected.candidateSha
+  ) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  const bridgePull = await verifyReviewedPullRequest(
+    input.fetchImpl,
+    input.token,
+    policy,
+    expected.candidateSha,
+  );
+  const bridgeCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${expected.candidateSha}`,
+  );
+  const bridgeMergedAtMs = parseTimestamp(
+    expected.mergedAt,
+    "production_postgres_source_repin_reconciliation_history_invalid",
+  );
+  if (
+    bridgePull.number !== expected.pullRequestNumber ||
+    bridgePull.reviewedPrHeadSha !== expected.reviewedHeadSha ||
+    bridgePull.treeSha !== expected.treeSha ||
+    bridgePull.mergedAt !== expected.mergedAt ||
+    bridgeCommit?.sha !== expected.candidateSha ||
+    bridgeCommit?.tree?.sha !== expected.treeSha ||
+    !Array.isArray(bridgeCommit?.parents) ||
+    bridgeCommit.parents.length !== 1 ||
+    bridgeCommit.parents[0]?.sha !== input.priorCandidateSha ||
+    priorMergedAtMs >= bridgeMergedAtMs ||
+    bridgeMergedAtMs >= currentMergedAtMs
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
@@ -517,6 +578,7 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     priorPull,
     priorMergedAtMs,
     crossCandidate: true,
+    recoveryBridge: expected,
   });
 }
 
@@ -764,9 +826,21 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
   input,
   currentRun,
 ) {
+  if (input.crossCandidate !== (input.recoveryBridge !== null)) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  const recoveryGraceHours = input.recoveryBridge === null
+    ? RECOVERY_GRACE_HOURS
+    : PRODUCTION_POSTGRES_SOURCE_REPIN_INCIDENT_RECOVERY_GRACE_HOURS;
+  const recoveryGraceMs = input.recoveryBridge === null
+    ? RECOVERY_GRACE_MS
+    : PRODUCTION_POSTGRES_SOURCE_REPIN_INCIDENT_RECOVERY_GRACE_MS;
   const allowedCandidateShas = new Set([
     input.priorCandidateSha,
     input.candidateSha,
+    ...(input.recoveryBridge === null
+      ? []
+      : [input.recoveryBridge.candidateSha]),
   ]);
   const currentReconcileConfiguration = operationConfiguration(
     PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
@@ -862,7 +936,28 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     selectedOriginal.updatedAt >= currentRun.startedAt ||
     currentRun.startedAt - selectedOriginal.updatedAt <
       PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_SETTLEMENT_MS ||
-    currentRun.startedAt - selectedOriginal.updatedAt > RECOVERY_GRACE_MS) {
+    currentRun.startedAt - selectedOriginal.updatedAt > recoveryGraceMs) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  const bridgeRun = input.recoveryBridge === null
+    ? null
+    : history.find((run) =>
+      String(run?.id) === input.recoveryBridge.skippedWriterRunId);
+  if (
+    input.recoveryBridge !== null && (
+      bridgeRun?.head_sha !== input.recoveryBridge.candidateSha ||
+      bridgeRun?.display_title !==
+        `Production Postgres source lock | reconcile | ${input.recoveryBridge.candidateSha}` ||
+      bridgeRun?.created_at !== input.recoveryBridge.skippedWriterRunCreatedAt ||
+      bridgeRun?.run_started_at !==
+        input.recoveryBridge.skippedWriterRunStartedAt ||
+      bridgeRun?.updated_at !== input.recoveryBridge.skippedWriterRunCompletedAt ||
+      bridgeRun?.conclusion !== input.recoveryBridge.skippedWriterRunConclusion ||
+      !safePriorSkippedWriteRunIds.includes(
+        input.recoveryBridge.skippedWriterRunId,
+      )
+    )
+  ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
   for (const skippedRunId of safePriorSkippedWriteRunIds) {
@@ -885,6 +980,18 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
       input.priorCandidateSha,
     crossCandidateProductionPostgresSourceRepinRecoveryExact:
       input.priorCandidateSha !== input.candidateSha,
+    productionPostgresSourceRepinRecoveryChainCandidateShas:
+      input.priorCandidateSha === input.candidateSha
+        ? [input.candidateSha]
+        : input.recoveryBridge === null
+        ? [input.priorCandidateSha, input.candidateSha]
+        : [
+          input.priorCandidateSha,
+          input.recoveryBridge.candidateSha,
+          input.candidateSha,
+        ],
+    productionPostgresSourceRepinRecoveryBridgeExact:
+      input.recoveryBridge !== null,
     exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
     secondProductionPostgresRemediationDismissPreventedExact: true,
     runnerLossRecoveryOriginalRunCompletedAt: new Date(
@@ -892,7 +999,7 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     ).toISOString(),
     runnerLossRecoverySettlementSeconds:
       PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_SETTLEMENT_MS / 1_000,
-    runnerLossRecoveryGraceHours: RECOVERY_GRACE_HOURS,
+    runnerLossRecoveryGraceHours: recoveryGraceHours,
     runnerLossRecoveryWithinGraceExact: true,
   });
 }
@@ -2564,6 +2671,8 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       currentCandidateMergedAtMs: mergedAtMs,
       crossCandidate:
         productionPostgresSourceRepinRecoveryCandidateAuthority.crossCandidate,
+      recoveryBridge:
+        productionPostgresSourceRepinRecoveryCandidateAuthority.recoveryBridge,
     }, currentRun)
     : input.operation === "cold-recovery-reconcile-quiesce"
     ? await verifyColdQuiesceReconciliationHistory({
@@ -2747,6 +2856,11 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
         crossCandidateProductionPostgresSourceRepinRecoveryExact:
           operationHistory
             .crossCandidateProductionPostgresSourceRepinRecoveryExact,
+        productionPostgresSourceRepinRecoveryChainCandidateShas:
+          operationHistory
+            .productionPostgresSourceRepinRecoveryChainCandidateShas,
+        productionPostgresSourceRepinRecoveryBridgeExact:
+          operationHistory.productionPostgresSourceRepinRecoveryBridgeExact,
         exactPriorProductionPostgresSourceRepinCandidateRunBound:
           operationHistory
             .exactPriorProductionPostgresSourceRepinCandidateRunBound,

@@ -50,8 +50,11 @@ The production Postgres source lock uses its own serialized apply/reconcile
 history. Apply must persist and upload its secret-free intent before the
 production mutation credential is referenced. If its writer starts and the
 result becomes ambiguous, never rerun it: after the fixed settlement interval,
-use one reconcile dispatch bound to the exact prior run and artifact within the
-24-hour recovery window. Reconciliation may only read desired state, commit the
+use one reconcile dispatch bound to the exact prior run and artifact within its
+fixed recovery window. The current pinned incident permits 168 hours and one
+exact reviewed PR #83 bridge whose failed run skipped the writer.
+Every ordinary recovery retains the 24-hour window. Reconciliation may only
+read desired state, commit the
 already exact staged patch, stage-and-commit from the exact dismissed state, or
 report the original armed state as not applied; all other states fail closed.
 

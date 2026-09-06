@@ -42,6 +42,8 @@ const PRIOR_RUN_ID = "12344";
 const INCIDENT_CANDIDATE =
   "52049a1ef414e274e47197e28726387c90d96990";
 const INCIDENT_RUN_ID = "33923801697";
+const RECOVERY_BRIDGE_CANDIDATE =
+  "4edaddbee03e44f7d2e0cb808b2357e7e5739db5";
 const INCIDENT_DISMISSED_ETAG =
   "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f";
 
@@ -461,11 +463,18 @@ function writeReconcileAuthority(
         priorCandidateSha,
       crossCandidateProductionPostgresSourceRepinRecoveryExact:
         priorCandidateSha !== CANDIDATE,
+      productionPostgresSourceRepinRecoveryChainCandidateShas:
+        priorCandidateSha === CANDIDATE
+          ? [CANDIDATE]
+          : [priorCandidateSha, RECOVERY_BRIDGE_CANDIDATE, CANDIDATE],
+      productionPostgresSourceRepinRecoveryBridgeExact:
+        priorCandidateSha !== CANDIDATE,
       exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
       secondProductionPostgresRemediationDismissPreventedExact: true,
       runnerLossRecoveryOriginalRunCompletedAt: originalRunCompletedAt,
       runnerLossRecoverySettlementSeconds: 60,
-      runnerLossRecoveryGraceHours: 24,
+      runnerLossRecoveryGraceHours:
+        priorCandidateSha === CANDIDATE ? 24 : 168,
       runnerLossRecoveryWithinGraceExact: true,
     })}\n`,
     { mode: 0o600 },
@@ -793,9 +802,9 @@ function mutationCalls(provider: ReturnType<typeof providerMock>) {
 }
 
 describe("protected production Postgres source lock", () => {
-  it("pins and validates the complete reviewed v2 policy contract", () => {
+  it("pins and validates the complete reviewed v3 policy contract", () => {
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256).toBe(
-      "00ae7aa221bab26d662822843ed624fcfb15fadcb892a2cdf2dd35574bcf3d90",
+      "b384d6433c45a365ab70ec395213e10f7d3be881bc6b8186d2653d95a80754f7",
     );
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256).toBe(
       "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
@@ -1444,6 +1453,52 @@ describe("protected production Postgres source lock", () => {
     ]);
   });
 
+  it.each([
+    ["at the exact 168-hour deadline", "2026-08-25T00:10:00.000Z", 0, 2],
+    ["one millisecond after 168 hours", "2026-08-25T00:09:59.999Z", 1, 0],
+  ])(
+    "cross-candidate recovery is bounded %s",
+    async (_label, originalRunCompletedAt, expectedCode, expectedWrites) => {
+      const prepared = historicalIncidentPrepared();
+      writeReconcileAuthority(
+        prepared.evidence.authorityFile,
+        RUN_ID,
+        INCIDENT_RUN_ID,
+        [],
+        originalRunCompletedAt,
+        INCIDENT_CANDIDATE,
+      );
+      const provider = providerMock({
+        states: [
+          providerState("dismissed", { configEtag: INCIDENT_DISMISSED_ETAG }),
+          providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+          providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+          providerState("desired", {
+            runId: INCIDENT_RUN_ID,
+            intentCandidateSha: INCIDENT_CANDIDATE,
+            configEtag: "d".repeat(64),
+          }),
+        ],
+        patches: [patchReadback(), patchReadback()],
+      });
+      const result = await run(
+        "reconcile",
+        prepared.evidence,
+        provider,
+        [baselineBoundary(), stagedBoundary(), boundary()],
+        boundEnvironment("reconcile", prepared, RUN_ID, true),
+        prepared.intentFile,
+        () => Date.parse("2026-09-01T00:10:00.000Z"),
+        INCIDENT_CANDIDATE,
+      );
+      expect(result.code, result.output).toBe(expectedCode);
+      expect(mutationCalls(provider)).toHaveLength(expectedWrites);
+      expect(result.receipt.checks.priorRunGraceExact).toBe(
+        expectedCode === 0,
+      );
+    },
+  );
+
   it("cross-candidate recovery rejects a changed incident ETag before any write", async () => {
     const prepared = historicalIncidentPrepared();
     writeReconcileAuthority(
@@ -1960,7 +2015,7 @@ describe("protected production Postgres source lock", () => {
     const clock = [
       Date.parse("2026-09-01T00:10:00.000Z"),
       Date.parse("2026-09-01T00:10:00.000Z"),
-      Date.parse("2026-09-02T00:08:00.001Z"),
+      Date.parse("2026-09-08T00:08:00.001Z"),
     ];
     const result = await run(
       "reconcile",
@@ -2195,7 +2250,7 @@ describe("protected production Postgres source lock", () => {
 
   it.each([
     ["before settlement", "2026-09-01T00:09:00.001Z"],
-    ["after grace", "2026-08-30T23:59:59.999Z"],
+    ["after grace", "2026-08-24T23:59:59.999Z"],
   ])(
     "reconcile independently rejects recovery %s",
     async (_label, originalRunCompletedAt) => {
