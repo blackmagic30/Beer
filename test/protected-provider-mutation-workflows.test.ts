@@ -756,8 +756,16 @@ describe("protected provider mutation workflows", () => {
       },
     });
     expect(policy).toMatchObject({
-      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v9",
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v10",
       operations: {
+        supabasePreparedColdReestablishment: {
+          allowedBaseline: "coldDeadNullReplica",
+          exactCompleteMaintenanceRowMetadataAllowed: true,
+          maintenanceValuesTrusted: false,
+          replacementTouchesMaintenanceRows: false,
+          previousCandidateReceiptsReusable: false,
+          requiredNextOperation: "same-candidate-cold-prepare",
+        },
         legacyStagedDeletionDispatchState:
           "ENABLED_AFTER_SEALED_DISPOSABLE_PROOF",
         stagedDeletionProof: {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v9",
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v10",
   "policyId": "pintpath-permanent-staging-protected-variable-mutations",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -49,6 +49,14 @@
       "SUPABASE_ANON_KEY",
       "SUPABASE_SERVICE_ROLE_KEY"
     ],
+    "supabasePreparedColdReestablishment": {
+      "allowedBaseline": "coldDeadNullReplica",
+      "exactCompleteMaintenanceRowMetadataAllowed": true,
+      "maintenanceValuesTrusted": false,
+      "replacementTouchesMaintenanceRows": false,
+      "previousCandidateReceiptsReusable": false,
+      "requiredNextOperation": "same-candidate-cold-prepare"
+    },
     "supabasePairCanary": {
       "origin": "https://bbfibbadwjxzrcdncavy.supabase.co",
       "publishableEndpoint": "/auth/v1/settings",

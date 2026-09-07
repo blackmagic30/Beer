@@ -44,11 +44,6 @@ function run(
   startedAt: string,
   updatedAt: string,
 ): WorkflowRun {
-  const name = path === DEPLOYMENT_WORKFLOW
-    ? "Deploy Pint Path permanent staging"
-    : path === REPLACEMENT_WORKFLOW
-    ? "Mutate Pint Path permanent-staging provider variables"
-    : "Permanent staging Supabase legacy-key cutover";
   const displayTitle = path === DEPLOYMENT_WORKFLOW
     ? `Deploy permanent staging | active | ${CANDIDATE}`
     : path === REPLACEMENT_WORKFLOW
@@ -61,7 +56,7 @@ function run(
     head_sha: CANDIDATE,
     head_branch: "main",
     path: `${path}@main`,
-    name,
+    name: displayTitle,
     display_title: displayTitle,
     event: "workflow_dispatch",
     run_attempt: 1,
@@ -81,9 +76,11 @@ function deploymentRun(
   startedAt: string,
   updatedAt: string,
 ): WorkflowRun {
+  const displayTitle = `Deploy permanent staging | ${phase} | ${CANDIDATE}`;
   return {
     ...run(id, DEPLOYMENT_WORKFLOW, status, conclusion, startedAt, updatedAt),
-    display_title: `Deploy permanent staging | ${phase} | ${CANDIDATE}`,
+    name: displayTitle,
+    display_title: displayTitle,
   };
 }
 
@@ -407,6 +404,21 @@ describe("GitHub permanent-staging deployment authority", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(9);
   });
 
+  it("also accepts GitHub REST projecting each static workflow name", async () => {
+    await expect(harness({
+      current: { name: "Permanent staging Supabase legacy-key cutover" },
+      replacement: {
+        name: "Mutate Pint Path permanent-staging provider variables",
+      },
+      fencedDeployment: { name: "Deploy Pint Path permanent staging" },
+      deployment: { name: "Deploy Pint Path permanent staging" },
+    }).verify()).resolves.toMatchObject({
+      replacementWorkflowRunId: REPLACEMENT_RUN_ID,
+      fencedDeploymentWorkflowRunId: FENCED_DEPLOYMENT_RUN_ID,
+      deploymentWorkflowRunId: DEPLOYMENT_RUN_ID,
+    });
+  });
+
   it.each([
     ["replacement workflow", { replacement: { path: DEPLOYMENT_WORKFLOW } }],
     [
@@ -421,6 +433,30 @@ describe("GitHub permanent-staging deployment authority", () => {
       { fencedDeployment: { display_title: `Deploy permanent staging | active | ${CANDIDATE}` } },
     ],
     ["cutover workflow", { current: { path: DEPLOYMENT_WORKFLOW } }],
+    ["cutover run name", { current: { name: "Foreign dynamic title" } }],
+    [
+      "cutover equal substituted run name and title",
+      {
+        current: {
+          name: `Permanent staging Supabase legacy cutover | disable-enabled-legacy-keys | ${"b".repeat(40)}`,
+          display_title:
+            `Permanent staging Supabase legacy cutover | disable-enabled-legacy-keys | ${"b".repeat(40)}`,
+        },
+      },
+    ],
+    [
+      "cutover mismatched dynamic operation projections",
+      {
+        current: {
+          name:
+            `Permanent staging Supabase legacy cutover | disable-enabled-legacy-keys | ${CANDIDATE}`,
+          display_title:
+            `Permanent staging Supabase legacy cutover | reconcile-already-disabled-legacy-keys | ${CANDIDATE}`,
+        },
+      },
+    ],
+    ["replacement run name", { replacement: { name: "Foreign dynamic title" } }],
+    ["deployment run name", { deployment: { name: "Foreign dynamic title" } }],
     ["cutover attempt", { current: { run_attempt: 2 } }],
   ])("rejects a substituted %s", async (_label, options) => {
     await expect(harness(options).verify()).rejects.toThrow(

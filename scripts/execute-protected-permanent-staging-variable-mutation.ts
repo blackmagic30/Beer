@@ -2232,6 +2232,31 @@ function maintenanceMetadataExact(snapshot: MetadataSnapshot): boolean {
       || enabled.length === 1 && exactApplicationLiteralRow(enabled[0]!, false));
 }
 
+function completePreparedMaintenanceMetadataExact(
+  snapshot: MetadataSnapshot,
+): boolean {
+  const enabled = relevantRows(
+    snapshot,
+    ["PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"],
+  );
+  const candidate = relevantRows(
+    snapshot,
+    ["PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"],
+  );
+  return enabled.length === 1
+    && candidate.length === 1
+    && exactApplicationLiteralRow(enabled[0]!, false)
+    && exactApplicationLiteralRow(candidate[0]!, false);
+}
+
+function supabaseMaintenanceMetadataExact(
+  snapshot: ProviderSnapshot,
+): boolean {
+  return maintenanceMetadataExact(snapshot)
+    || (exactColdDeadBaseline(snapshot)
+      && completePreparedMaintenanceMetadataExact(snapshot));
+}
+
 function providerPreflightExact(snapshot: MetadataSnapshot, variableName: string): boolean {
   const target = relevantRows(snapshot, [variableName]);
   return forbiddenOffsiteRowsAbsent(snapshot)
@@ -2258,11 +2283,11 @@ function providerPostflightExact(
     && JSON.stringify(beforeOthers) === JSON.stringify(afterOthers);
 }
 
-function supabaseMetadataExact(snapshot: MetadataSnapshot): boolean {
+function supabaseMetadataExact(snapshot: ProviderSnapshot): boolean {
   const names = ["SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
   const rows = relevantRows(snapshot, names);
   if (rows.length !== 2 || !forbiddenOffsiteRowsAbsent(snapshot)
-    || !maintenanceMetadataExact(snapshot)) return false;
+    || !supabaseMaintenanceMetadataExact(snapshot)) return false;
   return names.every((name) => {
     const named = rows.filter((row) => row.name === name);
     return named.length === 1
@@ -2612,7 +2637,7 @@ function policyExact(cwd: string): boolean {
       CLEANUP_CLOSEOUT_EVIDENCE_ATTESTATION_SHA256) return false;
     const policy = JSON.parse(fs.readFileSync(path.resolve(cwd, POLICY_PATH), "utf8")) as unknown;
     return canonical(policy) === canonical({
-      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v9",
+      schemaVersion: "pintpath-permanent-staging-variable-mutation-policy/v10",
       policyId: "pintpath-permanent-staging-protected-variable-mutations",
       activationState: PROTECTED_STAGING_VARIABLE_MUTATION_STATE,
       projectId: PROJECT_ID,
@@ -2657,6 +2682,14 @@ function policyExact(cwd: string): boolean {
           "SUPABASE_ANON_KEY",
           "SUPABASE_SERVICE_ROLE_KEY",
         ],
+        supabasePreparedColdReestablishment: {
+          allowedBaseline: "coldDeadNullReplica",
+          exactCompleteMaintenanceRowMetadataAllowed: true,
+          maintenanceValuesTrusted: false,
+          replacementTouchesMaintenanceRows: false,
+          previousCandidateReceiptsReusable: false,
+          requiredNextOperation: "same-candidate-cold-prepare",
+        },
         supabasePairCanary: {
           origin: "https://bbfibbadwjxzrcdncavy.supabase.co",
           publishableEndpoint: "/auth/v1/settings",
@@ -4123,6 +4156,7 @@ export const protectedPermanentStagingVariableMutationInternals = {
   cleanupDeletionPatch,
   cleanupDeletionPatchExact,
   cleanupPostflightExact,
+  completePreparedMaintenanceMetadataExact,
   exactColdDeadBaseline,
   exactHealthyLegacyBaseline,
   forbiddenOffsiteRowsExactForDeletion,
@@ -4150,6 +4184,7 @@ export const protectedPermanentStagingVariableMutationInternals = {
   reviewedIncidentCleanupCancelAuthorityValueExact,
   secretStrings,
   supabaseMetadataExact,
+  supabaseMaintenanceMetadataExact,
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

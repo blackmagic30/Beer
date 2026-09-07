@@ -490,6 +490,14 @@ function workflowPathExact(value: unknown, expected: string): boolean {
   return value === expected || value === `${expected}@main`;
 }
 
+function workflowRunNameExact(
+  value: unknown,
+  workflowName: string,
+  displayTitle: string,
+): boolean {
+  return value === workflowName || value === displayTitle;
+}
+
 function validateDeploymentReceipt(
   source: string,
   value: JsonRecord,
@@ -581,7 +589,11 @@ async function verifyFencedAuthority(
   if (String(current.id) !== currentRunId || !repositoryExact(current.repository)
     || !repositoryExact(current.head_repository) || current.head_sha !== args.candidateSha
     || current.head_branch !== "main" || !workflowPathExact(current.path, WORKFLOW_PATH)
-    || current.name !== WORKFLOW_NAME
+    || !workflowRunNameExact(
+      current.name,
+      WORKFLOW_NAME,
+      `${RUN_NAME_PREFIX}${args.candidateSha}`,
+    )
     || current.display_title !== `${RUN_NAME_PREFIX}${args.candidateSha}`
     || current.event !== "workflow_dispatch" || current.run_attempt !== 1
     || current.status !== "in_progress" || current.conclusion !== null) {
@@ -593,7 +605,11 @@ async function verifyFencedAuthority(
     || !repositoryExact(fenced.repository) || !repositoryExact(fenced.head_repository)
     || fenced.head_sha !== args.candidateSha || fenced.head_branch !== "main"
     || !workflowPathExact(fenced.path, FENCED_WORKFLOW_PATH)
-    || fenced.name !== FENCED_WORKFLOW_NAME
+    || !workflowRunNameExact(
+      fenced.name,
+      FENCED_WORKFLOW_NAME,
+      `${FENCED_RUN_NAME_PREFIX}${args.candidateSha}`,
+    )
     || fenced.display_title !== `${FENCED_RUN_NAME_PREFIX}${args.candidateSha}`
     || fenced.event !== "workflow_dispatch" || fenced.run_attempt !== 1
     || fenced.status !== "completed" || fenced.conclusion !== "success"
@@ -1655,6 +1671,7 @@ export const protectedPermanentStagingVenueDirectoryInternals = Object.freeze({
   IMPORT_TERMINAL_KEYS,
   BOUNDARY_TERMINAL_KEYS,
   canonicalVenueDirectoryJson,
+  workflowRunNameExact,
   validatePlan,
   validateImportTerminal,
 });

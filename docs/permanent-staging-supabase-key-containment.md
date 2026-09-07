@@ -1,8 +1,9 @@
 # Permanent-staging Supabase key containment
 
-Status: legacy offline foundation retained; protected replacement and
-replacement-canary/legacy-disable/old-key-denial transports are implemented but
-have not been executed.
+Status: legacy offline foundation retained. A protected replacement completed
+for a superseded candidate, but its receipt is not transferable. The current
+candidate must create a fresh replacement receipt before cold prepare;
+replacement-canary/legacy-disable/old-key-denial remain pending.
 
 This slice adds a fail-closed contract for replacing exactly two Railway
 variables with Supabase's new key formats:
@@ -99,6 +100,17 @@ The protected successor does not depend on the obsolete Railway canary service.
 It requires only the two exact Beer application rows with no references; the
 secret row must already be sealed. The later cutover executor performs the live
 Auth/admin/Storage canary directly from its protected GitHub runner.
+
+For a compatibility merge after a completed cold prepare and a provably
+no-write quiescence failure, the successor has one additional fail-closed input
+shape. It may run on the exact pinned detached cold/dead `replicas=null`
+topology when both automatic-maintenance rows are present exactly once,
+application-owned, unreferenced, and unsealed. Their hidden values and
+provenance are not trusted. The replacement still upserts only the two Supabase
+keys, re-canaries their exact in-memory pair before the single write, preserves
+all maintenance metadata, and suppresses deployment. A fresh ordinary cold
+prepare for that same new candidate must follow and atomically overwrite the
+maintenance pair. No old-candidate artifact or receipt is accepted.
 
 Even a successful replacement receipt is only
 `acknowledged_pending_runtime_proof`. After deploying and proving every tracked
@@ -281,6 +293,10 @@ reviewed legacy key ID.
    publishable/secret-key `skipDeploys=true` merge; stop without retry on any
    ambiguous outcome. Never pass keys in arguments, generic environment
    variables, logs, or artifacts.
+   If the exact prepared-shape restart applies, first prove the pinned cold/dead
+   null topology and complete maintenance-row shape read-only. Use no prior run
+   IDs, run one fresh replacement for the exact current candidate, and then run
+   one fresh same-candidate cold prepare. Stop on any drift or ambiguous write.
 5. After that exact atomic replacement completes, deploy the exact same
    current-`main` candidate through `Deploy Pint Path permanent staging` and
    retain its successful candidate-bound artifact. Prove every server, browser,

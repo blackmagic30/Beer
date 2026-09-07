@@ -812,6 +812,15 @@ function workflowPathExact(actual: unknown, expected: string): boolean {
   return actual === expected || actual === `${expected}@${BRANCH}`;
 }
 
+function workflowRunNameExact(
+  actual: unknown,
+  workflowName: string,
+  displayTitle: string | null,
+): boolean {
+  return actual === workflowName ||
+    (displayTitle !== null && actual === displayTitle);
+}
+
 function validateRun(value: unknown, input: {
   readonly runId: string;
   readonly candidateSha: string;
@@ -831,7 +840,11 @@ function validateRun(value: unknown, input: {
     || String(run.id) !== input.runId
     || repository?.full_name !== REPOSITORY
     || headRepository?.full_name !== REPOSITORY
-    || run.name !== input.workflowName
+    || !workflowRunNameExact(
+      run.name,
+      input.workflowName,
+      input.displayTitle,
+    )
     || !workflowPathExact(run.path, input.workflowPath)
     || run.event !== "workflow_dispatch"
     || run.head_sha !== input.candidateSha

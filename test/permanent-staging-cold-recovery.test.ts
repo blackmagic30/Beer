@@ -590,6 +590,78 @@ describe("permanent-staging cold recovery", () => {
     )).toMatchObject({ outcome: "prepared_cold", replicasBefore: null });
   });
 
+  it("rewrites an existing exact prepared-shape pair for the fresh candidate", async () => {
+    const before = state(null, true);
+    const after = state(null, true);
+    const readState = vi.fn()
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(after);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: { variableCollectionUpsert: true },
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+    const evidence = new Map<string, string>();
+    const output: string[] = [];
+    const code = await runProtectedPermanentStagingColdPrepare({
+      argv: [
+        "--candidate-sha", CANDIDATE,
+        "--expected-deployment-sha", OLD_SOURCE,
+        "--replacement-run-id", REPLACEMENT_RUN,
+        "--replacement-terminal-file", "/private/terminal.json",
+        "--evidence-dir", "/private/evidence",
+      ],
+      env: environment("prepare"),
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => NOW,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue({
+        passed: true,
+        receiptSha256: sha("boundary"),
+      }),
+      readState,
+      readPrivateEvidence: () => replacementReceipt(),
+      reassertRepositoryState: () => true,
+      writeDurable: (_directory, leaf, source) => {
+        evidence.set(leaf, source);
+        return sha(source);
+      },
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(code).toBe(0);
+    const mutation = JSON.parse(
+      String((fetchImpl.mock.calls[2]![1] as RequestInit).body),
+    ) as { variables: { variables: Record<string, string>; skipDeploys: boolean } };
+    expect(mutation.variables).toEqual({
+      projectId: COLD_RECOVERY_LOCK.projectId,
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      serviceId: COLD_RECOVERY_LOCK.serviceId,
+      variables: {
+        PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "false",
+        PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: CANDIDATE,
+      },
+      skipDeploys: true,
+    });
+    expect(readState).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(evidence.get("cold-prepare-terminal.json")!)).toMatchObject({
+      outcome: "prepared_cold",
+      candidateSha: CANDIDATE,
+      replicasBefore: null,
+      replicasAfter: null,
+      checks: {
+        requiredVariablesBeforeExact: true,
+        maintenanceRowsAfterExact: true,
+        collateralVariablesUnchanged: true,
+        deploymentAndTopologyUnchanged: true,
+      },
+    });
+    expect(JSON.parse(output.at(-1)!)).toMatchObject({ outcome: "prepared_cold" });
+  });
+
   it("rejects an unsealed service-role row before a cold prepare write", async () => {
     const before = {
       ...state(null, false),

@@ -16,6 +16,7 @@ import {
   VENUE_DIRECTORY_POLICY_SHA256,
   VENUE_DIRECTORY_TERMINAL_SCHEMA,
   canonicalVenueDirectoryJson,
+  protectedPermanentStagingVenueDirectoryInternals,
   runProtectedPermanentStagingVenueDirectory,
 } from "../scripts/execute-protected-permanent-staging-venue-directory.js";
 
@@ -102,6 +103,165 @@ function fencedAuthority() {
     latestDeploymentRunExact: true,
     secretMaterialIncluded: false,
     secretDerivedCommitmentsIncluded: false,
+  };
+}
+
+const deploymentCheckKeys = [
+  "boundaryPostflightExact",
+  "boundaryPreflightExact",
+  "cliExact",
+  "collateralInventoryExact",
+  "collateralStateUnchanged",
+  "costPolicyExact",
+  "deploymentExact",
+  "durableIntentExact",
+  "gitAutodeployAbsent",
+  "githubMainExact",
+  "policyExact",
+  "prerequisiteExact",
+  "reconciliationCompleted",
+  "runtimeHealthExact",
+  "runtimeReadinessExact",
+  "runtimeStartupExact",
+  "sourceAuthorityExact",
+  "sourceReasserted",
+  "targetPostflightAttempted",
+  "targetPostflightExact",
+  "targetPreflightExact",
+  "terminalEvidenceExact",
+  "topologyPreserved",
+  "workerFenceDeploymentContinuityExact",
+  "workerFencePrerequisiteExact",
+  "writeAttemptedAtMostOnce",
+  "writeTokenScopeExact",
+] as const;
+
+function fencedDeploymentReceipt(): string {
+  return `${JSON.stringify({
+    schemaVersion: "pintpath-railway-application-deployment-executor/v5",
+    operation: "pintpath-railway-application-source-upload",
+    executorState: "GITHUB_ENVIRONMENT_PROTECTED",
+    target: "permanent-staging",
+    outcome: "deployed",
+    failureCode: null,
+    candidateSha: candidate,
+    startedAt: "2026-09-01T00:00:05.000Z",
+    completedAt: "2026-09-01T00:00:55.000Z",
+    writeAttempts: 1,
+    acknowledgement: "received",
+    previousDeploymentIdSha256: "1".repeat(64),
+    deploymentIdSha256: "2".repeat(64),
+    intentSha256: "3".repeat(64),
+    cliOutputSha256: "4".repeat(64),
+    boundaryPreflightSha256: "5".repeat(64),
+    boundaryPostflightSha256: "6".repeat(64),
+    collateralSnapshotSha256s: {
+      before: "7".repeat(64),
+      after: "7".repeat(64),
+    },
+    replicaCounts: { before: 0, after: 0 },
+    runtimeResponseSha256s: { health: null, startup: null, ready: null },
+    workerFencePrerequisite: null,
+    checks: Object.fromEntries(deploymentCheckKeys.map((key) => [key, true])),
+  }, null, 2)}\n`;
+}
+
+function json(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function fencedAuthorityVerification(overrides: {
+  readonly currentName?: string;
+  readonly currentTitle?: string;
+  readonly fencedName?: string;
+  readonly fencedTitle?: string;
+} = {}) {
+  const currentTitle = overrides.currentTitle ??
+    `Permanent staging venue directory | apply-refresh-validate | ${candidate}`;
+  const fencedTitle = overrides.fencedTitle ??
+    `Deploy permanent staging | fenced | ${candidate}`;
+  const repository = { full_name: "blackmagic30/Beer" };
+  const current = {
+    id: Number(currentRunId),
+    repository,
+    head_repository: repository,
+    head_sha: candidate,
+    head_branch: "main",
+    path: ".github/workflows/permanent-staging-venue-directory.yml",
+    name: overrides.currentName ?? currentTitle,
+    display_title: currentTitle,
+    event: "workflow_dispatch",
+    run_attempt: 1,
+    status: "in_progress",
+    conclusion: null,
+    run_started_at: "2026-09-01T00:02:00.000Z",
+  };
+  const fenced = {
+    id: Number(fencedRunId),
+    repository,
+    head_repository: repository,
+    head_sha: candidate,
+    head_branch: "main",
+    path: ".github/workflows/deploy-permanent-staging.yml",
+    name: overrides.fencedName ?? fencedTitle,
+    display_title: fencedTitle,
+    event: "workflow_dispatch",
+    run_attempt: 1,
+    run_number: 88,
+    status: "completed",
+    conclusion: "success",
+    run_started_at: "2026-09-01T00:00:00.000Z",
+    updated_at: "2026-09-01T00:01:00.000Z",
+  };
+  const artifactName = `pintpath-permanent-staging-fenced-deployment-${candidate}`;
+  const fetchImpl = vi.fn()
+    .mockResolvedValueOnce(json(current))
+    .mockResolvedValueOnce(json(fenced))
+    .mockResolvedValueOnce(json({ workflow_runs: [fenced] }))
+    .mockResolvedValueOnce(json({
+      total_count: 1,
+      artifacts: [{
+        id: 6001,
+        name: artifactName,
+        expired: false,
+        digest: `sha256:${"b".repeat(64)}`,
+        size_in_bytes: 4096,
+        workflow_run: { id: Number(fencedRunId), head_sha: candidate },
+      }],
+    }));
+  const receiptPath = "/private/deployment-receipt.json";
+  const outputPath = "/private/fenced-authority.json";
+  const files = new Map<string, string>([
+    [receiptPath, fencedDeploymentReceipt()],
+  ]);
+  return {
+    files,
+    fetchImpl,
+    input: {
+      argv: [
+        "--mode", "verify-fenced-authority",
+        "--candidate-sha", candidate,
+        "--fenced-deployment-run-id", fencedRunId,
+        "--fenced-deployment-receipt", receiptPath,
+        "--output", outputPath,
+      ],
+      env: {
+        ...environment(false),
+        GITHUB_TOKEN: "github-token-for-exact-test", // security-scan allow: synthetic authority fixture
+      },
+      cwd: root,
+      fetchImpl,
+      readText: (filename: string) => files.get(filename) ?? "",
+      writeExclusive: (directory: string, leaf: string, source: string) => {
+        files.set(path.join(directory, leaf), source);
+      },
+      runCommand: vi.fn(),
+      writeOutput: vi.fn(),
+    },
+    outputPath,
   };
 }
 
@@ -331,6 +491,69 @@ async function preparePlan(mode: "first_run" | "steady_state") {
 }
 
 describe("protected permanent-staging venue directory", () => {
+  it("accepts only the two exact GitHub workflow-name projections", () => {
+    const workflowName = "Apply and prove permanent-staging venue directory";
+    const displayTitle =
+      `Permanent staging venue directory | apply-refresh-validate | ${candidate}`;
+    const exact =
+      protectedPermanentStagingVenueDirectoryInternals.workflowRunNameExact;
+
+    expect(exact(workflowName, workflowName, displayTitle)).toBe(true);
+    expect(exact(displayTitle, workflowName, displayTitle)).toBe(true);
+    expect(exact(
+      `Permanent staging venue directory | plan-refresh-validate | ${candidate}`,
+      workflowName,
+      displayTitle,
+    )).toBe(false);
+    expect(exact(
+      `Permanent staging venue directory | apply-refresh-validate | ${"b".repeat(40)}`,
+      workflowName,
+      displayTitle,
+    )).toBe(false);
+  });
+
+  it("verifies exact dynamic consumer and fenced-deployment run names end to end", async () => {
+    const harness = fencedAuthorityVerification();
+    expect(await runProtectedPermanentStagingVenueDirectory(harness.input))
+      .toBe(0);
+    expect(harness.fetchImpl).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(harness.files.get(harness.outputPath)!)).toMatchObject({
+      schemaVersion: VENUE_DIRECTORY_FENCED_AUTHORITY_SCHEMA,
+      candidateSha: candidate,
+      consumerWorkflowRunId: currentRunId,
+      fencedDeploymentRunId: fencedRunId,
+      latestDeploymentRunExact: true,
+    });
+  });
+
+  it.each([
+    [
+      "consumer",
+      {
+        currentName:
+          `Permanent staging venue directory | apply-refresh-validate | ${"b".repeat(40)}`,
+      },
+      "consumer_run_invalid",
+    ],
+    [
+      "fenced deployment",
+      {
+        fencedName:
+          `Deploy permanent staging | fenced | ${"b".repeat(40)}`,
+      },
+      "fenced_run_invalid",
+    ],
+  ] as const)("rejects a substituted %s dynamic run name", async (
+    _label,
+    overrides,
+    failure,
+  ) => {
+    const harness = fencedAuthorityVerification(overrides);
+    await expect(runProtectedPermanentStagingVenueDirectory(harness.input))
+      .rejects.toThrow(`protected_permanent_staging_venue_directory_${failure}`);
+    expect(harness.files.has(harness.outputPath)).toBe(false);
+  });
+
   it("pins the protected workflow, two-state ledger contract, and exact secret inventory", () => {
     const workflow = fs.readFileSync(workflowPath, "utf8");
     const policySource = fs.readFileSync(policyPath, "utf8");

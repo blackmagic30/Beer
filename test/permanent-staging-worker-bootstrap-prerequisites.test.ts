@@ -1056,6 +1056,87 @@ function githubRun(input: RunInput): Record<string, unknown> {
   };
 }
 
+function validateColdQuiesceRunName(value: Record<string, unknown>) {
+  const title =
+    `Permanent staging cold recovery | quiesce | ${CANDIDATE}`;
+  return stagingWorkerBootstrapPrerequisiteInternals.validateRun(value, {
+    runId: CURRENT_RUN,
+    candidateSha: CANDIDATE,
+    workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    workflowName: "Recover dead permanent staging to explicit zero",
+    status: "in_progress",
+    conclusion: null,
+    displayTitle: title,
+  });
+}
+
+describe("GitHub workflow run-name projection", () => {
+  const title =
+    `Permanent staging cold recovery | quiesce | ${CANDIDATE}`;
+  const coldQuiesceRun = (name: string) => githubRun({
+    id: CURRENT_RUN,
+    workflow: ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    name,
+    title,
+    created: "2026-08-21T01:02:30.000Z",
+    started: "2026-08-21T01:03:00.000Z",
+    completed: "2026-08-21T01:03:00.000Z",
+    current: true,
+  });
+
+  it("accepts GitHub REST projecting the static workflow name", () => {
+    expect(validateColdQuiesceRunName(coldQuiesceRun(
+      "Recover dead permanent staging to explicit zero",
+    ))).toMatchObject({ id: CURRENT_RUN });
+  });
+
+  it("accepts GitHub REST projecting the exact dynamic run-name", () => {
+    expect(validateColdQuiesceRunName(coldQuiesceRun(title)))
+      .toMatchObject({ id: CURRENT_RUN });
+  });
+
+  it("rejects any run name outside the two exact GitHub projections", () => {
+    expect(() => validateColdQuiesceRunName(coldQuiesceRun(
+      `Permanent staging cold recovery | prepare | ${CANDIDATE}`,
+    ))).toThrow("run_authority_invalid");
+  });
+
+  it("rejects a dynamic run name bound to another candidate", () => {
+    expect(() => validateColdQuiesceRunName(coldQuiesceRun(
+      `Permanent staging cold recovery | quiesce | ${"b".repeat(40)}`,
+    ))).toThrow("run_authority_invalid");
+  });
+
+  it.each([
+    [
+      "cold-prepare",
+      `Permanent staging cold recovery | reconcile-prepare | ${CANDIDATE}`,
+    ],
+    [
+      "cold-quiesce",
+      `Permanent staging cold recovery | reconcile-quiesce | ${CANDIDATE}`,
+    ],
+    [
+      "restore",
+      `Permanent staging worker bootstrap | reconcile-restore | ${CANDIDATE}`,
+    ],
+    [
+      "activate",
+      `Automatic maintenance worker fence | permanent-staging | reconcile-activate | ${CANDIDATE}`,
+    ],
+  ] as const)("selects the exact %s reconciliation producer title", (kind, title) => {
+    const spec = stagingWorkerBootstrapPrerequisiteInternals
+      .producerSpecForObservedRun(kind, CANDIDATE, { display_title: title });
+    expect(spec.title(CANDIDATE)).toBe(title);
+    const wrongCandidate = title.replace(CANDIDATE, "b".repeat(40));
+    const base = stagingWorkerBootstrapPrerequisiteInternals
+      .producerSpecForObservedRun(kind, CANDIDATE, {
+        display_title: wrongCandidate,
+      });
+    expect(base.title(CANDIDATE)).not.toBe(wrongCandidate);
+  });
+});
+
 function artifact(name: string, runId: string, id: string) {
   return {
     id: Number(id),
