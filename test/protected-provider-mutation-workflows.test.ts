@@ -266,6 +266,11 @@ describe("protected provider mutation workflows", () => {
         },
         desired: { schedule: null, tagMode: null, type: "disabled" },
       },
+      githubAuthorityContract: {
+        reconcileCrossCandidateMaximumIntermediateCandidates: 3,
+        reconcilePinnedIncidentGraceHours: 168,
+        reconcilePinnedPostStageBridgeRequired: true,
+      },
       crossCandidateRecoveryIncident: {
         priorCandidateSha:
           "52049a1ef414e274e47197e28726387c90d96990",
@@ -276,6 +281,15 @@ describe("protected provider mutation workflows", () => {
           "e4ae715f997a14aec247c50e1b21f69c78de0fd0",
         stagedRecoveryRunId: "34025400175",
         stagedRecoveryPatchId: "05d6c851-3d44-4b27-90cf-9222fbe6e7a7",
+        stagedRecoveryGraceHours: 168,
+        postStageBridgeCandidateSha:
+          "82d149681d9716f6964a05b80d0c50adbdf7d24a",
+        postStageBridgeReviewedHeadSha:
+          "90c1fa5ba7327bf01bac833063a1dfcbff772d2e",
+        postStageBridgeTreeSha:
+          "7b0968d8986ed3ae9af68fc94804a7fa24cbd0f9",
+        postStageBridgePullRequestNumber: 85,
+        postStageBridgeSkippedWriterRunId: "34113262642",
       },
       mutationBoundary: {
         policySha256: boundaryPolicySha,

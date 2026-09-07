@@ -87,7 +87,7 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "2072c6662c854cc0cbb8f182a529798891bdfc2d635642a92029869c27d52247";
+  "b572a7fef346b1f947fb4f72b43923cf347ade2d4247817e292e1c86e9152a7d";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
@@ -971,23 +971,20 @@ function reviewedAuthorityExact(
               intentCandidateSha,
               CROSS_CANDIDATE_RECOVERY.recoveryBridgeCandidateSha,
               CROSS_CANDIDATE_RECOVERY.stagedRecoveryCandidateSha,
-              ...(postStageBridgeExact
-                ? [CROSS_CANDIDATE_RECOVERY.postStageBridgeCandidateSha]
-                : []),
+              CROSS_CANDIDATE_RECOVERY.postStageBridgeCandidateSha,
               args.candidateSha,
             ]
             : [args.candidateSha],
         ) ||
         recoveryBridgeExact !== crossCandidateExact ||
         typeof postStageBridgeValue !== "boolean" ||
+        postStageBridgeExact !== crossCandidateExact ||
         value.safePriorSkippedWriteRunIds.includes(
           CROSS_CANDIDATE_RECOVERY.recoveryBridgeSkippedWriterRunId,
         ) !== crossCandidateExact ||
-        (crossCandidateExact
-          ? value.safePriorSkippedWriteRunIds.includes(
-              CROSS_CANDIDATE_RECOVERY.postStageBridgeSkippedWriterRunId,
-            ) !== postStageBridgeExact
-          : postStageBridgeExact !== false) ||
+        value.safePriorSkippedWriteRunIds.includes(
+          CROSS_CANDIDATE_RECOVERY.postStageBridgeSkippedWriterRunId,
+        ) !== crossCandidateExact ||
         priorRunId === env.GITHUB_RUN_ID ||
         value.safePriorSkippedWriteRunIds.includes(priorRunId) ||
         value.exactPriorProductionPostgresSourceRepinCandidateRunBound !==
@@ -2117,6 +2114,7 @@ function policyExact(cwd: string): boolean {
         reconcileCrossCandidateLinearReviewedRecoveryChainRequired: true,
         reconcileCrossCandidateMaximumIntermediateCandidates: 3,
         reconcileCrossCandidateRecoveryPinnedIncidentOnly: true,
+        reconcilePinnedPostStageBridgeRequired: true,
         reconcileSecondMayHaveWrittenRunAllowed: false,
         reconcilePinnedStageOnlySecondMayHaveWrittenRunAllowed: true,
         reconcilePinnedStageOnlyRunMustHaveZeroDismissAndCommitAttempts: true,

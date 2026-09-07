@@ -2351,6 +2351,7 @@ describe("reviewed candidate mutation authority", () => {
       priorAmbiguousProductionPostgresSourceRepinRunId: "659",
       priorProductionPostgresSourceRepinIntentCandidateSha: CANDIDATE,
       crossCandidateProductionPostgresSourceRepinRecoveryExact: false,
+      productionPostgresSourceRepinPostStageBridgeExact: false,
       exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
       secondProductionPostgresRemediationDismissPreventedExact: true,
       runnerLossRecoveryOriginalRunCompletedAt:
@@ -2456,7 +2457,7 @@ describe("reviewed candidate mutation authority", () => {
     );
   });
 
-  it("binds the exact reviewed recovery bridge and its skipped writer inside the source-lock seven-day window", async () => {
+  it("rejects bypassing the mandatory post-stage bridge inside the pinned source-lock recovery", async () => {
     const selected = workflowRun({
       id: 33923801697,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
@@ -2505,31 +2506,9 @@ describe("reviewed candidate mutation authority", () => {
         34025400175: jobs(stagedRecovery, "failure"),
       },
     });
-    await expect(fixture.verify()).resolves.toMatchObject({
-      candidateSha: CANDIDATE,
-      safePriorSkippedWriteRunIds: ["34000245292"],
-      priorAmbiguousProductionPostgresSourceRepinRunId: "33923801697",
-      priorProductionPostgresSourceRepinIntentCandidateSha:
-        SOURCE_LOCK_INCIDENT_CANDIDATE,
-      productionPostgresSourceRepinRecoveryChainCandidateShas: [
-        SOURCE_LOCK_INCIDENT_CANDIDATE,
-        SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
-        SOURCE_LOCK_STAGED_RECOVERY_CANDIDATE,
-        CANDIDATE,
-      ],
-      productionPostgresSourceRepinRecoveryBridgeExact: true,
-      productionPostgresSourceRepinStagedRecoveryRunExact: true,
-      productionPostgresSourceRepinStagedRecoveryArtifactMetadataExact: true,
-      priorPossiblyWritingProductionPostgresSourceReconcileRunId:
-        "34025400175",
-      noAdditionalPossiblyWritingProductionPostgresSourceLockRunsExact: true,
-      runnerLossRecoveryStageRunCompletedAt: "2026-09-06T09:47:28.000Z",
-      runnerLossRecoveryStageSettlementSeconds: 60,
-      runnerLossRecoveryStageGraceHours: 168,
-      runnerLossRecoveryStageWithinGraceExact: true,
-      runnerLossRecoveryGraceHours: 168,
-      runnerLossRecoveryWithinGraceExact: true,
-    });
+    await expect(fixture.verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
   });
 
   it("binds the exact post-stage bridge and its safe skipped writer", async () => {
@@ -2689,31 +2668,34 @@ describe("reviewed candidate mutation authority", () => {
       headSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
     });
     const stagedRecovery = sourceLockStagedRecoveryRun();
+    const postStageBridge = sourceLockPostStageBridgeRun();
     const current = workflowRun({
       id: 661,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
       displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
       status: "in_progress",
       conclusion: null,
-      createdAt: "2026-09-06T10:00:00Z",
+      createdAt: "2026-09-07T11:10:00Z",
     });
     const common = {
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
       priorRunId: "33923801697",
       priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
-      candidateParentSha: SOURCE_LOCK_STAGED_RECOVERY_CANDIDATE,
-      mergedAt: "2026-09-06T09:50:00Z",
+      candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-07T11:00:00Z",
       current,
       productionPostgresSourceRepinRuns: [
         selected,
         bridge,
         stagedRecovery,
+        postStageBridge,
         current,
       ],
       jobEvidence: {
         33923801697: jobs(selected, "failure"),
         34000245292: jobs(bridge, "skipped"),
         34025400175: jobs(stagedRecovery, "failure"),
+        34113262642: jobs(postStageBridge, "skipped"),
       },
     };
     for (const tampered of [
@@ -2932,6 +2914,7 @@ describe("reviewed candidate mutation authority", () => {
       headSha: SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
     });
     const stagedRecovery = sourceLockStagedRecoveryRun();
+    const postStageBridge = sourceLockPostStageBridgeRun();
     const fixtureAt = (createdAt: string) => {
       const current = workflowRun({
         id: 661,
@@ -2945,19 +2928,21 @@ describe("reviewed candidate mutation authority", () => {
         operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
         priorRunId: "33923801697",
         priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
-        candidateParentSha: SOURCE_LOCK_STAGED_RECOVERY_CANDIDATE,
-        mergedAt: "2026-09-06T09:50:00Z",
+        candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
+        mergedAt: "2026-09-07T11:00:00Z",
         current,
         productionPostgresSourceRepinRuns: [
           selected,
           bridge,
           stagedRecovery,
+          postStageBridge,
           current,
         ],
         jobEvidence: {
           33923801697: jobs(selected, "failure"),
           34000245292: jobs(bridge, "skipped"),
           34025400175: jobs(stagedRecovery, "failure"),
+          34113262642: jobs(postStageBridge, "skipped"),
         },
       });
     };
@@ -2985,19 +2970,21 @@ describe("reviewed candidate mutation authority", () => {
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
       priorRunId: "33923801697",
       priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
-      candidateParentSha: SOURCE_LOCK_STAGED_RECOVERY_CANDIDATE,
-      mergedAt: "2026-09-06T09:50:00Z",
+      candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-07T11:00:00Z",
       current: startsAfterDeadline,
       productionPostgresSourceRepinRuns: [
         selected,
         bridge,
         stagedRecovery,
+        postStageBridge,
         startsAfterDeadline,
       ],
       jobEvidence: {
         33923801697: jobs(selected, "failure"),
         34000245292: jobs(bridge, "skipped"),
         34025400175: jobs(stagedRecovery, "failure"),
+        34113262642: jobs(postStageBridge, "skipped"),
       },
     }).verify()).rejects.toThrow(
       "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",

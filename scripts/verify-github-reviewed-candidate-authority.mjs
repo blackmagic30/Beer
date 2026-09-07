@@ -578,7 +578,6 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     priorPull.reviewedPrHeadSha !== expected.priorReviewedHeadSha ||
     priorPull.treeSha !== expected.priorTreeSha ||
     priorPull.mergedAt !== expected.priorMergedAt ||
-    currentCommit.parents[0]?.sha !== expected.stagedRecoveryCandidateSha &&
     !usesPostStageBridge
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
@@ -615,28 +614,22 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     expected.stagedRecoveryMergedAt,
     "production_postgres_source_repin_reconciliation_history_invalid",
   );
-  const postStageBridgePull = usesPostStageBridge
-    ? await verifyReviewedPullRequest(
-      input.fetchImpl,
-      input.token,
-      policy,
-      expected.postStageBridgeCandidateSha,
-    )
-    : null;
-  const postStageBridgeCommit = usesPostStageBridge
-    ? await githubGet(
-      input.fetchImpl,
-      input.token,
-      REPOSITORY,
-      `/git/commits/${expected.postStageBridgeCandidateSha}`,
-    )
-    : null;
-  const postStageBridgeMergedAtMs = usesPostStageBridge
-    ? parseTimestamp(
-      expected.postStageBridgeMergedAt,
-      "production_postgres_source_repin_reconciliation_history_invalid",
-    )
-    : null;
+  const postStageBridgePull = await verifyReviewedPullRequest(
+    input.fetchImpl,
+    input.token,
+    policy,
+    expected.postStageBridgeCandidateSha,
+  );
+  const postStageBridgeCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${expected.postStageBridgeCandidateSha}`,
+  );
+  const postStageBridgeMergedAtMs = parseTimestamp(
+    expected.postStageBridgeMergedAt,
+    "production_postgres_source_repin_reconciliation_history_invalid",
+  );
   if (
     bridgePull.number !== expected.pullRequestNumber ||
     bridgePull.reviewedPrHeadSha !== expected.reviewedHeadSha ||
@@ -659,23 +652,21 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     stagedRecoveryCommit.parents.length !== 1 ||
     stagedRecoveryCommit.parents[0]?.sha !== expected.candidateSha ||
     bridgeMergedAtMs >= stagedRecoveryMergedAtMs ||
-    (usesPostStageBridge
-      ? postStageBridgePull?.number !==
-          expected.postStageBridgePullRequestNumber ||
-        postStageBridgePull?.reviewedPrHeadSha !==
-          expected.postStageBridgeReviewedHeadSha ||
-        postStageBridgePull?.treeSha !== expected.postStageBridgeTreeSha ||
-        postStageBridgePull?.mergedAt !== expected.postStageBridgeMergedAt ||
-        postStageBridgeCommit?.sha !== expected.postStageBridgeCandidateSha ||
-        postStageBridgeCommit?.tree?.sha !== expected.postStageBridgeTreeSha ||
-        !Array.isArray(postStageBridgeCommit?.parents) ||
-        postStageBridgeCommit.parents.length !== 1 ||
-        postStageBridgeCommit.parents[0]?.sha !==
-          expected.stagedRecoveryCandidateSha ||
-        postStageBridgeMergedAtMs === null ||
-        stagedRecoveryMergedAtMs >= postStageBridgeMergedAtMs ||
-        postStageBridgeMergedAtMs >= currentMergedAtMs
-      : stagedRecoveryMergedAtMs >= currentMergedAtMs)
+    postStageBridgePull?.number !==
+      expected.postStageBridgePullRequestNumber ||
+    postStageBridgePull?.reviewedPrHeadSha !==
+      expected.postStageBridgeReviewedHeadSha ||
+    postStageBridgePull?.treeSha !== expected.postStageBridgeTreeSha ||
+    postStageBridgePull?.mergedAt !== expected.postStageBridgeMergedAt ||
+    postStageBridgeCommit?.sha !== expected.postStageBridgeCandidateSha ||
+    postStageBridgeCommit?.tree?.sha !== expected.postStageBridgeTreeSha ||
+    !Array.isArray(postStageBridgeCommit?.parents) ||
+    postStageBridgeCommit.parents.length !== 1 ||
+    postStageBridgeCommit.parents[0]?.sha !==
+      expected.stagedRecoveryCandidateSha ||
+    postStageBridgeMergedAtMs === null ||
+    stagedRecoveryMergedAtMs >= postStageBridgeMergedAtMs ||
+    postStageBridgeMergedAtMs >= currentMergedAtMs
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
@@ -685,7 +676,7 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     crossCandidate: true,
     recoveryBridge: expected,
     stagedRecovery: expected,
-    postStageBridge: usesPostStageBridge ? expected : null,
+    postStageBridge: expected,
   });
 }
 
@@ -933,9 +924,18 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
   input,
   currentRun,
 ) {
+  const completeCrossCandidateBridge =
+    input.recoveryBridge !== null &&
+    input.stagedRecovery !== null &&
+    input.postStageBridge !== null;
+  const noCrossCandidateBridge =
+    input.recoveryBridge === null &&
+    input.stagedRecovery === null &&
+    input.postStageBridge === null;
   if (
-    input.crossCandidate !==
-      (input.recoveryBridge !== null && input.stagedRecovery !== null)
+    input.crossCandidate
+      ? !completeCrossCandidateBridge
+      : !noCrossCandidateBridge
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }

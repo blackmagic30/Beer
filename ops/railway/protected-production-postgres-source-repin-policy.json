@@ -98,6 +98,7 @@
     "reconcileCrossCandidateLinearReviewedRecoveryChainRequired": true,
     "reconcileCrossCandidateMaximumIntermediateCandidates": 3,
     "reconcileCrossCandidateRecoveryPinnedIncidentOnly": true,
+    "reconcilePinnedPostStageBridgeRequired": true,
     "reconcileSecondMayHaveWrittenRunAllowed": false,
     "reconcilePinnedStageOnlySecondMayHaveWrittenRunAllowed": true,
     "reconcilePinnedStageOnlyRunMustHaveZeroDismissAndCommitAttempts": true,
