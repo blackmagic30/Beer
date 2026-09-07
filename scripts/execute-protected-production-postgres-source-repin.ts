@@ -87,7 +87,7 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "9b160671b5a5fcd6b15b4ccb8c4ba91d082b2f9acda1284b2f8805c86a85ae9a";
+  "2072c6662c854cc0cbb8f182a529798891bdfc2d635642a92029869c27d52247";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
@@ -183,7 +183,20 @@ const CROSS_CANDIDATE_RECOVERY = {
   committedPatchAppliedAtMustNotPrecedeStagedPatchUpdatedAt: true,
   committedPatchAppliedAtMustNotPrecedeStagedRunSettlementBoundary: true,
   stagedRecoverySettlementSeconds: 60,
-  stagedRecoveryGraceHours: 24,
+  stagedRecoveryGraceHours: 168,
+  postStageBridgeCandidateSha:
+    "82d149681d9716f6964a05b80d0c50adbdf7d24a",
+  postStageBridgeReviewedHeadSha:
+    "90c1fa5ba7327bf01bac833063a1dfcbff772d2e",
+  postStageBridgeTreeSha:
+    "7b0968d8986ed3ae9af68fc94804a7fa24cbd0f9",
+  postStageBridgePullRequestNumber: 85,
+  postStageBridgeMergedAt: "2026-09-07T10:32:27Z",
+  postStageBridgeSkippedWriterRunId: "34113262642",
+  postStageBridgeSkippedWriterRunCreatedAt: "2026-09-07T10:47:19Z",
+  postStageBridgeSkippedWriterRunStartedAt: "2026-09-07T10:47:19Z",
+  postStageBridgeSkippedWriterRunCompletedAt: "2026-09-07T10:51:22Z",
+  postStageBridgeSkippedWriterRunConclusion: "failure",
 } as const;
 const PRODUCTION_POSTGRES_SOURCE_LOCK_RECOVERY_GRACE_HOURS = 24;
 const PRODUCTION_POSTGRES_SOURCE_LOCK_INCIDENT_RECOVERY_GRACE_HOURS = 7 * 24;
@@ -573,7 +586,7 @@ interface Dependencies {
   readonly sleep: (milliseconds: number) => Promise<void>;
 }
 
-class ContradictoryProviderObservationError extends Error {}
+class NonRetryableObservationError extends Error {}
 
 function sha256(value: string | Buffer): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -852,6 +865,7 @@ function reviewedAuthorityExact(
       "crossCandidateProductionPostgresSourceRepinRecoveryExact",
       "productionPostgresSourceRepinRecoveryChainCandidateShas",
       "productionPostgresSourceRepinRecoveryBridgeExact",
+      "productionPostgresSourceRepinPostStageBridgeExact",
       "exactPriorProductionPostgresSourceRepinCandidateRunBound",
       "secondProductionPostgresRemediationDismissPreventedExact",
       "runnerLossRecoveryOriginalRunCompletedAt",
@@ -924,6 +938,9 @@ function reviewedAuthorityExact(
         value.productionPostgresSourceRepinRecoveryChainCandidateShas;
       const recoveryBridgeExact =
         value.productionPostgresSourceRepinRecoveryBridgeExact;
+      const postStageBridgeValue =
+        value.productionPostgresSourceRepinPostStageBridgeExact;
+      const postStageBridgeExact = postStageBridgeValue === true;
       const stagedRecoveryRunExact =
         value.productionPostgresSourceRepinStagedRecoveryRunExact;
       const stagedRecoveryArtifactMetadataExact =
@@ -954,11 +971,23 @@ function reviewedAuthorityExact(
               intentCandidateSha,
               CROSS_CANDIDATE_RECOVERY.recoveryBridgeCandidateSha,
               CROSS_CANDIDATE_RECOVERY.stagedRecoveryCandidateSha,
+              ...(postStageBridgeExact
+                ? [CROSS_CANDIDATE_RECOVERY.postStageBridgeCandidateSha]
+                : []),
               args.candidateSha,
             ]
             : [args.candidateSha],
         ) ||
         recoveryBridgeExact !== crossCandidateExact ||
+        typeof postStageBridgeValue !== "boolean" ||
+        value.safePriorSkippedWriteRunIds.includes(
+          CROSS_CANDIDATE_RECOVERY.recoveryBridgeSkippedWriterRunId,
+        ) !== crossCandidateExact ||
+        (crossCandidateExact
+          ? value.safePriorSkippedWriteRunIds.includes(
+              CROSS_CANDIDATE_RECOVERY.postStageBridgeSkippedWriterRunId,
+            ) !== postStageBridgeExact
+          : postStageBridgeExact !== false) ||
         priorRunId === env.GITHUB_RUN_ID ||
         value.safePriorSkippedWriteRunIds.includes(priorRunId) ||
         value.exactPriorProductionPostgresSourceRepinCandidateRunBound !==
@@ -1232,9 +1261,11 @@ async function readBounded(response: Response): Promise<string> {
     (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_RESPONSE_BYTES)
   ) {
     void response.body?.cancel().catch(() => undefined);
-    throw new Error("provider_invalid");
+    throw new NonRetryableObservationError("provider_response_framing_invalid");
   }
-  if (!response.body) throw new Error("provider_invalid");
+  if (!response.body) {
+    throw new NonRetryableObservationError("provider_response_body_missing");
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -1245,7 +1276,9 @@ async function readBounded(response: Response): Promise<string> {
       total += item.value.byteLength;
       if (total > MAX_RESPONSE_BYTES) {
         await reader.cancel();
-        throw new Error("provider_invalid");
+        throw new NonRetryableObservationError(
+          "provider_response_body_too_large",
+        );
       }
       chunks.push(item.value);
     }
@@ -1277,11 +1310,25 @@ async function providerCall(
   });
   if (!response.ok) {
     void response.body?.cancel().catch(() => undefined);
-    throw new Error("provider_invalid");
+    if (
+      response.status >= 500 ||
+      response.status === 408 ||
+      response.status === 425 ||
+      response.status === 429
+    ) {
+      throw new Error("provider_temporarily_unavailable");
+    }
+    throw new NonRetryableObservationError("provider_response_rejected");
   }
   const source = await readBounded(response);
-  if (source.includes("\0")) throw new Error("provider_invalid");
-  return JSON.parse(source) as unknown;
+  if (source.includes("\0")) {
+    throw new NonRetryableObservationError("provider_response_nul_invalid");
+  }
+  try {
+    return JSON.parse(source) as unknown;
+  } catch {
+    throw new NonRetryableObservationError("provider_response_json_invalid");
+  }
 }
 
 function tokenScopeExact(value: unknown, environmentId: string): boolean {
@@ -2068,7 +2115,7 @@ function policyExact(cwd: string): boolean {
         reconcilePriorIntentCandidateShaRequired: true,
         reconcileSelectedPriorRunMustBeOneAmbiguousApply: true,
         reconcileCrossCandidateLinearReviewedRecoveryChainRequired: true,
-        reconcileCrossCandidateMaximumIntermediateCandidates: 2,
+        reconcileCrossCandidateMaximumIntermediateCandidates: 3,
         reconcileCrossCandidateRecoveryPinnedIncidentOnly: true,
         reconcileSecondMayHaveWrittenRunAllowed: false,
         reconcilePinnedStageOnlySecondMayHaveWrittenRunAllowed: true,
@@ -2157,6 +2204,7 @@ function policyExact(cwd: string): boolean {
           commitHistoryMustReplaceOnlyExactStagedPatch: true,
           onlyExactPreMutationStateOrExactTargetStateRetryable: true,
           transientReadErrorsRetryableWithinBound: true,
+          onlyExplicitlyTransientReadErrorsRetryableWithinBound: true,
           contradictoryStateFailsImmediately: true,
           mutationRetriesAllowed: false,
         },
@@ -2223,7 +2271,12 @@ function policyExact(cwd: string): boolean {
 }
 
 function parseBoundaryOutput(source: string, code: 0 | 1): BoundaryObservation {
-  const value = JSON.parse(source) as unknown;
+  let value: unknown;
+  try {
+    value = JSON.parse(source) as unknown;
+  } catch {
+    throw new NonRetryableObservationError("boundary_json_invalid");
+  }
   if (
     !exactKeys(value, [
       "schemaVersion",
@@ -2236,14 +2289,14 @@ function parseBoundaryOutput(source: string, code: 0 | 1): BoundaryObservation {
     value.policy !== "pintpath-production-staging-mutation-boundary" ||
     value.mode !== "read-only-boundary"
   ) {
-    throw new Error("boundary_invalid");
+    throw new NonRetryableObservationError("boundary_identity_invalid");
   }
   const rawChecks = value.checks;
   if (
     !exactKeys(rawChecks, BOUNDARY_CHECK_NAMES) ||
     !BOUNDARY_CHECK_NAMES.every((name) => typeof rawChecks[name] === "boolean")
   ) {
-    throw new Error("boundary_invalid");
+    throw new NonRetryableObservationError("boundary_checks_invalid");
   }
   const boundaryChecks = rawChecks as unknown as BoundaryChecks;
   const passed = BOUNDARY_CHECK_NAMES.every((name) => boundaryChecks[name]);
@@ -2251,7 +2304,7 @@ function parseBoundaryOutput(source: string, code: 0 | 1): BoundaryObservation {
     (code === 0) !== passed ||
     value.outcome !== (passed ? "passed" : "failed")
   ) {
-    throw new Error("boundary_invalid");
+    throw new NonRetryableObservationError("boundary_outcome_invalid");
   }
   return { code, checks: boundaryChecks };
 }
@@ -2291,7 +2344,7 @@ async function queryState(
     ),
   );
   if (state === null) {
-    throw new ContradictoryProviderObservationError("provider_state_invalid");
+    throw new NonRetryableObservationError("provider_state_invalid");
   }
   return state;
 }
@@ -2312,7 +2365,7 @@ async function queryPatch(
     patchId,
   );
   if (value === null) {
-    throw new ContradictoryProviderObservationError("provider_patch_invalid");
+    throw new NonRetryableObservationError("provider_patch_invalid");
   }
   return value;
 }
@@ -2571,7 +2624,7 @@ async function stageAndCommit(
       state = initialState ?? (await queryState(dependencies, metadataToken));
       initialState = null;
     } catch (error) {
-      if (error instanceof ContradictoryProviderObservationError) throw error;
+      if (error instanceof NonRetryableObservationError) throw error;
       consecutiveExact = 0;
       lastExactState = null;
       lastExactPatch = null;
@@ -2618,7 +2671,7 @@ async function stageAndCommit(
         );
         boundary = await dependencies.runBoundary();
       } catch (error) {
-        if (error instanceof ContradictoryProviderObservationError) throw error;
+        if (error instanceof NonRetryableObservationError) throw error;
         consecutiveExact = 0;
         lastExactState = null;
         lastExactPatch = null;
@@ -2739,7 +2792,7 @@ async function verifyPostflight(
       after = await queryState(dependencies, metadataToken);
       boundary = await dependencies.runBoundary();
     } catch (error) {
-      if (error instanceof ContradictoryProviderObservationError) throw error;
+      if (error instanceof NonRetryableObservationError) throw error;
       consecutiveExact = 0;
       lastExactState = null;
       stateChecks.desiredStateExact = false;
@@ -3238,6 +3291,7 @@ export const protectedProductionPostgresSourceRepinInternals = {
   dismissedBaselineExact,
   dismissedStagedExact,
   parseArgs,
+  parseBoundaryOutput,
   parseCommitAcknowledgement,
   parseDismissAcknowledgement,
   parseIntent,

@@ -91,11 +91,15 @@ Postgres source-lock incident instead keeps its reviewed 168-hour outer recovery
 window. That exception accepts the exact PR #83 recovery bridge, requires its
 exact failed run to have skipped the writer, and then binds the exact PR #84
 stage-only failure. The latter must prove zero dismiss calls, exactly one stage
-call, zero commit calls, and an exact durable artifact. It creates a narrower
-24-hour commit-only deadline and never permits a second stage. Every candidate
-is authenticated in the linear chain. Later recovery failures never extend
-either deadline, and the candidate must remain the exact current protected-main
-head.
+call, zero commit calls, and an exact durable artifact. It creates a fixed
+168-hour commit-only grace that remains bounded by the original incident's
+168-hour outer deadline and never permits a second stage. The exact PR #85
+post-stage bridge is also pinned: run `34113262642` failed before the mutation
+credential existed and its writer was skipped. The recovery candidate must be
+the directly reviewed successor of that bridge, must merge after the skipped
+run completed, and must preserve the full linear chain. Later recovery failures
+never extend either deadline, and the candidate must remain the exact current
+protected-main head.
 
 A first dispatch is eligible only when there is no prior matching run. A fresh
 dispatch after prior matches is eligible only when every prior run is an
@@ -150,9 +154,12 @@ skipped. If an apply writer started and its result is ambiguous, wait at least
 with that exact prior run ID and durable intent artifact. The current pinned
 source-lock incident keeps the original 168-hour outer limit; every ordinary
 recovery retains its 24-hour limit unless separately reviewed. The pinned chain
-additionally accepts only the exact PR #84 stage-only run and its artifact, then
-enforces a 24-hour commit-only limit from that run's completion. Authority
-rejects any other possibly-writing run. Reconciliation never dismisses again:
+additionally accepts only the exact PR #84 stage-only run and its artifact,
+followed by the exact PR #85 bridge and its safe skipped-writer run
+`34113262642`, then enforces a fixed 168-hour commit-only grace from the
+stage-only run's completion while remaining bounded by the original incident
+deadline. Authority rejects any other possibly-writing run. Reconciliation
+never dismisses again:
 desired state plus an empty patch is read-only success; the exact authorized
 staged patch permits commit only; the pinned cross-candidate incident with an
 empty staged patch fails closed because its one stage attempt has already
