@@ -205,8 +205,23 @@ reviewed cleanup work onto that SHA. Recovery operations themselves are not
 transferable across candidates. From the first potentially reached write in
 the successor cleanup/provider/recovery chain through final staging closeout,
 operations must impose a protected-main merge freeze. If a later merge changes
-the current head, the stranded SHA cannot be recovered by rebinding its state
-to the new candidate; that condition remains P1/NO-GO.
+the current head while a provider patch or ambiguous transition may be pending,
+the stranded SHA cannot be recovered by relabelling or transferring its
+receipts; that condition remains P1/NO-GO.
+
+One narrower restart is permitted when a cold prepare completed but the later
+quiescence run provably stopped before its Railway write. No superseded receipt
+is consumed. On the fully policy-pinned cold/dead `replicas=null` topology only,
+the next candidate's ordinary Supabase replacement may accept the exact
+prepared-shape metadata: both automatic-maintenance rows occur exactly once,
+are application-owned, unreferenced, and unsealed. Railway metadata cannot
+prove their hidden values or provenance, so neither is trusted. The replacement
+touches only the two Supabase rows, re-canaries the supplied pair, uses
+`skipDeploys=true`, and proves the complete maintenance metadata and topology
+unchanged. A fresh same-candidate cold prepare must immediately overwrite
+`PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED=false` and the new candidate SHA before
+quiescence. This creates a new ordinary evidence chain; it is not a
+cross-candidate waiver or a receipt rebind.
 
 The executors run the production/staging Railway mutation boundary immediately
 before and after writes. Every authorized write has a durable secret-free
@@ -633,6 +648,13 @@ route open. The controlling policy is schema v2 at SHA-256
    `supabase-key-replacement`. Supply both publishable and secret keys to one
    atomic `skipDeploys=true` mutation. No Railway canary service is required.
    Its receipt is not runtime proof.
+   If a no-write quiescence failure forced a reviewed compatibility merge after
+   cold prepare, do not reuse the prior candidate's replacement or prepare
+   receipts. While the exact detached cold/dead null topology and complete
+   inert prepared-shape maintenance metadata remain unchanged, run one ordinary
+   replacement for the new candidate, then one ordinary same-candidate cold
+   prepare. Any partial maintenance pair, ownership/reference/sealing mismatch,
+   topology drift, ambiguous replacement, or intervening merge fails closed.
 5. For the current dead/null recovery, prove the exact staging `profiles` Data
    API prerequisite from the protected runner, run cold `prepare` without
    changing the null runtime, then authenticate cold quiesce from null to zero.

@@ -1337,8 +1337,8 @@ cutover, and general permanent-staging runtime-variable writes share
 sequence is serialized. The provider-mutation dispatch guard is keyed by exact
 candidate+operation through the run title
 `Permanent staging provider mutation | <operation> | <candidate>`; the
-legacy-cutover guard is keyed by exact candidate through
-`Permanent staging Supabase legacy cutover | <candidate>`. Both call
+legacy-cutover guard is keyed by exact candidate+operation through
+`Permanent staging Supabase legacy cutover | <operation> | <candidate>`. Both call
 `github:reviewed-candidate-authority:verify`. General runtime-variable writes use
 that verifier too and are keyed by exact candidate+target+variable through
 `Configure runtime variable | <target> | <variable> | <candidate>`. Every guard

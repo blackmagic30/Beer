@@ -85,6 +85,28 @@ function workflowPathExact(actual, expected) {
   return actual === expected || actual === `${expected}@main`;
 }
 
+function workflowRunNameExact(actual, workflowName, dynamicRunTitle) {
+  return actual === workflowName
+    || (typeof dynamicRunTitle === "string" && actual === dynamicRunTitle);
+}
+
+function mainWorkflowRunTitle(candidateSha) {
+  return typeof candidateSha === "string" && SHA.test(candidateSha)
+    ? `Account deletion rehearsal | ${candidateSha}`
+    : null;
+}
+
+function reconcileWorkflowRunTitle(event, activationRunId) {
+  if (event === "schedule") {
+    return "Account deletion cleanup reconciliation | guardian";
+  }
+  if ((event === "workflow_dispatch" || event === "workflow_run")
+    && typeof activationRunId === "string" && RUN_ID.test(activationRunId)) {
+    return `Account deletion cleanup reconciliation | ${activationRunId}`;
+  }
+  return null;
+}
+
 function timestamp(value) {
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
@@ -133,7 +155,11 @@ function mainRunExact(run) {
     && run.run_attempt === 1
     && run.status === "completed"
     && MAIN_CONCLUSIONS.has(run.conclusion)
-    && run.name === MAIN_WORKFLOW_NAME
+    && workflowRunNameExact(
+      run.name,
+      MAIN_WORKFLOW_NAME,
+      mainWorkflowRunTitle(run.head_sha),
+    )
     && workflowPathExact(run.path, MAIN_WORKFLOW_PATH)
     && run.event === "workflow_dispatch"
     && run.head_branch === "main"
@@ -145,17 +171,21 @@ function closeoutProducerRunExact(run, {
   expectedRunId,
   expectedMode,
   expectedCandidateSha,
+  expectedActivationRunId,
 }) {
   const original = expectedMode === "original";
   const expectedPath = original ? MAIN_WORKFLOW_PATH : RECONCILE_WORKFLOW_PATH;
   const expectedName = original ? MAIN_WORKFLOW_NAME : RECONCILE_WORKFLOW_NAME;
+  const expectedRunTitle = original
+    ? mainWorkflowRunTitle(expectedCandidateSha)
+    : reconcileWorkflowRunTitle(run?.event, expectedActivationRunId);
   return record(run)
     && runIdExact(run.id)
     && String(run.id) === expectedRunId
     && run.run_attempt === 1
     && run.status === "completed"
     && run.conclusion === "success"
-    && run.name === expectedName
+    && workflowRunNameExact(run.name, expectedName, expectedRunTitle)
     && workflowPathExact(run.path, expectedPath)
     && (original
       ? run.event === "workflow_dispatch"
@@ -376,6 +406,7 @@ async function closeoutArtifactTrusted({
       expectedRunId: producerRunId,
       expectedMode,
       expectedCandidateSha: candidateSha,
+      expectedActivationRunId: activationRunId,
     })) return false;
     const entries = await downloadGithubArtifactBundle({
       artifact,

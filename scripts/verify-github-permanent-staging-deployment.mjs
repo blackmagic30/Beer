@@ -197,9 +197,20 @@ function validateWorkflowRun(value, expected) {
   const run = exactObject(value);
   const repository = exactObject(run?.repository);
   const headRepository = exactObject(run?.head_repository);
+  const expectedDisplayTitles = expected.displayTitle !== undefined
+    ? [expected.displayTitle]
+    : Array.isArray(expected.displayTitles)
+      ? expected.displayTitles
+      : [];
   const workflowPathExact =
     run?.path === expected.workflowPath ||
     run?.path === `${expected.workflowPath}@main`;
+  const workflowNameExact = expected.workflowName === undefined ||
+    run?.name === expected.workflowName ||
+    (expectedDisplayTitles.includes(run?.name) &&
+      run?.name === run?.display_title);
+  const displayTitleExact = expectedDisplayTitles.length === 0 ||
+    expectedDisplayTitles.includes(run?.display_title);
   if (
     !run ||
     String(run.id) !== expected.runId ||
@@ -212,9 +223,8 @@ function validateWorkflowRun(value, expected) {
     run.run_attempt !== 1 ||
     run.status !== expected.status ||
     run.conclusion !== expected.conclusion ||
-    (expected.workflowName !== undefined && run.name !== expected.workflowName) ||
-    (expected.displayTitle !== undefined &&
-      run.display_title !== expected.displayTitle)
+    !workflowNameExact ||
+    !displayTitleExact
   )
     fail(expected.failureCode);
   return run;
@@ -235,12 +245,16 @@ function replacementTitle(candidateSha) {
   return `Permanent staging provider mutation | supabase-key-replacement | ${candidateSha}`;
 }
 
-function cutoverTitleExact(value, candidateSha) {
+function cutoverTitles(candidateSha) {
   return [
     "reconcile-already-disabled-legacy-keys",
     "disable-enabled-legacy-keys",
-  ].some((operation) => value ===
+  ].map((operation) =>
     `Permanent staging Supabase legacy cutover | ${operation} | ${candidateSha}`);
+}
+
+function cutoverTitleExact(value, candidateSha) {
+  return cutoverTitles(candidateSha).includes(value);
 }
 
 function validateArtifact(value, expected) {
@@ -456,6 +470,7 @@ export async function verifyGithubPermanentStagingDeployment(input) {
       candidateSha: input.candidateSha,
       workflowPath: CUTOVER_WORKFLOW_PATH,
       workflowName: CUTOVER_WORKFLOW_NAME,
+      displayTitles: cutoverTitles(input.candidateSha),
       status: "in_progress",
       conclusion: null,
       failureCode: "consumer_run_invalid",

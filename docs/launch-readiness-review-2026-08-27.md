@@ -191,10 +191,11 @@ external evidence genuinely pass.
 - Corrected the staging runbook order: the four create-only provider values must
   be written with deploys skipped while the legacy app is healthy at one replica
   and before worker preparation. The separate Supabase replacement should also
-  run before prepare, but remains safely eligible on the same healthy legacy
-  generation after prepare because row metadata cannot prove key replacement;
-  it must finish before quiesce or candidate upload. The provider executor
-  cannot run at fenced zero.
+  run before prepare. It is not eligible after prepare on a healthy legacy
+  generation. The only restart exception is the exact pinned cold/dead null
+  topology with the complete untrusted prepared-shape maintenance metadata;
+  that path requires a fresh replacement immediately followed by a fresh
+  same-candidate cold prepare. The provider executor cannot run at fenced zero.
 - Enforced the observable part of that order in the protected executors:
   provider writes and worker preparation now require the exact healthy
   one-replica legacy generation, sole staging service domain on port 8080,
@@ -661,7 +662,13 @@ blockers.
   a later merge can make that candidate undispatchable while a provider patch
   or partially completed transition is stranded. Treat a protected-main merge
   freeze from that write through successful recovery/closeout as an explicit
-  P1 operational prerequisite; there is no cross-candidate waiver.
+  P1 operational prerequisite; there is no cross-candidate receipt waiver.
+  A reviewed compatibility merge after a completed cold prepare is recoverable
+  only when quiescence provably made no write and the exact pinned cold/dead
+  null topology plus complete inert prepared-shape maintenance metadata remain
+  unchanged. The successor must create its own canaried Supabase replacement
+  receipt and its own cold-prepare receipt; none of the predecessor receipts
+  transfer.
 - Railway's staged environment-patch API does not expose a patch ETag/version
   or provider lock that can be supplied to the deploy-suppressed commit/cancel
   calls. The workflow reasserts the exact patch and records its provider patch
@@ -720,6 +727,11 @@ permanent-staging application is failed/stopped. Continue only in this order:
    once under the external-writer freeze. Re-export the empty staged patch and
    96-row inventory. Only then reconcile the four provider rows and execute the
    atomic Supabase replacement whose exact pair passes the same-custody canary.
+   If a later reviewed compatibility merge follows a successful cold prepare
+   but a provably pre-write quiescence failure, do not reuse any predecessor
+   artifact. Prove the exact inert prepared shape, execute one fresh ordinary
+   Supabase replacement for the new candidate, then execute one fresh ordinary
+   same-candidate cold prepare and freeze `main`.
 5. Select that successful replacement run and dispatch cold `prepare` against
    the policy-pinned `numReplicas:null` topology, then select the successful
    prepare run and dispatch cold `quiesce` to initialize explicit zero. Do not

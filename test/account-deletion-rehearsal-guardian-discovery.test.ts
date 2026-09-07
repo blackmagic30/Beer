@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ACCOUNT_DELETION_REHEARSAL_GUARDIAN_DISCOVERY_SCHEMA,
+  accountDeletionRehearsalRecoveryDiscoveryInternals,
   discoverAccountDeletionRehearsalRecovery,
 } from "../scripts/discover-github-account-deletion-rehearsal-recovery.mjs";
 import { finalizeAccountDeletionRehearsalCloseout } from
@@ -488,6 +489,102 @@ afterEach(() => {
   }
 });
 
+describe("account-deletion workflow run-name projection", () => {
+  it.each([
+    [
+      "static workflow name",
+      "Rehearse Pint Path permanent-staging account deletion",
+    ],
+    ["dynamic run title", `Account deletion rehearsal | ${candidate}`],
+  ])("accepts the exact main-workflow %s", (_label, name) => {
+    expect(
+      accountDeletionRehearsalRecoveryDiscoveryInternals.mainRunExact(
+        mainRun({ name }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    [
+      "scheduled static workflow name",
+      reconcileRun(),
+    ],
+    [
+      "scheduled dynamic guardian title",
+      reconcileRun({
+        name: "Account deletion cleanup reconciliation | guardian",
+      }),
+    ],
+    [
+      "dispatched dynamic activation title",
+      reconcileRun({
+        event: "workflow_dispatch",
+        name:
+          `Account deletion cleanup reconciliation | ${activationRunId}`,
+      }),
+    ],
+    [
+      "workflow-run dynamic activation title",
+      reconcileRun({
+        event: "workflow_run",
+        name:
+          `Account deletion cleanup reconciliation | ${activationRunId}`,
+      }),
+    ],
+  ])("accepts the exact %s", (_label, run) => {
+    expect(
+      accountDeletionRehearsalRecoveryDiscoveryInternals
+        .closeoutProducerRunExact(run, {
+          expectedRunId: recoveryRunId,
+          expectedMode: "reconcile",
+          expectedCandidateSha: candidate,
+          expectedActivationRunId: activationRunId,
+        }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["candidate", `Account deletion rehearsal | ${secondCandidate}`],
+    [
+      "operation",
+      `Account deletion cleanup reconciliation | ${activationRunId}`,
+    ],
+  ])("rejects a main-workflow dynamic title with the wrong %s", (
+    _label,
+    name,
+  ) => {
+    expect(
+      accountDeletionRehearsalRecoveryDiscoveryInternals.mainRunExact(
+        mainRun({ name }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    [
+      "activation run",
+      `Account deletion cleanup reconciliation | ${secondActivationRunId}`,
+    ],
+    ["operation", `Account deletion rehearsal | ${candidate}`],
+  ])("rejects a dispatched reconciliation title with the wrong %s", (
+    _label,
+    name,
+  ) => {
+    expect(
+      accountDeletionRehearsalRecoveryDiscoveryInternals
+        .closeoutProducerRunExact(reconcileRun({
+          event: "workflow_dispatch",
+          name,
+        }), {
+          expectedRunId: recoveryRunId,
+          expectedMode: "reconcile",
+          expectedCandidateSha: candidate,
+          expectedActivationRunId: activationRunId,
+        }),
+    ).toBe(false);
+  });
+});
+
 describe("account-deletion rehearsal scheduled guardian discovery", () => {
   it("uses the workflow-specific endpoint and returns no-op only after complete discovery", async () => {
     const requests: string[] = [];
@@ -547,7 +644,10 @@ describe("account-deletion rehearsal scheduled guardian discovery", () => {
       closeoutArchive,
       1003,
     );
-    const original = mainRun({ conclusion: "success" });
+    const original = mainRun({
+      conclusion: "success",
+      name: `Account deletion rehearsal | ${candidate}`,
+    });
     const result = await discoverAccountDeletionRehearsalRecovery({
       env,
       now: () => now,
@@ -584,7 +684,13 @@ describe("account-deletion rehearsal scheduled guardian discovery", () => {
         mainRuns: [mainRun()],
         runArtifacts: { [activationRunId]: [arm] },
         namedArtifacts: { [name]: [closeout] },
-        producerRuns: { [recoveryRunId]: reconcileRun() },
+        producerRuns: {
+          [recoveryRunId]: reconcileRun({
+            event: "workflow_dispatch",
+            name:
+              `Account deletion cleanup reconciliation | ${activationRunId}`,
+          }),
+        },
         archives: new Map([
           [arm.id, armArchive],
           [closeout.id, closeoutArchive],

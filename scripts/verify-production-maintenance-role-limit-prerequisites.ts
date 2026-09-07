@@ -1215,7 +1215,11 @@ function validateOneTimeRoleLimitApplyHistory(
       !title
       || repository?.full_name !== REPOSITORY
       || headRepository?.full_name !== REPOSITORY
-      || run.name !== ROLE_LIMIT_WORKFLOW_NAME
+      || !workflowRunNameExact(
+        run.name,
+        ROLE_LIMIT_WORKFLOW_NAME,
+        typeof run.display_title === "string" ? run.display_title : null,
+      )
       || !workflowPathExact(run.path, ROLE_LIMIT_WORKFLOW)
       || run.event !== "workflow_dispatch"
       || run.head_branch !== "main"
@@ -1246,6 +1250,15 @@ function workflowPathExact(actual: unknown, expected: string): boolean {
   return actual === expected || actual === `${expected}@main`;
 }
 
+function workflowRunNameExact(
+  actual: unknown,
+  workflowName: string,
+  displayTitle: string | null,
+): boolean {
+  return actual === workflowName
+    || (displayTitle !== null && actual === displayTitle);
+}
+
 function validateRun(
   value: unknown,
   input: {
@@ -1260,7 +1273,7 @@ function validateRun(
       | "cancelled"
       | "timed_out"
       | null;
-    readonly displayTitle?: string;
+    readonly displayTitle: string;
   },
 ): GithubRun {
   const run = record(value) ? value : null;
@@ -1273,7 +1286,11 @@ function validateRun(
     || String(run.id) !== input.runId
     || repository?.full_name !== REPOSITORY
     || headRepository?.full_name !== REPOSITORY
-    || run.name !== input.workflowName
+    || !workflowRunNameExact(
+      run.name,
+      input.workflowName,
+      input.displayTitle,
+    )
     || !workflowPathExact(run.path, input.workflowPath)
     || run.event !== "workflow_dispatch"
     || run.head_sha !== input.candidateSha
@@ -1281,8 +1298,7 @@ function validateRun(
     || run.run_attempt !== 1
     || run.status !== input.status
     || run.conclusion !== input.conclusion
-    || (input.displayTitle !== undefined
-      && run.display_title !== input.displayTitle)
+    || run.display_title !== input.displayTitle
   ) fail("run_authority_invalid");
   const started = timestamp(run.run_started_at, "run_authority_invalid");
   const created = timestamp(run.created_at, "run_authority_invalid");
@@ -3223,6 +3239,8 @@ async function verifyRoleLimit(
     workflowName: ROLE_LIMIT_WORKFLOW_NAME,
     status: "in_progress",
     conclusion: null,
+    displayTitle:
+      `Production maintenance LOGIN limit | apply | ${args.candidateSha}`,
   });
   const fence = validateRun(fenceValue, {
     runId: args.fenceRunId,
@@ -3241,6 +3259,7 @@ async function verifyRoleLimit(
     workflowName: DEPLOYMENT_WORKFLOW_NAME,
     status: "completed",
     conclusion: "success",
+    displayTitle: `Deploy production | ${args.candidateSha}`,
   });
   const now = dependencies.now();
   const nowMs = now.getTime();
@@ -3489,6 +3508,7 @@ async function verifyProductionDeploy(
     workflowName: DEPLOYMENT_WORKFLOW_NAME,
     status: "in_progress",
     conclusion: null,
+    displayTitle: `Deploy production | ${args.candidateSha}`,
   });
   const fence = validateRun(fenceValue, {
     runId: args.fenceRunId,
@@ -4080,6 +4100,8 @@ async function verifyProductionScale(
     workflowName: PRODUCTION_SCALE_WORKFLOW_NAME,
     status: "in_progress",
     conclusion: null,
+    displayTitle:
+      `Converge production to two replicas | ${args.candidateSha}`,
   });
   const activation = validateRun(activateValue, {
     runId: activateRunId,

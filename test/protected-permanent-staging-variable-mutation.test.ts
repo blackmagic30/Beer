@@ -1777,6 +1777,305 @@ describe("protected permanent-staging variable mutation", () => {
       .toHaveLength(2);
   });
 
+  it("re-establishes the Supabase replacement receipt from an exact inert cold prepared shape", async () => {
+    const publishable = `sb_publishable_${"p".repeat(32)}`;
+    const secret = `sb_secret_${"s".repeat(32)}`;
+    const rows = [
+      variable("SUPABASE_ANON_KEY", SERVICE_ID, false),
+      variable("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"),
+    ];
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(coldMetadata(rows))
+      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(coldMetadata(rows))
+      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(json({
+        disable_signup: false,
+        external: { email: true },
+      }))
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json({ data: { variableCollectionUpsert: true } }))
+      .mockResolvedValueOnce(coldMetadata(rows))
+      .mockResolvedValueOnce(coldDeployment());
+    const outputs: string[] = [];
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: [
+        "--operation", "supabase-key-replacement",
+        "--evidence-dir", "/private/evidence",
+        "--publishable-key-file", "/private/publishable",
+        "--secret-key-file", "/private/secret",
+      ],
+      env: environment("supabase-key-replacement"),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      readSecretFile: (filename) => Buffer.from(
+        filename.endsWith("publishable") ? publishable : secret,
+      ),
+      writeDurable: (_directory, _leaf, source) => sha256(source),
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(0);
+    const mutationCalls = fetchImpl.mock.calls.filter((call) =>
+      String((call[1] as RequestInit | undefined)?.body ?? "")
+        .includes("variableCollectionUpsert"));
+    expect(mutationCalls).toHaveLength(1);
+    const mutation = JSON.parse(
+      String((mutationCalls[0]![1] as RequestInit).body),
+    ) as { variables: { variables: Record<string, string>; skipDeploys: boolean } };
+    expect(mutation.variables).toEqual({
+      projectId: PROJECT_ID,
+      environmentId: ENVIRONMENT_ID,
+      serviceId: SERVICE_ID,
+      variables: {
+        SUPABASE_ANON_KEY: publishable,
+        SUPABASE_SERVICE_ROLE_KEY: secret,
+      },
+      skipDeploys: true,
+    });
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "acknowledged_pending_runtime_proof",
+      attempts: 1,
+      retryAllowed: false,
+      checks: {
+        supabasePairCanaryExact: true,
+        targetPostflightExact: true,
+        deploymentUnchanged: true,
+        deploySuppressionExact: true,
+      },
+    });
+    expect(outputs[0]).not.toContain(publishable);
+    expect(outputs[0]).not.toContain(secret);
+  });
+
+  it("never retries an ambiguous Supabase replacement from the cold prepared shape", async () => {
+    const publishable = `sb_publishable_${"p".repeat(32)}`;
+    const secret = `sb_secret_${"s".repeat(32)}`;
+    const rows = [
+      variable("SUPABASE_ANON_KEY", SERVICE_ID, false),
+      variable("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"),
+    ];
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(coldMetadata(rows))
+      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(coldMetadata(rows))
+      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(json({
+        disable_signup: false,
+        external: { email: true },
+      }))
+      .mockResolvedValueOnce(json([]))
+      .mockRejectedValueOnce(new Error("connection_lost_after_send"))
+      .mockResolvedValueOnce(coldMetadata(rows))
+      .mockResolvedValueOnce(coldDeployment());
+    const outputs: string[] = [];
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: [
+        "--operation", "supabase-key-replacement",
+        "--evidence-dir", "/private/evidence",
+        "--publishable-key-file", "/private/publishable",
+        "--secret-key-file", "/private/secret",
+      ],
+      env: environment("supabase-key-replacement"),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      readSecretFile: (filename) => Buffer.from(
+        filename.endsWith("publishable") ? publishable : secret,
+      ),
+      writeDurable: (_directory, _leaf, source) => sha256(source),
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(fetchImpl.mock.calls.filter((call) =>
+      String((call[1] as RequestInit | undefined)?.body ?? "")
+        .includes("variableCollectionUpsert"))).toHaveLength(1);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: 1,
+      retryAllowed: false,
+      checks: {
+        acknowledgementExact: false,
+        postflightAttempted: true,
+        targetPostflightExact: true,
+        deploymentUnchanged: true,
+      },
+    });
+    expect(outputs[0]).not.toContain(publishable);
+    expect(outputs[0]).not.toContain(secret);
+  });
+
+  it("aborts a cold prepared-shape replacement when maintenance metadata drifts before write", async () => {
+    const publishable = `sb_publishable_${"p".repeat(32)}`;
+    const secret = `sb_secret_${"s".repeat(32)}`;
+    const beforeRows = [
+      variable("SUPABASE_ANON_KEY", SERVICE_ID, false),
+      variable("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"),
+    ];
+    const driftedRows = beforeRows.filter((row) =>
+      row.name !== "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"
+    );
+    const held = [Buffer.from(publishable), Buffer.from(secret)];
+    let heldIndex = 0;
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(coldMetadata(beforeRows))
+      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(coldMetadata(driftedRows))
+      .mockResolvedValueOnce(coldDeployment());
+    const outputs: string[] = [];
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: [
+        "--operation", "supabase-key-replacement",
+        "--evidence-dir", "/private/evidence",
+        "--publishable-key-file", "/private/publishable",
+        "--secret-key-file", "/private/secret",
+      ],
+      env: environment("supabase-key-replacement"),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      readSecretFile: () => held[heldIndex++]!,
+      writeDurable: (_directory, _leaf, source) => sha256(source),
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(fetchImpl.mock.calls.filter((call) =>
+      String((call[1] as RequestInit | undefined)?.body ?? "")
+        .includes("variableCollectionUpsert"))).toHaveLength(0);
+    expect(held.every((buffer) => buffer.every((byte) => byte === 0))).toBe(true);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: {
+        durableIntentExact: true,
+        targetPreflightExact: false,
+        inputZeroized: true,
+      },
+    });
+  });
+
+  it("fails closed when maintenance metadata drifts after a cold prepared-shape write", async () => {
+    const publishable = `sb_publishable_${"p".repeat(32)}`;
+    const secret = `sb_secret_${"s".repeat(32)}`;
+    const beforeRows = [
+      variable("SUPABASE_ANON_KEY", SERVICE_ID, false),
+      variable("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"),
+    ];
+    const afterRows = beforeRows.filter((row) =>
+      row.name !== "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"
+    );
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(coldMetadata(beforeRows))
+      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(coldMetadata(beforeRows))
+      .mockResolvedValueOnce(coldDeployment())
+      .mockResolvedValueOnce(json({
+        disable_signup: false,
+        external: { email: true },
+      }))
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json({ data: { variableCollectionUpsert: true } }))
+      .mockResolvedValueOnce(coldMetadata(afterRows))
+      .mockResolvedValueOnce(coldDeployment());
+    const outputs: string[] = [];
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: [
+        "--operation", "supabase-key-replacement",
+        "--evidence-dir", "/private/evidence",
+        "--publishable-key-file", "/private/publishable",
+        "--secret-key-file", "/private/secret",
+      ],
+      env: environment("supabase-key-replacement"),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      readSecretFile: (filename) => Buffer.from(
+        filename.endsWith("publishable") ? publishable : secret,
+      ),
+      writeDurable: (_directory, _leaf, source) => sha256(source),
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(fetchImpl.mock.calls.filter((call) =>
+      String((call[1] as RequestInit | undefined)?.body ?? "")
+        .includes("variableCollectionUpsert"))).toHaveLength(1);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: 1,
+      retryAllowed: false,
+      checks: {
+        acknowledgementExact: true,
+        postflightAttempted: true,
+        targetPostflightExact: false,
+        deploymentUnchanged: true,
+      },
+    });
+    expect(outputs[0]).not.toContain(publishable);
+    expect(outputs[0]).not.toContain(secret);
+  });
+
+  it("rejects a prepared maintenance pair on a healthy baseline before secret custody", async () => {
+    const rows = [
+      variable("SUPABASE_ANON_KEY", SERVICE_ID, false),
+      variable("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ID, true),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"),
+    ];
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(metadata(rows))
+      .mockResolvedValueOnce(deployment());
+    const readSecretFile = vi.fn();
+    const outputs: string[] = [];
+    const result = await runProtectedPermanentStagingVariableMutation({
+      argv: [
+        "--operation", "supabase-key-replacement",
+        "--evidence-dir", "/private/evidence",
+        "--publishable-key-file", "/private/publishable",
+        "--secret-key-file", "/private/secret",
+      ],
+      env: environment("supabase-key-replacement"),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      readSecretFile,
+      writeDurable: vi.fn(),
+      writeOutput: (source) => outputs.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(readSecretFile).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.some((call) =>
+      String((call[1] as RequestInit | undefined)?.body ?? "")
+        .includes("variableCollectionUpsert"))).toBe(false);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: { targetPreflightExact: false },
+    });
+  });
+
   it("never writes a Supabase pair when the exact in-memory pair canary fails", async () => {
     const publishable = `sb_publishable_${"p".repeat(32)}`;
     const secret = `sb_secret_${"s".repeat(32)}`;
@@ -3027,21 +3326,29 @@ describe("protected permanent-staging variable mutation", () => {
     });
   });
 
-  it("rejects partial, shared, or foreign Supabase metadata", () => {
+  it("accepts only an exact complete maintenance pair on the pinned cold baseline", async () => {
     const exactRows = [
       variable("SUPABASE_ANON_KEY", SERVICE_ID, false),
       variable("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ID, true),
     ];
-    const parse = (rows: readonly Record<string, unknown>[]) =>
-      protectedPermanentStagingVariableMutationInternals.parseMetadata(
-        JSON.parse(JSON.stringify(metadata(rows).body)) as unknown,
-      );
-    const snapshot = {
-      environmentId: ENVIRONMENT_ID,
-      variables: exactRows,
-      stagedPatchEmpty: true,
-      serviceInstance: {},
-    } as never;
+    const parseProvider = async (
+      rows: readonly Record<string, unknown>[],
+      cold = false,
+    ) => {
+      const metadataResponse = cold ? coldMetadata(rows) : metadata(rows);
+      const deploymentResponse = cold ? coldDeployment() : deployment();
+      const parsedMetadata = protectedPermanentStagingVariableMutationInternals
+        .parseMetadata(await metadataResponse.json());
+      const parsedDeployment = protectedPermanentStagingVariableMutationInternals
+        .parseDeployment(
+          await deploymentResponse.json(),
+          cold ? COLD_DEPLOYMENT_ID : DEPLOYMENT_ID,
+        );
+      expect(parsedMetadata).not.toBeNull();
+      expect(parsedDeployment).not.toBeNull();
+      return { ...parsedMetadata!, deployment: parsedDeployment! };
+    };
+    const snapshot = await parseProvider(exactRows);
     expect(protectedPermanentStagingVariableMutationInternals
       .supabaseMetadataExact(snapshot)).toBe(true);
     expect(protectedPermanentStagingVariableMutationInternals
@@ -3054,7 +3361,89 @@ describe("protected permanent-staging variable mutation", () => {
         ...snapshot,
         variables: [...exactRows, variable("SUPABASE_ANON_KEY", null, false)],
       })).toBe(false);
-    expect(parse).toBeTypeOf("function");
+
+    const completePair = [
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED"),
+      variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"),
+    ];
+    const coldPrepared = await parseProvider([...exactRows, ...completePair], true);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .supabaseMetadataExact(coldPrepared)).toBe(true);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .supabaseMetadataExact(await parseProvider(
+        [...exactRows, ...completePair],
+      ))).toBe(false);
+
+    const invalidPairs = [
+      completePair.slice(1),
+      [
+        variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", null),
+        completePair[1]!,
+      ],
+      [
+        variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", SERVICE_ID, false, [
+          "OTHER_VARIABLE",
+        ]),
+        completePair[1]!,
+      ],
+      [
+        variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", SERVICE_ID, true),
+        completePair[1]!,
+      ],
+      [
+        ...completePair,
+        variable("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", null),
+      ],
+      [...completePair, variable(
+        "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+        null,
+      )],
+      [
+        completePair[0]!,
+        variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA", null),
+      ],
+      [
+        completePair[0]!,
+        variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA", SERVICE_ID, false, [
+          "OTHER_VARIABLE",
+        ]),
+      ],
+      [
+        completePair[0]!,
+        variable("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA", SERVICE_ID, true),
+      ],
+    ];
+    for (const maintenanceRows of invalidPairs) {
+      expect(protectedPermanentStagingVariableMutationInternals
+        .supabaseMetadataExact(await parseProvider(
+          [...exactRows, ...maintenanceRows],
+          true,
+        ))).toBe(false);
+    }
+    expect(protectedPermanentStagingVariableMutationInternals
+      .supabaseMetadataExact(await parseProvider(
+        [
+          ...exactRows,
+          ...completePair,
+          variable("OFFSITE_BACKUP_BUCKET"),
+        ],
+        true,
+      ))).toBe(false);
+    expect(protectedPermanentStagingVariableMutationInternals
+      .supabaseMetadataExact(await parseProvider(
+        [...exactRows, completePair[0]!],
+        true,
+      ))).toBe(true);
+
+    const coldTopologyDrift = {
+      ...coldPrepared,
+      serviceInstance: {
+        ...coldPrepared.serviceInstance,
+        numReplicas: 0,
+      },
+    };
+    expect(protectedPermanentStagingVariableMutationInternals
+      .supabaseMetadataExact(coldTopologyDrift)).toBe(false);
   });
 
   it("accepts Railway's exact empty staged-patch sentinel only for an empty STAGED patch", async () => {

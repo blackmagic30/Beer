@@ -572,11 +572,13 @@ function harness(input: {
   laterFenceRun?: boolean;
   priorRoleRuns?: readonly ReturnType<typeof githubRun>[];
   currentRoleRunNumber?: number;
+  currentRunName?: string;
 } = {}) {
   const current = githubRun({
     id: CURRENT_RUN_ID,
     workflow: CURRENT_WORKFLOW,
-    name: "Transition protected production Postgres maintenance LOGIN limit",
+    name: input.currentRunName
+      ?? "Transition protected production Postgres maintenance LOGIN limit",
     createdAt: "2026-08-21T01:11:00.000Z",
     startedAt: "2026-08-21T01:12:00.000Z",
     updatedAt: "2026-08-21T01:12:00.000Z",
@@ -601,7 +603,8 @@ function harness(input: {
   const deployment = githubRun({
     id: DEPLOYMENT_RUN_ID,
     workflow: DEPLOYMENT_WORKFLOW,
-    name: "Deploy Pint Path protected production",
+    name: `Deploy production | ${CANDIDATE}`,
+    displayTitle: `Deploy production | ${CANDIDATE}`,
     createdAt: "2026-08-21T01:03:00.000Z",
     startedAt: "2026-08-21T01:04:00.000Z",
     updatedAt: "2026-08-21T01:10:00.000Z",
@@ -766,7 +769,8 @@ function productionDeployHarness(input: {
   const current = githubRun({
     id: CURRENT_RUN_ID,
     workflow: DEPLOYMENT_WORKFLOW,
-    name: "Deploy Pint Path protected production",
+    name: `Deploy production | ${CANDIDATE}`,
+    displayTitle: `Deploy production | ${CANDIDATE}`,
     createdAt: "2026-08-21T01:03:00.000Z",
     startedAt: "2026-08-21T01:04:00.000Z",
     updatedAt: "2026-08-21T01:04:00.000Z",
@@ -1070,7 +1074,8 @@ async function productionScaleHarness(input: {
   const current = githubRun({
     id: SCALE_RUN_ID,
     workflow: ".github/workflows/production-converge-two-replicas.yml",
-    name: "Converge Pint Path production to two replicas",
+    name: `Converge production to two replicas | ${CANDIDATE}`,
+    displayTitle: `Converge production to two replicas | ${CANDIDATE}`,
     createdAt: "2026-08-21T01:22:00.000Z",
     startedAt: "2026-08-21T01:23:00.000Z",
     updatedAt: "2026-08-21T01:23:00.000Z",
@@ -1427,6 +1432,97 @@ describe("production maintenance role-limit prerequisites", () => {
       roleLimitRunId: null,
       activateRunId: null,
       secretMaterialIncluded: false,
+    });
+  });
+
+  it("accepts GitHub REST projecting the exact dynamic apply run-name", async () => {
+    const target = harness({
+      currentRunName:
+        `Production maintenance LOGIN limit | apply | ${CANDIDATE}`,
+    });
+    await expect(target.run()).resolves.toBe(0);
+    expect(target.files.has(OUTPUT)).toBe(true);
+  });
+
+  it.each([
+    [
+      "operation",
+      `Production maintenance LOGIN limit | reconcile | ${CANDIDATE}`,
+    ],
+    [
+      "candidate",
+      `Production maintenance LOGIN limit | apply | ${"b".repeat(40)}`,
+    ],
+  ])("rejects a dynamic apply run-name with the wrong %s", async (
+    _label,
+    currentRunName,
+  ) => {
+    const target = harness({ currentRunName });
+    await expect(target.run()).resolves.toBe(1);
+    expect(target.files.has(OUTPUT)).toBe(false);
+    expect(JSON.parse(target.output.at(-1)!)).toMatchObject({
+      failureCode: "run_authority_invalid",
+    });
+  });
+
+  it("accepts an exact dynamic reconciliation run-name in bounded history", async () => {
+    const reconciliationTitle =
+      `Production maintenance LOGIN limit | reconcile | ${CANDIDATE}`;
+    const priorReconciliation = githubRun({
+      id: "2997",
+      workflow: CURRENT_WORKFLOW,
+      name: reconciliationTitle,
+      displayTitle: reconciliationTitle,
+      createdAt: "2026-08-21T00:20:00.000Z",
+      startedAt: "2026-08-21T00:21:00.000Z",
+      updatedAt: "2026-08-21T00:22:00.000Z",
+      status: "completed",
+      conclusion: "success",
+      runNumber: 1,
+    });
+    const target = harness({
+      priorRoleRuns: [priorReconciliation],
+      currentRoleRunNumber: 2,
+    });
+    await expect(target.run()).resolves.toBe(0);
+    expect(target.files.has(OUTPUT)).toBe(true);
+  });
+
+  it.each([
+    [
+      "operation",
+      `Production maintenance LOGIN limit | apply | ${CANDIDATE}`,
+    ],
+    [
+      "candidate",
+      `Production maintenance LOGIN limit | reconcile | ${"b".repeat(40)}`,
+    ],
+  ])("rejects a bounded-history dynamic run-name with the wrong %s", async (
+    _label,
+    name,
+  ) => {
+    const displayTitle =
+      `Production maintenance LOGIN limit | reconcile | ${CANDIDATE}`;
+    const priorReconciliation = githubRun({
+      id: "2997",
+      workflow: CURRENT_WORKFLOW,
+      name,
+      displayTitle,
+      createdAt: "2026-08-21T00:20:00.000Z",
+      startedAt: "2026-08-21T00:21:00.000Z",
+      updatedAt: "2026-08-21T00:22:00.000Z",
+      status: "completed",
+      conclusion: "success",
+      runNumber: 1,
+    });
+    const target = harness({
+      priorRoleRuns: [priorReconciliation],
+      currentRoleRunNumber: 2,
+    });
+    await expect(target.run()).resolves.toBe(1);
+    expect(target.files.has(OUTPUT)).toBe(false);
+    expect(JSON.parse(target.output.at(-1)!)).toMatchObject({
+      failureCode: "later_run_detected",
     });
   });
 
