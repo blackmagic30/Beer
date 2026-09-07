@@ -1600,7 +1600,13 @@ describe("protected production Postgres source lock", () => {
         providerState("dismissed"),
         providerState("staged"),
         providerState("staged"),
-        providerState("desired"),
+        providerState("desired", {
+          autoUpdatesOverride: {
+            ...protectedProductionPostgresSourceRepinInternals.DESIRED_AUTO_UPDATES,
+            remediationNotice: null,
+            snoozedUntil: null,
+          },
+        }),
       ],
       patches: [patchReadback(), patchReadback()],
     });
@@ -3803,7 +3809,13 @@ describe("protected production Postgres source lock", () => {
       PRIOR_RUN_ID,
     );
     const provider = providerMock({
-      states: [providerState("desired", { runId: PRIOR_RUN_ID })],
+      states: [providerState("desired", {
+        runId: PRIOR_RUN_ID,
+        autoUpdatesOverride: {
+          ...protectedProductionPostgresSourceRepinInternals.DESIRED_AUTO_UPDATES,
+          remediationNotice: null,
+        },
+      })],
     });
     const result = await run(
       "reconcile",
@@ -3819,6 +3831,66 @@ describe("protected production Postgres source lock", () => {
       totalMutationCalls: 0,
     });
     expect(mutationCalls(provider)).toHaveLength(0);
+  });
+
+  it("accepts cleared optional metadata and rejects active or unknown source-lock metadata", () => {
+    const desired =
+      protectedProductionPostgresSourceRepinInternals.DESIRED_AUTO_UPDATES;
+    expect(
+      protectedProductionPostgresSourceRepinInternals.desiredStateExact(
+        protectedProductionPostgresSourceRepinInternals.parseState(
+          providerState("desired", {
+            autoUpdatesOverride: { ...desired, snoozedUntil: null },
+          }),
+        )!,
+      ),
+    ).toBe(true);
+    expect(
+      protectedProductionPostgresSourceRepinInternals.desiredStateExact(
+        protectedProductionPostgresSourceRepinInternals.parseState(
+          providerState("desired", {
+            autoUpdatesOverride: {
+              ...desired,
+              remediationNotice: null,
+              snoozedUntil: null,
+            },
+          }),
+        )!,
+      ),
+    ).toBe(true);
+    expect(
+      protectedProductionPostgresSourceRepinInternals.desiredStateExact(
+        protectedProductionPostgresSourceRepinInternals.parseState(
+          providerState("desired", {
+            autoUpdatesOverride: { ...desired, futureMetadata: null },
+          }),
+        )!,
+      ),
+    ).toBe(false);
+    expect(
+      protectedProductionPostgresSourceRepinInternals.desiredStateExact(
+        protectedProductionPostgresSourceRepinInternals.parseState(
+          providerState("desired", {
+            autoUpdatesOverride: {
+              ...desired,
+              snoozedUntil: "2026-09-09T00:00:00.000Z",
+            },
+          }),
+        )!,
+      ),
+    ).toBe(false);
+    expect(
+      protectedProductionPostgresSourceRepinInternals.desiredStateExact(
+        protectedProductionPostgresSourceRepinInternals.parseState(
+          providerState("desired", {
+            autoUpdatesOverride: {
+              ...desired,
+              remediationNotice: { targetVersion: "18" },
+            },
+          }),
+        )!,
+      ),
+    ).toBe(false);
   });
 
   it("reconcile exact prior staged patch commits only and never re-dismisses", async () => {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runRailwayMutationBoundaryCheck } from "./check-railway-mutation-boundary.js";
+import { clearedRailwayImageAutoUpdatesExact } from "./lib/railway-environment-mutation-guard.js";
 import { readTrustedRegularFile } from "./lib/trusted-filesystem.js";
 
 export const PROTECTED_PRODUCTION_POSTGRES_SOURCE_REPIN_SCHEMA =
@@ -2289,7 +2290,7 @@ function desiredStateExact(state: ProviderState): boolean {
     pinnedRuntimeExact(state) &&
     state.sourceImage === IMMUTABLE_SOURCE &&
     state.configuredSourceImage === IMMUTABLE_SOURCE &&
-    stableExact(state.autoUpdates, DESIRED_AUTO_UPDATES) &&
+    clearedRailwayImageAutoUpdatesExact(state.autoUpdates) &&
     patchEmpty(state.stagedPatch)
   );
 }
