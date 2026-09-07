@@ -48,6 +48,10 @@ const STAGED_RECOVERY_CANDIDATE =
   "e4ae715f997a14aec247c50e1b21f69c78de0fd0";
 const STAGED_RECOVERY_RUN_ID = "34025400175";
 const STAGED_RECOVERY_RUN_COMPLETED_AT = "2026-09-06T09:47:28Z";
+const POST_STAGE_BRIDGE_CANDIDATE =
+  "82d149681d9716f6964a05b80d0c50adbdf7d24a";
+const RECOVERY_BRIDGE_SKIPPED_WRITER_RUN_ID = "34000245292";
+const POST_STAGE_BRIDGE_SKIPPED_WRITER_RUN_ID = "34113262642";
 const INCIDENT_DISMISSED_ETAG =
   "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f";
 
@@ -190,15 +194,13 @@ function committedPatch(runId: string, candidateSha = CANDIDATE) {
     environmentId: PRODUCTION_ENVIRONMENT_ID,
     status: "COMMITTED",
     message: `pintpath:production-postgres-source-lock:${candidateSha}:${runId}`,
-    createdAt: pinnedIncident
-      ? "2026-09-06T09:47:23.893Z"
-      : "2026-09-01T00:00:00.000Z",
+    createdAt: "2026-09-06T09:47:23.893Z",
     updatedAt: pinnedIncident
       ? "2026-09-06T09:48:31.000Z"
-      : "2026-09-01T00:00:03.000Z",
+      : "2026-09-06T09:48:26.000Z",
     appliedAt: pinnedIncident
       ? "2026-09-06T09:48:30.000Z"
-      : "2026-09-01T00:00:02.000Z",
+      : "2026-09-06T09:48:25.000Z",
     lastAppliedError: null,
     patch:
       protectedProductionPostgresSourceRepinInternals.providerNormalizedPatch(),
@@ -450,7 +452,17 @@ function writeReconcileAuthority(
   safePrior: string[] = [],
   originalRunCompletedAt = "2026-09-01T00:08:00.000Z",
   priorCandidateSha = CANDIDATE,
+  postStageBridgeExact = false,
 ) {
+  const exactSafePrior = priorCandidateSha === CANDIDATE
+    ? safePrior
+    : [...new Set([
+        RECOVERY_BRIDGE_SKIPPED_WRITER_RUN_ID,
+        ...(postStageBridgeExact
+          ? [POST_STAGE_BRIDGE_SKIPPED_WRITER_RUN_ID]
+          : []),
+        ...safePrior,
+      ])].sort((left, right) => Number(left) - Number(right));
   fs.writeFileSync(
     filename,
     `${JSON.stringify({
@@ -470,7 +482,7 @@ function writeReconcileAuthority(
       reviewedPullRequestMergedAt: "2026-09-01T00:00:00.000Z",
       candidateHistoryMaximumAgeHours: 168,
       completeRetainedHistoryExact: true,
-      safePriorSkippedWriteRunIds: safePrior,
+      safePriorSkippedWriteRunIds: exactSafePrior,
       reviewedAuthorityExact: true,
       freshDispatchWriteGuardExact: true,
       priorAmbiguousProductionPostgresSourceRepinRunId: priorRunId,
@@ -485,10 +497,13 @@ function writeReconcileAuthority(
               priorCandidateSha,
               RECOVERY_BRIDGE_CANDIDATE,
               STAGED_RECOVERY_CANDIDATE,
+              ...(postStageBridgeExact ? [POST_STAGE_BRIDGE_CANDIDATE] : []),
               CANDIDATE,
             ],
       productionPostgresSourceRepinRecoveryBridgeExact:
         priorCandidateSha !== CANDIDATE,
+      productionPostgresSourceRepinPostStageBridgeExact:
+        postStageBridgeExact,
       exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
       secondProductionPostgresRemediationDismissPreventedExact: true,
       runnerLossRecoveryOriginalRunCompletedAt: originalRunCompletedAt,
@@ -510,7 +525,7 @@ function writeReconcileAuthority(
       runnerLossRecoveryStageSettlementSeconds:
         priorCandidateSha === CANDIDATE ? null : 60,
       runnerLossRecoveryStageGraceHours:
-        priorCandidateSha === CANDIDATE ? null : 24,
+        priorCandidateSha === CANDIDATE ? null : 168,
       runnerLossRecoveryStageWithinGraceExact: true,
     })}\n`,
     { mode: 0o600 },
@@ -623,6 +638,13 @@ function providerMock(options: ProviderOptions = {}) {
       }
       if (body.operationName === "PintPathProductionPostgresSourceLockState") {
         const value = states.length > 1 ? states.shift() : states[0];
+        if (value === "INVALID_JSON") {
+          return new Response("{", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (value === "BAD_REQUEST") return response({}, 400);
         return value === undefined || value === "FAIL"
           ? response({}, 503)
           : response(value);
@@ -666,7 +688,7 @@ async function run(
   phase: Phase,
   evidence: ReturnType<typeof createEvidence>,
   provider: ReturnType<typeof providerMock>,
-  observations: ReturnType<typeof boundary>[],
+  observations: Array<ReturnType<typeof boundary> | "FAIL" | "INVALID">,
   env = environment(phase),
   intentFile?: string,
   now: () => number = () => Date.parse("2026-09-01T00:10:00.000Z"),
@@ -681,7 +703,15 @@ async function run(
     cwd: process.cwd(),
     fetchImpl: provider.fetchImpl as typeof fetch,
     runBoundary: async () => {
-      lastBoundary = observations.shift() ?? lastBoundary;
+      const next = observations.shift();
+      if (next === "FAIL") throw new Error("boundary_unavailable");
+      if (next === "INVALID") {
+        return protectedProductionPostgresSourceRepinInternals.parseBoundaryOutput(
+          "{}",
+          1,
+        );
+      }
+      lastBoundary = next ?? lastBoundary;
       if (lastBoundary === undefined) throw new Error("boundary_unavailable");
       return lastBoundary;
     },
@@ -859,7 +889,7 @@ function mutationCalls(provider: ReturnType<typeof providerMock>) {
 describe("protected production Postgres source lock", () => {
   it("pins and validates the complete reviewed v4 policy contract", () => {
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256).toBe(
-      "491a5d7e341a81203ae5460b63347b6d71bf4f01a0d45bf9b25541ffb93e7fc7",
+      "2072c6662c854cc0cbb8f182a529798891bdfc2d635642a92029869c27d52247",
     );
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256).toBe(
       "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
@@ -1518,6 +1548,130 @@ describe("protected production Postgres source lock", () => {
     ]);
   });
 
+  it("accepts only the exact post-stage recovery authority shape", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+      true,
+    );
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("desired", {
+          runId: INCIDENT_RUN_ID,
+          intentCandidateSha: INCIDENT_CANDIDATE,
+          configEtag: "d".repeat(64),
+        }),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const accepted = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary(), stagedBoundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-07T11:10:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(accepted.code, accepted.output).toBe(0);
+    expect(accepted.receipt).toMatchObject({
+      outcome: "reconciled_commit_only",
+      totalMutationCalls: 1,
+      checks: { authorityExact: true },
+    });
+
+    const rejectedPrepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      rejectedPrepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+      true,
+    );
+    const authority = JSON.parse(
+      fs.readFileSync(rejectedPrepared.evidence.authorityFile, "utf8"),
+    ) as Record<string, unknown>;
+    authority.productionPostgresSourceRepinPostStageBridgeExact = false;
+    fs.writeFileSync(
+      rejectedPrepared.evidence.authorityFile,
+      `${JSON.stringify(authority)}\n`,
+      { mode: 0o600 },
+    );
+    const rejectedProvider = providerMock();
+    const rejected = await run(
+      "reconcile",
+      rejectedPrepared.evidence,
+      rejectedProvider,
+      [],
+      boundEnvironment("reconcile", rejectedPrepared, RUN_ID, true),
+      rejectedPrepared.intentFile,
+      () => Date.parse("2026-09-07T11:10:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+    expect(rejected.code).toBe(1);
+    expect(rejected.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      totalMutationCalls: 0,
+      checks: { authorityExact: false },
+    });
+    expect(mutationCalls(rejectedProvider)).toEqual([]);
+
+    for (const malformed of ["string", "missing"] as const) {
+      const malformedPrepared = historicalIncidentPrepared();
+      writeReconcileAuthority(
+        malformedPrepared.evidence.authorityFile,
+        RUN_ID,
+        INCIDENT_RUN_ID,
+        [],
+        "2026-09-04T22:07:38.000Z",
+        INCIDENT_CANDIDATE,
+      );
+      const malformedAuthority = JSON.parse(
+        fs.readFileSync(malformedPrepared.evidence.authorityFile, "utf8"),
+      ) as Record<string, unknown>;
+      if (malformed === "missing") {
+        delete malformedAuthority
+          .productionPostgresSourceRepinPostStageBridgeExact;
+      } else {
+        malformedAuthority.productionPostgresSourceRepinPostStageBridgeExact =
+          "false";
+      }
+      fs.writeFileSync(
+        malformedPrepared.evidence.authorityFile,
+        `${JSON.stringify(malformedAuthority)}\n`,
+        { mode: 0o600 },
+      );
+      const malformedProvider = providerMock();
+      const malformedResult = await run(
+        "reconcile",
+        malformedPrepared.evidence,
+        malformedProvider,
+        [],
+        boundEnvironment("reconcile", malformedPrepared, RUN_ID, true),
+        malformedPrepared.intentFile,
+        () => Date.parse("2026-09-07T11:10:00.000Z"),
+        INCIDENT_CANDIDATE,
+      );
+      expect(malformedResult.code).toBe(1);
+      expect(malformedResult.receipt).toMatchObject({
+        outcome: "failed_before_write",
+        totalMutationCalls: 0,
+        checks: { authorityExact: false },
+      });
+      expect(mutationCalls(malformedProvider)).toEqual([]);
+    }
+  });
+
   it("settles a stale post-commit read through two identical exact read-only observations without retrying commit", async () => {
     const prepared = historicalIncidentPrepared();
     writeReconcileAuthority(
@@ -1676,6 +1830,342 @@ describe("protected production Postgres source lock", () => {
       attempts: { dismiss: 0, stage: 0, commit: 1 },
       totalMutationCalls: 1,
       checks: { runtimeContinuityExact: false },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails immediately when the deployment inventory changes after commit", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const drifted = providerState("desired", {
+      runId: INCIDENT_RUN_ID,
+      intentCandidateSha: INCIDENT_CANDIDATE,
+      configEtag: "d".repeat(64),
+    });
+    drifted.data.deployments.edges.push({
+      node: removedDeployment(
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+      ),
+    });
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        drifted,
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary(), stagedBoundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 0, stage: 0, commit: 1 },
+      totalMutationCalls: 1,
+      checks: {
+        runtimeContinuityExact: false,
+        inventoryContinuityExact: false,
+      },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles one transient post-commit state read without repeating commit", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const exactDesired = providerState("desired", {
+      runId: INCIDENT_RUN_ID,
+      intentCandidateSha: INCIDENT_CANDIDATE,
+      configEtag: "d".repeat(64),
+    });
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        "FAIL",
+        exactDesired,
+        structuredClone(exactDesired),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary(), stagedBoundary(), boundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+    ]);
+  });
+
+  it.each([
+    ["transient", "FAIL" as const],
+    ["stale", stagedBoundary()],
+  ])(
+    "settles one %s post-commit boundary observation without repeating commit",
+    async (_label, firstPostCommitBoundary) => {
+      const prepared = historicalIncidentPrepared();
+      writeReconcileAuthority(
+        prepared.evidence.authorityFile,
+        RUN_ID,
+        INCIDENT_RUN_ID,
+        [],
+        "2026-09-04T22:07:38.000Z",
+        INCIDENT_CANDIDATE,
+      );
+      const exactDesired = providerState("desired", {
+        runId: INCIDENT_RUN_ID,
+        intentCandidateSha: INCIDENT_CANDIDATE,
+        configEtag: "d".repeat(64),
+      });
+      const provider = providerMock({
+        states: [
+          providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+          providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+          exactDesired,
+          structuredClone(exactDesired),
+          structuredClone(exactDesired),
+        ],
+        patches: [patchReadback(), patchReadback()],
+      });
+      const sleep = vi.fn(async (_milliseconds: number) => undefined);
+
+      const result = await run(
+        "reconcile",
+        prepared.evidence,
+        provider,
+        [
+          stagedBoundary(),
+          stagedBoundary(),
+          firstPostCommitBoundary,
+          boundary(),
+          boundary(),
+        ],
+        boundEnvironment("reconcile", prepared, RUN_ID, true),
+        prepared.intentFile,
+        () => Date.parse("2026-09-06T10:00:00.000Z"),
+        INCIDENT_CANDIDATE,
+        sleep,
+      );
+
+      expect(result.code, result.output).toBe(0);
+      expect(
+        mutationCalls(provider).map((call) => call.operationName),
+      ).toEqual(["PintPathProductionPostgresSourceLockCommit"]);
+      expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
+        protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+        protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+        protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+      ]);
+    },
+  );
+
+  it("fails immediately on a malformed successful post-commit state response", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const exactDesired = providerState("desired", {
+      runId: INCIDENT_RUN_ID,
+      intentCandidateSha: INCIDENT_CANDIDATE,
+      configEtag: "d".repeat(64),
+    });
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        { data: {} },
+        exactDesired,
+        structuredClone(exactDesired),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary(), stagedBoundary(), boundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 0, stage: 0, commit: 1 },
+      totalMutationCalls: 1,
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails immediately when post-commit history contains a foreign patch", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const foreign = {
+      ...committedPatch("77777", "f".repeat(40)),
+      id: "11111111-1111-4111-8111-111111111111",
+    };
+    const contradictory = providerState("desired", {
+      configEtag: "d".repeat(64),
+      historyOverride: [
+        committedPatch(INCIDENT_RUN_ID, INCIDENT_CANDIDATE),
+        foreign,
+      ],
+    });
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        contradictory,
+        structuredClone(contradictory),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [stagedBoundary(), stagedBoundary(), boundary(), boundary()],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 0, stage: 0, commit: 1 },
+      totalMutationCalls: 1,
+      checks: { committedHistoryExact: false },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails immediately on non-exempt post-commit boundary drift", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const exactDesired = providerState("desired", {
+      runId: INCIDENT_RUN_ID,
+      intentCandidateSha: INCIDENT_CANDIDATE,
+      configEtag: "d".repeat(64),
+    });
+    const provider = providerMock({
+      states: [
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
+        exactDesired,
+        structuredClone(exactDesired),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(["approvedDeploymentHealthy"]),
+        boundary(),
+      ],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 0, stage: 0, commit: 1 },
+      totalMutationCalls: 1,
+      checks: { boundaryPostflightExact: false },
     });
     expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
       "PintPathProductionPostgresSourceLockCommit",
@@ -2003,8 +2493,8 @@ describe("protected production Postgres source lock", () => {
   });
 
   it.each([
-    ["at the exact staged-run 24-hour deadline", "2026-09-04T22:07:38.000Z", "2026-09-07T09:47:28.000Z", 0, 1],
-    ["one millisecond after the staged-run 24-hour deadline", "2026-09-04T22:07:38.000Z", "2026-09-07T09:47:28.001Z", 1, 0],
+    ["at the original incident's 168-hour deadline", "2026-09-04T22:07:38.000Z", "2026-09-11T22:07:38.000Z", 0, 1],
+    ["one millisecond after the original incident's 168-hour deadline", "2026-09-04T22:07:38.000Z", "2026-09-11T22:07:38.001Z", 1, 0],
   ])(
     "cross-candidate recovery is bounded %s",
     async (
@@ -2279,6 +2769,200 @@ describe("protected production Postgres source lock", () => {
     });
   });
 
+  it("settles one transient staged-patch read failure without repeating a mutation", async () => {
+    const prepared = await prepare();
+    const exactDesired = providerState("desired");
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        providerState("staged"),
+        providerState("staged"),
+        providerState("staged"),
+        exactDesired,
+        structuredClone(exactDesired),
+      ],
+      patches: ["FAIL", patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [
+        baselineBoundary(),
+        baselineBoundary(),
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(),
+        boundary(),
+      ],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+    ]);
+  });
+
+  it("settles one transient staged-state read failure without repeating a mutation", async () => {
+    const prepared = await prepare();
+    const exactDesired = providerState("desired");
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        "FAIL",
+        providerState("staged"),
+        providerState("staged"),
+        exactDesired,
+        structuredClone(exactDesired),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [
+        baselineBoundary(),
+        baselineBoundary(),
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(),
+        boundary(),
+      ],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+    ]);
+  });
+
+  it("settles one stale pre-stage boundary observation without repeating a mutation", async () => {
+    const prepared = await prepare();
+    const exactDesired = providerState("desired");
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        providerState("staged"),
+        providerState("staged"),
+        providerState("staged"),
+        exactDesired,
+        structuredClone(exactDesired),
+      ],
+      patches: [patchReadback(), patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [
+        baselineBoundary(),
+        baselineBoundary(),
+        baselineBoundary(),
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(),
+        boundary(),
+      ],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+    ]);
+  });
+
+  it("settles one transient stage-boundary read failure without repeating a mutation", async () => {
+    const prepared = await prepare();
+    const exactDesired = providerState("desired");
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        providerState("staged"),
+        providerState("staged"),
+        providerState("staged"),
+        exactDesired,
+        structuredClone(exactDesired),
+      ],
+      patches: [patchReadback(), patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [
+        baselineBoundary(),
+        baselineBoundary(),
+        "FAIL",
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(),
+        boundary(),
+      ],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code, result.output).toBe(0);
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+      "PintPathProductionPostgresSourceLockCommit",
+    ]);
+    expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
+      protectedProductionPostgresSourceRepinInternals.POST_COMMIT_READBACK_INTERVAL_MS,
+    ]);
+  });
+
   it("rejects divergent active and selected staged-patch metadata before commit", async () => {
     const prepared = await prepare();
     const mismatchedReadback = patchReadback();
@@ -2315,11 +2999,234 @@ describe("protected production Postgres source lock", () => {
     ).toBe(false);
   });
 
+  it("fails immediately on a contradictory selected patch identity", async () => {
+    const prepared = await prepare();
+    const contradictory = patchReadback();
+    contradictory.data.selected.id = "11111111-1111-4111-8111-111111111111";
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        providerState("staged"),
+        providerState("staged"),
+        providerState("desired"),
+      ],
+      patches: [contradictory, patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [
+        baselineBoundary(),
+        baselineBoundary(),
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(),
+        boundary(),
+      ],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 1, stage: 1, commit: 0 },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+    ]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it.each(["INVALID_JSON", "BAD_REQUEST"])(
+    "fails immediately on a non-retryable %s staged-state response",
+    async (stateResponse) => {
+      const prepared = await prepare();
+      const provider = providerMock({
+        states: [
+          providerState("armed"),
+          providerState("dismissed"),
+          stateResponse,
+          providerState("staged"),
+          providerState("staged"),
+          providerState("desired"),
+        ],
+        patches: [patchReadback(), patchReadback()],
+      });
+      const sleep = vi.fn(async (_milliseconds: number) => undefined);
+      const result = await run(
+        "apply",
+        prepared.evidence,
+        provider,
+        [baselineBoundary(), baselineBoundary()],
+        boundEnvironment("apply", prepared),
+        prepared.intentFile,
+        () => Date.parse("2026-09-01T00:10:00.000Z"),
+        CANDIDATE,
+        sleep,
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.receipt).toMatchObject({
+        outcome: "mutation_uncertain",
+        attempts: { dismiss: 1, stage: 1, commit: 0 },
+      });
+      expect(
+        mutationCalls(provider).map((call) => call.operationName),
+      ).toEqual([
+        "PintPathProductionPostgresSourceLockDismiss",
+        "PintPathProductionPostgresSourceLockStage",
+      ]);
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails immediately on an invalid stage-boundary identity", async () => {
+    const prepared = await prepare();
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        providerState("staged"),
+        providerState("staged"),
+        providerState("desired"),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [baselineBoundary(), baselineBoundary(), "INVALID"],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 1, stage: 1, commit: 0 },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+    ]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("fails immediately when staging adds foreign patch history", async () => {
+    const prepared = await prepare();
+    const foreign = {
+      ...committedPatch("77777", "f".repeat(40)),
+      id: "11111111-1111-4111-8111-111111111111",
+    };
+    const drifted = providerState("staged", {
+      historyOverride: [stagedPatch(), foreign],
+    });
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        drifted,
+        structuredClone(drifted),
+        providerState("desired"),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [
+        baselineBoundary(),
+        baselineBoundary(),
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(),
+      ],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 1, stage: 1, commit: 0 },
+      checks: { stagedReadbackOneExact: false },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+    ]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("fails immediately when staging changes captured non-patch state", async () => {
+    const prepared = await prepare();
+    const drifted = providerState("staged", { configEtag: "e".repeat(64) });
+    const provider = providerMock({
+      states: [
+        providerState("armed"),
+        providerState("dismissed"),
+        drifted,
+        structuredClone(drifted),
+        providerState("desired"),
+      ],
+      patches: [patchReadback(), patchReadback()],
+    });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
+    const result = await run(
+      "apply",
+      prepared.evidence,
+      provider,
+      [
+        baselineBoundary(),
+        baselineBoundary(),
+        stagedBoundary(),
+        stagedBoundary(),
+        boundary(),
+      ],
+      boundEnvironment("apply", prepared),
+      prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: { dismiss: 1, stage: 1, commit: 0 },
+      checks: { stagedReadbackOneExact: false },
+    });
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+    ]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("fails closed when stage may have applied but exact readback is unavailable", async () => {
     const prepared = await prepare();
     const provider = providerMock({
       states: [providerState("armed"), providerState("dismissed"), "FAIL"],
     });
+    const sleep = vi.fn(async (_milliseconds: number) => undefined);
     const result = await run(
       "apply",
       prepared.evidence,
@@ -2327,18 +3234,30 @@ describe("protected production Postgres source lock", () => {
       [baselineBoundary(), baselineBoundary()],
       boundEnvironment("apply", prepared),
       prepared.intentFile,
+      () => Date.parse("2026-09-01T00:10:00.000Z"),
+      CANDIDATE,
+      sleep,
     );
     expect(result.code).toBe(1);
     expect(result.receipt).toMatchObject({
       outcome: "mutation_uncertain",
       attempts: { dismiss: 1, stage: 1, commit: 0 },
     });
-    expect(
-      provider.calls.filter(
-        (call) =>
-          call.operationName === "PintPathProductionPostgresSourceLockCommit",
+    expect(mutationCalls(provider).map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockDismiss",
+      "PintPathProductionPostgresSourceLockStage",
+    ]);
+    expect(sleep.mock.calls.map(([milliseconds]) => milliseconds)).toEqual(
+      Array.from(
+        {
+          length:
+            protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_MAX_OBSERVATIONS -
+            1,
+        },
+        () =>
+          protectedProductionPostgresSourceRepinInternals.STAGE_READBACK_INTERVAL_MS,
       ),
-    ).toHaveLength(0);
+    );
   });
 
   it("detects a precommit runtime race and never commits", async () => {

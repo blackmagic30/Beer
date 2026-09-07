@@ -55,8 +55,13 @@ fixed recovery window. The current pinned incident keeps the original 168-hour
 ceiling and binds the exact reviewed PR #83 bridge whose failed run skipped the
 writer, followed by the exact reviewed PR #84 candidate whose failed run made
 one stage call and no dismiss or commit call. That stage-only evidence opens a
-separate 24-hour commit-only window bound to the exact staged patch ID,
-timestamps, content, and config ETag. It does not permit another stage attempt.
+fixed 168-hour commit-only grace bound to the exact staged patch ID, timestamps,
+content, and config ETag, and still bounded by the original incident's 168-hour
+outer deadline. It does not permit another stage attempt. The exact reviewed
+PR #85 post-stage bridge and safe run `34113262642` are pinned as well: that run
+failed before the mutation credential existed and skipped the writer. The next
+recovery candidate must be PR #85's direct reviewed successor and must merge
+after that safe run completed.
 Every ordinary same-candidate recovery retains its 24-hour window.
 Reconciliation may only read desired state, commit an exactly authorized staged
 patch, perform the ordinary same-candidate stage-and-commit path where no stage
@@ -66,7 +71,12 @@ staged patch ID and creation timestamp, with application no earlier than the
 stage-only run's reviewed settlement boundary. Stage and commit acknowledgements
 are followed only by bounded metadata reads: five observations at two-second
 intervals for staging and seven at five-second intervals for commit, with two
-identical exact observations required. No settlement path repeats a mutation.
+identical exact observations required. Only transport failures and explicitly
+transient provider statuses may be retried inside those read-only bounds;
+malformed, contradictory, or non-transient rejected responses fail immediately.
+Staging must preserve all captured
+non-patch state and add only the exact staged patch; commit must replace only
+that staged history entry. No settlement path repeats a mutation.
 
 ## Automated Local Gates
 
