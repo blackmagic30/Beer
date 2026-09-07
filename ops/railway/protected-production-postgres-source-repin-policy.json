@@ -251,6 +251,17 @@
     "commitSkipDeploys": true,
     "commitMaximumAttempts": 1,
     "commitAcknowledgementRequired": true,
+    "readOnlySettlement": {
+      "requiredConsecutiveExactObservations": 2,
+      "stageMaximumObservations": 5,
+      "stageIntervalMilliseconds": 2000,
+      "postCommitMaximumObservations": 7,
+      "postCommitIntervalMilliseconds": 5000,
+      "onlyExactPreMutationStateOrExactTargetStateRetryable": true,
+      "transientReadErrorsRetryableWithinBound": true,
+      "contradictoryStateFailsImmediately": true,
+      "mutationRetriesAllowed": false
+    },
     "automaticRetriesAllowed": false,
     "workflowRerunsAllowed": false,
     "rollbackAllowed": false,

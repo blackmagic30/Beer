@@ -129,8 +129,14 @@ instance, snapshot, and volume are the exact policy-pinned baseline. The named
 writer step remains skipped on any other apply state. The apply executor repeats
 that proof immediately before dismissing the exact notice once, stages the
 same observed digest together with canonical disabled auto-update metadata,
-double-reads the exact active and selected patch, commits with
+requires two identical exact active-and-selected patch observations within a
+five-observation, two-second read-only settlement bound, commits once with
 `skipDeploys:true`, and proves the complete runtime identity set unchanged.
+After commit it permits at most seven read-only observations five seconds apart
+(30 seconds total), and succeeds only after two identical complete postflight
+observations. Exact precommit state and transient read failures may settle
+within those bounds; a contradictory patch, runtime, deployment, volume, or
+boundary observation fails immediately. Settlement never retries a mutation.
 The production and staging metadata tokens must be distinct from a third
 production source-write token.
 

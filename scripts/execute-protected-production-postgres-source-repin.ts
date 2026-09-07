@@ -87,13 +87,18 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "e2588d3b59995c17d15b6ca1cf497c8a00c595ef97c7234bffaa9341a39a94fa";
+  "491a5d7e341a81203ae5460b63347b6d71bf4f01a0d45bf9b25541ffb93e7fc7";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const REQUIRED_CONSECUTIVE_EXACT_READBACKS = 2;
+const STAGE_READBACK_MAX_OBSERVATIONS = 5;
+const STAGE_READBACK_INTERVAL_MS = 2_000;
+const POST_COMMIT_READBACK_MAX_OBSERVATIONS = 7;
+const POST_COMMIT_READBACK_INTERVAL_MS = 5_000;
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const PRODUCTION_ENVIRONMENT_ID = "13dab015-df74-45c6-b26f-69323daea99a";
 const STAGING_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
@@ -565,6 +570,7 @@ interface Dependencies {
   readonly runBoundary: () => Promise<BoundaryObservation>;
   readonly verifyPolicy: (cwd: string) => boolean;
   readonly now: () => number;
+  readonly sleep: (milliseconds: number) => Promise<void>;
 }
 
 function sha256(value: string | Buffer): string {
@@ -2060,6 +2066,19 @@ function policyExact(cwd: string): boolean {
         commitSkipDeploys: true,
         commitMaximumAttempts: 1,
         commitAcknowledgementRequired: true,
+        readOnlySettlement: {
+          requiredConsecutiveExactObservations:
+            REQUIRED_CONSECUTIVE_EXACT_READBACKS,
+          stageMaximumObservations: STAGE_READBACK_MAX_OBSERVATIONS,
+          stageIntervalMilliseconds: STAGE_READBACK_INTERVAL_MS,
+          postCommitMaximumObservations:
+            POST_COMMIT_READBACK_MAX_OBSERVATIONS,
+          postCommitIntervalMilliseconds: POST_COMMIT_READBACK_INTERVAL_MS,
+          onlyExactPreMutationStateOrExactTargetStateRetryable: true,
+          transientReadErrorsRetryableWithinBound: true,
+          contradictoryStateFailsImmediately: true,
+          mutationRetriesAllowed: false,
+        },
         automaticRetriesAllowed: false,
         workflowRerunsAllowed: false,
         rollbackAllowed: false,
@@ -2410,11 +2429,15 @@ async function stageAndCommit(
   alreadyStaged: ProviderState | null,
   recoveryWriteAllowed: (() => boolean) | null = null,
   requiredConfigEtag: string | null = null,
-): Promise<{ patchId: string; commitLostAck: boolean }> {
-  let staged = alreadyStaged;
+  safePreStageState: ProviderState | null = null,
+): Promise<{
+  patchId: string;
+  commitLostAck: boolean;
+  precommitState: ProviderState;
+}> {
   let acknowledgedPatchId: string | null = null;
   const pinnedStagedRecoveryRequired = requiredConfigEtag !== null;
-  if (staged === null) {
+  if (alreadyStaged === null) {
     if (recoveryWriteAllowed !== null && !recoveryWriteAllowed()) {
       throw new Error("prior_grace_invalid");
     }
@@ -2443,55 +2466,135 @@ async function stageAndCommit(
       acknowledgedPatchId = null;
     }
     stateChecks.stageAcknowledgementExact = acknowledgedPatchId !== null;
-    staged = await queryState(dependencies, metadataToken);
   }
-  if (
-    !dismissedStagedExact(staged) ||
-    (pinnedStagedRecoveryRequired &&
-      !pinnedStagedRecoveryPatchExact(staged.stagedPatch)) ||
-    (requiredConfigEtag !== null &&
-      staged.configEtag !== requiredConfigEtag) ||
-    runtimeContinuitySha256(staged) !== baselineRuntimeSha256
-  ) {
-    throw new Error("stage_readback_invalid");
-  }
-  const patchId = acknowledgedPatchId ?? staged.stagedPatch.id;
-  if (!UUID.test(patchId) || staged.stagedPatch.id !== patchId) {
-    throw new Error("stage_readback_invalid");
-  }
-  const first = await queryPatch(dependencies, metadataToken, patchId);
-  stateChecks.stagedReadbackOneExact =
-    stagedPatchReadbackExact(first) &&
-    (!pinnedStagedRecoveryRequired ||
-      (pinnedStagedRecoveryPatchExact(first.active) &&
-        pinnedStagedRecoveryPatchExact(first.selected)));
-  if (!stateChecks.stagedReadbackOneExact)
-    throw new Error("stage_readback_invalid");
 
-  const boundary = await dependencies.runBoundary();
-  const precommit = await queryState(dependencies, metadataToken);
-  const second = await queryPatch(dependencies, metadataToken, patchId);
-  stateChecks.stagedReadbackTwoExact =
-    dismissedStagedExact(precommit) &&
-    (!pinnedStagedRecoveryRequired ||
-      pinnedStagedRecoveryPatchExact(precommit.stagedPatch)) &&
-    (requiredConfigEtag === null ||
-      precommit.configEtag === requiredConfigEtag) &&
-    precommit.stagedPatch.id === patchId &&
-    stagedPatchReadbackExact(second) &&
-    (!pinnedStagedRecoveryRequired ||
-      (pinnedStagedRecoveryPatchExact(second.active) &&
-        pinnedStagedRecoveryPatchExact(second.selected)));
-  stateChecks.precommitRaceAbsent =
-    stateChecks.stagedReadbackTwoExact &&
-    runtimeContinuitySha256(precommit) === baselineRuntimeSha256 &&
-    boundaryFailsOnly(boundary, [
-      "productionPatchEmpty",
-      "sourceImageExact",
-      "autoUpdatesDisabledExact",
-      "sourceReferenceImmutable",
-    ]);
-  if (!stateChecks.precommitRaceAbsent) throw new Error("precommit_race");
+  let initialState = alreadyStaged;
+  let patchId = acknowledgedPatchId;
+  let consecutiveExact = 0;
+  let lastExactState: ProviderState | null = null;
+  let lastExactPatch: { active: ProviderPatch; selected: ProviderPatch } | null =
+    null;
+  let precommit: ProviderState | null = null;
+
+  for (
+    let observation = 0;
+    observation < STAGE_READBACK_MAX_OBSERVATIONS;
+    observation += 1
+  ) {
+    let state: ProviderState;
+    try {
+      state = initialState ?? (await queryState(dependencies, metadataToken));
+      initialState = null;
+    } catch {
+      consecutiveExact = 0;
+      lastExactState = null;
+      lastExactPatch = null;
+      if (observation + 1 < STAGE_READBACK_MAX_OBSERVATIONS) {
+        await dependencies.sleep(STAGE_READBACK_INTERVAL_MS);
+        continue;
+      }
+      break;
+    }
+
+    const retryableStale =
+      safePreStageState !== null && stableExact(state, safePreStageState);
+    const stateExact =
+      dismissedStagedExact(state) &&
+      (!pinnedStagedRecoveryRequired ||
+        pinnedStagedRecoveryPatchExact(state.stagedPatch)) &&
+      (requiredConfigEtag === null || state.configEtag === requiredConfigEtag) &&
+      runtimeContinuitySha256(state) === baselineRuntimeSha256;
+
+    if (!stateExact) {
+      if (!retryableStale) throw new Error("stage_readback_invalid");
+      consecutiveExact = 0;
+      lastExactState = null;
+      lastExactPatch = null;
+    } else {
+      const observedPatchId = state.stagedPatch.id;
+      if (
+        !UUID.test(observedPatchId) ||
+        (patchId !== null && observedPatchId !== patchId)
+      ) {
+        throw new Error("stage_readback_invalid");
+      }
+      patchId ??= observedPatchId;
+
+      let patchReadback: { active: ProviderPatch; selected: ProviderPatch };
+      let boundary: BoundaryObservation;
+      try {
+        patchReadback = await queryPatch(
+          dependencies,
+          metadataToken,
+          patchId,
+        );
+        boundary = await dependencies.runBoundary();
+      } catch {
+        consecutiveExact = 0;
+        lastExactState = null;
+        lastExactPatch = null;
+        if (observation + 1 < STAGE_READBACK_MAX_OBSERVATIONS) {
+          await dependencies.sleep(STAGE_READBACK_INTERVAL_MS);
+          continue;
+        }
+        break;
+      }
+
+      const patchExact =
+        stagedPatchReadbackExact(patchReadback) &&
+        (!pinnedStagedRecoveryRequired ||
+          (pinnedStagedRecoveryPatchExact(patchReadback.active) &&
+            pinnedStagedRecoveryPatchExact(patchReadback.selected)));
+      if (!patchExact) throw new Error("stage_readback_invalid");
+
+      const boundaryExact = boundaryFailsOnly(boundary, [
+        "productionPatchEmpty",
+        "sourceImageExact",
+        "autoUpdatesDisabledExact",
+        "sourceReferenceImmutable",
+      ]);
+      const boundaryStillPreStage = boundaryFailsOnly(
+        boundary,
+        SOURCE_LOCK_ALLOWED_FALSE_BOUNDARY_CHECKS,
+      );
+      if (!boundaryExact && !boundaryStillPreStage) {
+        throw new Error("boundary_invalid");
+      }
+
+      if (!boundaryExact) {
+        consecutiveExact = 0;
+        lastExactState = null;
+        lastExactPatch = null;
+      } else {
+        if (
+          lastExactState !== null &&
+          (!stableExact(state, lastExactState) ||
+            !stableExact(patchReadback, lastExactPatch))
+        ) {
+          throw new Error("stage_readback_changed");
+        }
+        consecutiveExact += 1;
+        lastExactState = state;
+        lastExactPatch = patchReadback;
+        stateChecks.stagedReadbackOneExact = true;
+        stateChecks.stagedReadbackTwoExact =
+          consecutiveExact >= REQUIRED_CONSECUTIVE_EXACT_READBACKS;
+        if (stateChecks.stagedReadbackTwoExact) {
+          precommit = state;
+          stateChecks.precommitRaceAbsent = true;
+          break;
+        }
+      }
+    }
+
+    if (observation + 1 < STAGE_READBACK_MAX_OBSERVATIONS) {
+      await dependencies.sleep(STAGE_READBACK_INTERVAL_MS);
+    }
+  }
+
+  if (precommit === null || patchId === null) {
+    throw new Error("stage_readback_invalid");
+  }
 
   if (recoveryWriteAllowed !== null && !recoveryWriteAllowed()) {
     throw new Error("prior_grace_invalid");
@@ -2515,7 +2618,11 @@ async function stageAndCommit(
   } catch {
     stateChecks.commitAcknowledgementExact = false;
   }
-  return { patchId, commitLostAck: !stateChecks.commitAcknowledgementExact };
+  return {
+    patchId,
+    commitLostAck: !stateChecks.commitAcknowledgementExact,
+    precommitState: precommit,
+  };
 }
 
 async function verifyPostflight(
@@ -2524,37 +2631,96 @@ async function verifyPostflight(
   intent: Intent,
   runtimeSha256: string,
   stateChecks: Checks,
-  priorConfigEtag: string | null,
   expectedPatchId: string,
+  expectedPrecommitState: ProviderState,
   expectedStagedPatch: ProviderPatch | null = null,
   expectedCommitNotBefore: string | null = null,
 ): Promise<boolean> {
-  const after = await queryState(dependencies, metadataToken);
-  stateChecks.desiredStateExact = desiredStateExact(after);
-  if (priorConfigEtag !== null && after.configEtag === priorConfigEtag) {
-    stateChecks.desiredStateExact = false;
+  let consecutiveExact = 0;
+  let lastExactState: ProviderState | null = null;
+
+  for (
+    let observation = 0;
+    observation < POST_COMMIT_READBACK_MAX_OBSERVATIONS;
+    observation += 1
+  ) {
+    let after: ProviderState;
+    let boundary: BoundaryObservation;
+    try {
+      after = await queryState(dependencies, metadataToken);
+      boundary = await dependencies.runBoundary();
+    } catch {
+      consecutiveExact = 0;
+      lastExactState = null;
+      stateChecks.desiredStateExact = false;
+      stateChecks.runtimeContinuityExact = false;
+      stateChecks.inventoryContinuityExact = false;
+      stateChecks.committedHistoryExact = false;
+      stateChecks.boundaryPostflightExact = false;
+      if (observation + 1 < POST_COMMIT_READBACK_MAX_OBSERVATIONS) {
+        await dependencies.sleep(POST_COMMIT_READBACK_INTERVAL_MS);
+        continue;
+      }
+      break;
+    }
+
+    const committed = committedHistoryExact(
+      after,
+      intent,
+      expectedStagedPatch,
+      expectedCommitNotBefore,
+    );
+    stateChecks.desiredStateExact =
+      desiredStateExact(after) &&
+      after.configEtag !== expectedPrecommitState.configEtag;
+    stateChecks.runtimeContinuityExact =
+      runtimeContinuitySha256(after) === runtimeSha256;
+    stateChecks.inventoryContinuityExact = stateChecks.runtimeContinuityExact;
+    stateChecks.committedHistoryExact =
+      committed !== null && committed.id === expectedPatchId;
+    stateChecks.boundaryPostflightExact = boundaryPasses(boundary);
+
+    const exact =
+      stateChecks.desiredStateExact &&
+      stateChecks.runtimeContinuityExact &&
+      stateChecks.inventoryContinuityExact &&
+      stateChecks.committedHistoryExact &&
+      stateChecks.boundaryPostflightExact;
+    if (exact) {
+      if (lastExactState !== null && !stableExact(after, lastExactState)) {
+        return false;
+      }
+      consecutiveExact += 1;
+      lastExactState = after;
+      if (consecutiveExact >= REQUIRED_CONSECUTIVE_EXACT_READBACKS) {
+        return true;
+      }
+    } else {
+      const retryableStaleState = stableExact(after, expectedPrecommitState);
+      const retryableStaleBoundary = boundaryFailsOnly(boundary, [
+        "productionPatchEmpty",
+        "sourceImageExact",
+        "autoUpdatesDisabledExact",
+        "sourceReferenceImmutable",
+      ]);
+      const exactTargetState =
+        stateChecks.desiredStateExact &&
+        stateChecks.runtimeContinuityExact &&
+        stateChecks.inventoryContinuityExact &&
+        stateChecks.committedHistoryExact;
+      const independentlyConverged =
+        (retryableStaleState || exactTargetState) &&
+        (retryableStaleBoundary || stateChecks.boundaryPostflightExact);
+      if (!independentlyConverged) return false;
+      consecutiveExact = 0;
+      lastExactState = null;
+    }
+
+    if (observation + 1 < POST_COMMIT_READBACK_MAX_OBSERVATIONS) {
+      await dependencies.sleep(POST_COMMIT_READBACK_INTERVAL_MS);
+    }
   }
-  stateChecks.runtimeContinuityExact =
-    runtimeContinuitySha256(after) === runtimeSha256;
-  stateChecks.inventoryContinuityExact = stateChecks.runtimeContinuityExact;
-  const committed = committedHistoryExact(
-    after,
-    intent,
-    expectedStagedPatch,
-    expectedCommitNotBefore,
-  );
-  stateChecks.committedHistoryExact =
-    committed !== null && committed.id === expectedPatchId;
-  stateChecks.boundaryPostflightExact = boundaryPasses(
-    await dependencies.runBoundary(),
-  );
-  return (
-    stateChecks.desiredStateExact &&
-    stateChecks.runtimeContinuityExact &&
-    stateChecks.inventoryContinuityExact &&
-    stateChecks.committedHistoryExact &&
-    stateChecks.boundaryPostflightExact
-  );
+  return false;
 }
 
 export async function runProtectedProductionPostgresSourceRepin(
@@ -2572,6 +2738,8 @@ export async function runProtectedProductionPostgresSourceRepin(
     runBoundary: () => defaultBoundary(env, fetchImpl),
     verifyPolicy: policyExact,
     now: Date.now,
+    sleep: (milliseconds) =>
+      new Promise((resolve) => setTimeout(resolve, milliseconds)),
     ...overrides,
   };
   const args = parseArgs(dependencies.argv);
@@ -2780,6 +2948,9 @@ export async function runProtectedProductionPostgresSourceRepin(
         attempts,
         stateChecks,
         null,
+        null,
+        null,
+        dismissed,
       );
       patchId = result.patchId;
       if (
@@ -2789,8 +2960,8 @@ export async function runProtectedProductionPostgresSourceRepin(
           intent,
           runtimeSha,
           stateChecks,
-          null,
           patchId,
+          result.precommitState,
         ))
       )
         throw new Error("postflight_invalid");
@@ -2843,8 +3014,8 @@ export async function runProtectedProductionPostgresSourceRepin(
             intent,
             runtimeSha,
             stateChecks,
-            CROSS_CANDIDATE_RECOVERY.dismissedConfigEtag,
             patchId,
+            result.precommitState,
             current.stagedPatch,
             new Date(
               Date.parse(authority.recovery!.stagedRecoveryRunCompletedAt!) +
@@ -2892,8 +3063,8 @@ export async function runProtectedProductionPostgresSourceRepin(
             intent,
             runtimeSha,
             stateChecks,
-            null,
             patchId,
+            result.precommitState,
           ))
         )
           throw new Error("postflight_invalid");
@@ -2911,6 +3082,8 @@ export async function runProtectedProductionPostgresSourceRepin(
           stateChecks,
           null,
           priorRunGraceNowExact,
+          null,
+          current,
         );
         patchId = result.patchId;
         if (
@@ -2920,8 +3093,8 @@ export async function runProtectedProductionPostgresSourceRepin(
             intent,
             runtimeSha,
             stateChecks,
-            null,
             patchId,
+            result.precommitState,
           ))
         )
           throw new Error("postflight_invalid");
@@ -2959,6 +3132,11 @@ export const protectedProductionPostgresSourceRepinInternals = {
   CROSS_CANDIDATE_RECOVERY,
   DISMISSED_AUTO_UPDATES,
   DESIRED_AUTO_UPDATES,
+  POST_COMMIT_READBACK_INTERVAL_MS,
+  POST_COMMIT_READBACK_MAX_OBSERVATIONS,
+  REQUIRED_CONSECUTIVE_EXACT_READBACKS,
+  STAGE_READBACK_INTERVAL_MS,
+  STAGE_READBACK_MAX_OBSERVATIONS,
   armedBaselineExact,
   artifactBindingExact,
   boundaryFailsOnly,

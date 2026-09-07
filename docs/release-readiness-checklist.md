@@ -63,7 +63,10 @@ patch, perform the ordinary same-candidate stage-and-commit path where no stage
 was previously attempted, or report the original armed state as not applied;
 all other states fail closed. Pinned commit-only success must preserve the exact
 staged patch ID and creation timestamp, with application no earlier than the
-stage-only run's reviewed settlement boundary.
+stage-only run's reviewed settlement boundary. Stage and commit acknowledgements
+are followed only by bounded metadata reads: five observations at two-second
+intervals for staging and seven at five-second intervals for commit, with two
+identical exact observations required. No settlement path repeats a mutation.
 
 ## Automated Local Gates
 
