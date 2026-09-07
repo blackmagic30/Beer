@@ -130,8 +130,11 @@ writer step remains skipped on any other apply state. The apply executor repeats
 that proof immediately before dismissing the exact notice once, stages the
 same observed digest together with canonical disabled auto-update metadata,
 requires two identical exact active-and-selected patch observations within a
-five-observation, two-second read-only settlement bound, commits once with
-`skipDeploys:true`, and proves the complete runtime identity set unchanged.
+five-observation, two-second read-only settlement bound, proves that staging
+preserved every captured non-patch field and added only the exact staged patch,
+commits once with `skipDeploys:true`, and proves the complete runtime identity
+set unchanged. Post-commit history must replace only that staged patch with its
+exact committed form; any additional, removed, or substituted history fails.
 After commit it permits at most seven read-only observations five seconds apart
 (30 seconds total), and succeeds only after two identical complete postflight
 observations. Exact precommit state and transient read failures may settle

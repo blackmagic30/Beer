@@ -87,7 +87,7 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "491a5d7e341a81203ae5460b63347b6d71bf4f01a0d45bf9b25541ffb93e7fc7";
+  "9b160671b5a5fcd6b15b4ccb8c4ba91d082b2f9acda1284b2f8805c86a85ae9a";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
@@ -572,6 +572,8 @@ interface Dependencies {
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => Promise<void>;
 }
+
+class ContradictoryProviderObservationError extends Error {}
 
 function sha256(value: string | Buffer): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -1785,6 +1787,82 @@ function desiredStateExact(state: ProviderState): boolean {
   );
 }
 
+function stateOutsidePatchWorkflow(state: ProviderState): unknown {
+  const { stagedPatch: _stagedPatch, patchHistory: _patchHistory, ...outside } =
+    state;
+  return outside;
+}
+
+function stagedHistoryTransitionExact(
+  before: ProviderState,
+  after: ProviderState,
+): boolean {
+  const staged = after.stagedPatch;
+  if (
+    !patchEmpty(before.stagedPatch) ||
+    !stagedPatchExact(staged) ||
+    before.patchHistory.some((patch) => patch.id === staged.id)
+  ) {
+    return false;
+  }
+  const stagedEntries = after.patchHistory.filter(
+    (patch) => patch.id === staged.id,
+  );
+  return (
+    stagedEntries.length === 1 &&
+    stableExact(stagedEntries[0], staged) &&
+    stableExact(
+      after.patchHistory.filter((patch) => patch.id !== staged.id),
+      before.patchHistory,
+    )
+  );
+}
+
+function stagedTransitionExact(
+  before: ProviderState,
+  after: ProviderState,
+): boolean {
+  return (
+    stableExact(
+      stateOutsidePatchWorkflow(before),
+      stateOutsidePatchWorkflow(after),
+    ) && stagedHistoryTransitionExact(before, after)
+  );
+}
+
+function committedHistoryTransitionExact(
+  before: ProviderState,
+  after: ProviderState,
+  committed: ProviderPatch,
+): boolean {
+  const staged = before.stagedPatch;
+  if (
+    !stagedPatchExact(staged) ||
+    committed.id !== staged.id ||
+    committed.createdAt !== staged.createdAt ||
+    committed.appliedAt === null ||
+    Date.parse(committed.appliedAt) < Date.parse(staged.updatedAt!)
+  ) {
+    return false;
+  }
+  const beforeExpected = before.patchHistory.filter(
+    (patch) => patch.id === staged.id,
+  );
+  const afterExpected = after.patchHistory.filter(
+    (patch) => patch.id === staged.id,
+  );
+  return (
+    beforeExpected.length === 1 &&
+    stableExact(beforeExpected[0], staged) &&
+    afterExpected.length === 1 &&
+    stableExact(afterExpected[0], committed) &&
+    stableExact(
+      before.patchHistory.filter((patch) => patch.id !== staged.id),
+      after.patchHistory.filter((patch) => patch.id !== staged.id),
+    )
+  );
+}
+
 function boundaryFailsOnly(
   observation: BoundaryObservation,
   falseChecks: readonly BoundaryCheckName[],
@@ -2074,6 +2152,9 @@ function policyExact(cwd: string): boolean {
           postCommitMaximumObservations:
             POST_COMMIT_READBACK_MAX_OBSERVATIONS,
           postCommitIntervalMilliseconds: POST_COMMIT_READBACK_INTERVAL_MS,
+          stageMustPreserveNonPatchState: true,
+          stageHistoryMustAddOnlyExactStagedPatch: true,
+          commitHistoryMustReplaceOnlyExactStagedPatch: true,
           onlyExactPreMutationStateOrExactTargetStateRetryable: true,
           transientReadErrorsRetryableWithinBound: true,
           contradictoryStateFailsImmediately: true,
@@ -2209,7 +2290,9 @@ async function queryState(
       },
     ),
   );
-  if (state === null) throw new Error("provider_invalid");
+  if (state === null) {
+    throw new ContradictoryProviderObservationError("provider_state_invalid");
+  }
   return state;
 }
 
@@ -2228,7 +2311,9 @@ async function queryPatch(
     ),
     patchId,
   );
-  if (value === null) throw new Error("provider_invalid");
+  if (value === null) {
+    throw new ContradictoryProviderObservationError("provider_patch_invalid");
+  }
   return value;
 }
 
@@ -2485,7 +2570,8 @@ async function stageAndCommit(
     try {
       state = initialState ?? (await queryState(dependencies, metadataToken));
       initialState = null;
-    } catch {
+    } catch (error) {
+      if (error instanceof ContradictoryProviderObservationError) throw error;
       consecutiveExact = 0;
       lastExactState = null;
       lastExactPatch = null;
@@ -2503,7 +2589,9 @@ async function stageAndCommit(
       (!pinnedStagedRecoveryRequired ||
         pinnedStagedRecoveryPatchExact(state.stagedPatch)) &&
       (requiredConfigEtag === null || state.configEtag === requiredConfigEtag) &&
-      runtimeContinuitySha256(state) === baselineRuntimeSha256;
+      runtimeContinuitySha256(state) === baselineRuntimeSha256 &&
+      (safePreStageState === null ||
+        stagedTransitionExact(safePreStageState, state));
 
     if (!stateExact) {
       if (!retryableStale) throw new Error("stage_readback_invalid");
@@ -2529,7 +2617,8 @@ async function stageAndCommit(
           patchId,
         );
         boundary = await dependencies.runBoundary();
-      } catch {
+      } catch (error) {
+        if (error instanceof ContradictoryProviderObservationError) throw error;
         consecutiveExact = 0;
         lastExactState = null;
         lastExactPatch = null;
@@ -2649,7 +2738,8 @@ async function verifyPostflight(
     try {
       after = await queryState(dependencies, metadataToken);
       boundary = await dependencies.runBoundary();
-    } catch {
+    } catch (error) {
+      if (error instanceof ContradictoryProviderObservationError) throw error;
       consecutiveExact = 0;
       lastExactState = null;
       stateChecks.desiredStateExact = false;
@@ -2677,7 +2767,9 @@ async function verifyPostflight(
       runtimeContinuitySha256(after) === runtimeSha256;
     stateChecks.inventoryContinuityExact = stateChecks.runtimeContinuityExact;
     stateChecks.committedHistoryExact =
-      committed !== null && committed.id === expectedPatchId;
+      committed !== null &&
+      committed.id === expectedPatchId &&
+      committedHistoryTransitionExact(expectedPrecommitState, after, committed);
     stateChecks.boundaryPostflightExact = boundaryPasses(boundary);
 
     const exact =
