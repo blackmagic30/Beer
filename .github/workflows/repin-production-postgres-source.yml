@@ -218,6 +218,16 @@ jobs:
           name: pintpath-production-postgres-source-lock-apply-${{ inputs.prior_candidate_sha }}-${{ inputs.prior_run_id }}
           path: ${{ runner.temp }}/pintpath-production-postgres-source-lock-prior-terminal
 
+      - name: Retrieve the exact staged source-lock recovery evidence
+        if: inputs.operation_mode == 'reconcile' && inputs.prior_candidate_sha != inputs.candidate_sha
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: '34025400175'
+          name: pintpath-production-postgres-source-lock-reconcile-e4ae715f997a14aec247c50e1b21f69c78de0fd0-34025400175
+          path: ${{ runner.temp }}/pintpath-production-postgres-source-lock-staged-recovery
+
       - name: Bind the exact durable intent artifact before the writer
         id: intent_binding
         env:
@@ -342,6 +352,75 @@ jobs:
             printf 'evidence_exact=true\n'
           } >> "$GITHUB_OUTPUT"
 
+      - name: Bind the exact staged source-lock recovery evidence before the writer
+        id: staged_recovery_binding
+        if: inputs.operation_mode == 'reconcile' && inputs.prior_candidate_sha != inputs.candidate_sha
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PRIOR_CANDIDATE_SHA: ${{ inputs.prior_candidate_sha }}
+          PRIOR_RUN_ID: ${{ inputs.prior_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PRIOR_CANDIDATE_SHA" = 52049a1ef414e274e47197e28726387c90d96990
+          test "$PRIOR_RUN_ID" = 33923801697
+          test "$CANDIDATE_SHA" != e4ae715f997a14aec247c50e1b21f69c78de0fd0
+          staged_run_id=34025400175
+          artifact_name=pintpath-production-postgres-source-lock-reconcile-e4ae715f997a14aec247c50e1b21f69c78de0fd0-34025400175
+          response="$RUNNER_TEMP/pintpath-production-postgres-source-lock-staged-recovery-artifact.json"
+          umask 077
+          curl --fail --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --output "$response" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$staged_run_id/artifacts?name=$artifact_name&per_page=100"
+          jq -e \
+            --arg name "$artifact_name" \
+            --argjson stagedRunId "$staged_run_id" \
+            '.total_count == 1 and (.artifacts | length) == 1 and .artifacts[0].id == 9986949361 and .artifacts[0].name == $name and .artifacts[0].expired == false and .artifacts[0].size_in_bytes == 4442 and .artifacts[0].digest == "sha256:a48e945315ded8de15dabe89e77c5ce34f4b17f9b66aeb5c41ff05212016224f" and .artifacts[0].workflow_run.id == $stagedRunId and .artifacts[0].workflow_run.head_branch == "main" and .artifacts[0].workflow_run.head_sha == "e4ae715f997a14aec247c50e1b21f69c78de0fd0"' \
+            "$response" >/dev/null
+          root="$RUNNER_TEMP/pintpath-production-postgres-source-lock-staged-recovery"
+          evidence="$root/pintpath-production-postgres-source-lock-evidence"
+          intent_root="$root/pintpath-production-postgres-source-lock-intent"
+          dispatch="$evidence/dispatch.json"
+          authority="$evidence/reviewed-authority.json"
+          terminal="$evidence/reconcile-terminal.json"
+          receipt="$evidence/reconcile-receipt.json"
+          intent="$intent_root/source-lock-intent.json"
+          test "$(find "$root" -type f | wc -l | tr -d ' ')" = 5
+          test -z "$(find "$root" -type l -print -quit)"
+          for file in "$dispatch" "$authority" "$terminal" "$receipt" "$intent"; do
+            test -f "$file"
+            test ! -L "$file"
+            chmod 600 "$file"
+          done
+          dispatch_sha256="$(sha256sum "$dispatch" | awk '{print $1}')"
+          authority_sha256="$(sha256sum "$authority" | awk '{print $1}')"
+          terminal_sha256="$(sha256sum "$terminal" | awk '{print $1}')"
+          receipt_sha256="$(sha256sum "$receipt" | awk '{print $1}')"
+          intent_sha256="$(sha256sum "$intent" | awk '{print $1}')"
+          test "$dispatch_sha256" = 27fe6c127ebb1a6b754e61f60136484f2f83acb6999ef49561f77c32e7d19d5f
+          test "$authority_sha256" = 4e700f77be015139099e55b7b88605ca39677a49aa44e0f1af98b32726701231
+          test "$terminal_sha256" = 02af11abcbb0a6296a25bc6aeee79d9b7adba532d5501b509b0b95a48b5c30e6
+          test "$receipt_sha256" = c7d351b11b355b5cdea2be8451d4933f4db609fcdf72f38e69ce2909e1846d3d
+          test "$intent_sha256" = 61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c
+          jq -e \
+            '.schemaVersion == "pintpath-protected-production-postgres-source-lock/v2" and .phase == "reconcile" and .candidateSha == "e4ae715f997a14aec247c50e1b21f69c78de0fd0" and .outcome == "mutation_uncertain" and .intentSha256 == "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c" and .patchId == null and .attempts == {dismiss:0,stage:1,commit:0} and .totalMutationCalls == 1 and .retryAllowed == false and .deploymentAllowed == false and .terminalSha256 == "02af11abcbb0a6296a25bc6aeee79d9b7adba532d5501b509b0b95a48b5c30e6" and .checks.stageAcknowledgementExact == true and .checks.commitAcknowledgementExact == false and .checks.desiredStateExact == false and .checks.terminalEvidenceExact == true and .checks.receiptEvidenceExact == true and .secretMaterialIncluded == false and .providerCredentialsIncluded == false and .rawProviderMetadataIncluded == false' \
+            "$receipt" >/dev/null
+          jq -e \
+            '.schemaVersion == "pintpath-production-postgres-source-lock-terminal/v2" and .phase == "reconcile" and .receipt.candidateSha == "e4ae715f997a14aec247c50e1b21f69c78de0fd0" and .receipt.outcome == "mutation_uncertain" and .receipt.patchId == null and .receipt.attempts == {dismiss:0,stage:1,commit:0} and .receipt.totalMutationCalls == 1 and .receipt.retryAllowed == false and .receipt.deploymentAllowed == false and .receipt.terminalSha256 == null and .receipt.secretMaterialIncluded == false and .receipt.providerCredentialsIncluded == false and .receipt.rawProviderMetadataIncluded == false' \
+            "$terminal" >/dev/null
+          {
+            printf 'artifact_id=%s\n' 9986949361
+            printf 'artifact_digest=%s\n' sha256:a48e945315ded8de15dabe89e77c5ce34f4b17f9b66aeb5c41ff05212016224f
+            printf 'artifact_size=%s\n' 4442
+            printf 'terminal_sha256=%s\n' "$terminal_sha256"
+            printf 'receipt_sha256=%s\n' "$receipt_sha256"
+            printf 'evidence_exact=true\n'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Reassert exact current main immediately before the protected writer
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -371,6 +450,12 @@ jobs:
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_TERMINAL_SHA256: ${{ steps.prior_terminal_binding.outputs.apply_terminal_sha256 }}
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_APPLY_RECEIPT_SHA256: ${{ steps.prior_terminal_binding.outputs.apply_receipt_sha256 }}
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_TERMINAL_EVIDENCE_EXACT: ${{ steps.prior_terminal_binding.outputs.evidence_exact }}
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_ID: ${{ steps.staged_recovery_binding.outputs.artifact_id }}
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_DIGEST: ${{ steps.staged_recovery_binding.outputs.artifact_digest }}
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_SIZE: ${{ steps.staged_recovery_binding.outputs.artifact_size }}
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_TERMINAL_SHA256: ${{ steps.staged_recovery_binding.outputs.terminal_sha256 }}
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_RECEIPT_SHA256: ${{ steps.staged_recovery_binding.outputs.receipt_sha256 }}
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT: ${{ steps.staged_recovery_binding.outputs.evidence_exact }}
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_REPIN_CONFIRMATION: ${{ inputs.confirmation }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN }}

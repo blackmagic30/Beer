@@ -50,6 +50,12 @@ describe("protected provider mutation workflows", () => {
     );
     expect(workflow).toContain("group: pintpath-production-rollout");
     expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow.match(/^permissions:\n(?:  .+\n)+/m)?.[0]).toBe(
+      "permissions:\n" +
+        "  actions: read\n" +
+        "  contents: read\n" +
+        "  pull-requests: read\n",
+    );
     expect(workflow).toContain("operation_mode:");
     expect(workflow).toContain("prior_run_id:");
     expect(workflow).toContain("prior_candidate_sha:");
@@ -88,6 +94,9 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain(
       "pintpath-production-postgres-source-lock-apply-${{ inputs.prior_candidate_sha }}-${{ inputs.prior_run_id }}",
     );
+    expect(workflow).toContain(
+      "pintpath-production-postgres-source-lock-reconcile-e4ae715f997a14aec247c50e1b21f69c78de0fd0-34025400175",
+    );
     expect(workflow).toContain("9956146300");
     expect(workflow).toContain("9956147717");
     expect(workflow).toContain(
@@ -101,6 +110,16 @@ describe("protected provider mutation workflows", () => {
     );
     expect(workflow).toContain(
       "571c8b3269d557392c2fac317e330d9d28a38a95838265a926922f284b651b36",
+    );
+    expect(workflow).toContain("9986949361");
+    expect(workflow).toContain(
+      "a48e945315ded8de15dabe89e77c5ce34f4b17f9b66aeb5c41ff05212016224f",
+    );
+    expect(workflow).toContain(
+      "02af11abcbb0a6296a25bc6aeee79d9b7adba532d5501b509b0b95a48b5c30e6",
+    );
+    expect(workflow).toContain(
+      "c7d351b11b355b5cdea2be8451d4933f4db609fcdf72f38e69ce2909e1846d3d",
     );
     expect(workflow).toContain(
       "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST",
@@ -134,6 +153,15 @@ describe("protected provider mutation workflows", () => {
     const artifactBinding = workflow.indexOf(
       "Bind the exact durable intent artifact before the writer",
     );
+    const stagedRecoveryDownload = workflow.indexOf(
+      "Retrieve the exact staged source-lock recovery evidence",
+    );
+    const stagedRecoveryBinding = workflow.indexOf(
+      "Bind the exact staged source-lock recovery evidence before the writer",
+    );
+    const reassertMain = workflow.indexOf(
+      "Reassert exact current main immediately before the protected writer",
+    );
     const mutationCredential = workflow.indexOf(
       "PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN",
     );
@@ -145,8 +173,13 @@ describe("protected provider mutation workflows", () => {
     expect(prepare).toBeGreaterThan(authority);
     expect(intentUpload).toBeGreaterThan(prepare);
     expect(artifactBinding).toBeGreaterThan(intentUpload);
+    expect(stagedRecoveryDownload).toBeGreaterThan(intentUpload);
+    expect(stagedRecoveryBinding).toBeGreaterThan(stagedRecoveryDownload);
+    expect(reassertMain).toBeGreaterThan(stagedRecoveryBinding);
     expect(writer).toBeGreaterThan(artifactBinding);
+    expect(writer).toBeGreaterThan(reassertMain);
     expect(mutationCredential).toBeGreaterThan(artifactBinding);
+    expect(mutationCredential).toBeGreaterThan(stagedRecoveryBinding);
     expect(workflow.slice(0, intentUpload)).not.toContain(
       "PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN",
     );
@@ -154,9 +187,49 @@ describe("protected provider mutation workflows", () => {
       workflow.match(/PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN/g),
     ).toHaveLength(2);
 
+    const stagedRecoveryBlock = workflow.slice(
+      stagedRecoveryBinding,
+      reassertMain,
+    );
+    for (const exactPredicate of [
+      ".artifacts[0].id == 9986949361",
+      ".artifacts[0].size_in_bytes == 4442",
+      '.artifacts[0].digest == "sha256:a48e945315ded8de15dabe89e77c5ce34f4b17f9b66aeb5c41ff05212016224f"',
+      ".artifacts[0].workflow_run.id == $stagedRunId",
+      '.artifacts[0].workflow_run.head_branch == "main"',
+      '.artifacts[0].workflow_run.head_sha == "e4ae715f997a14aec247c50e1b21f69c78de0fd0"',
+      'test "$(find "$root" -type f | wc -l | tr -d \' \')" = 5',
+      'test -z "$(find "$root" -type l -print -quit)"',
+      'test "$dispatch_sha256" = 27fe6c127ebb1a6b754e61f60136484f2f83acb6999ef49561f77c32e7d19d5f',
+      'test "$authority_sha256" = 4e700f77be015139099e55b7b88605ca39677a49aa44e0f1af98b32726701231',
+      'test "$terminal_sha256" = 02af11abcbb0a6296a25bc6aeee79d9b7adba532d5501b509b0b95a48b5c30e6',
+      'test "$receipt_sha256" = c7d351b11b355b5cdea2be8451d4933f4db609fcdf72f38e69ce2909e1846d3d',
+      'test "$intent_sha256" = 61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c',
+    ]) {
+      expect(stagedRecoveryBlock).toContain(exactPredicate);
+    }
+
+    const writerBlock = workflow.slice(
+      writer,
+      workflow.indexOf(
+        "Reconcile the canonical Railway mutation boundary after every authorized attempt",
+        writer,
+      ),
+    );
+    for (const outputBinding of [
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_ID: ${{ steps.staged_recovery_binding.outputs.artifact_id }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_DIGEST: ${{ steps.staged_recovery_binding.outputs.artifact_digest }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_ARTIFACT_SIZE: ${{ steps.staged_recovery_binding.outputs.artifact_size }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_TERMINAL_SHA256: ${{ steps.staged_recovery_binding.outputs.terminal_sha256 }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_RECEIPT_SHA256: ${{ steps.staged_recovery_binding.outputs.receipt_sha256 }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT: ${{ steps.staged_recovery_binding.outputs.evidence_exact }}",
+    ]) {
+      expect(writerBlock).toContain(outputBinding);
+    }
+
     expect(policy).toMatchObject({
       schemaVersion:
-        "pintpath-protected-production-postgres-source-lock-policy/v3",
+        "pintpath-protected-production-postgres-source-lock-policy/v4",
       policyId: "pintpath-protected-production-postgres-source-lock",
       activationState: "GITHUB_ENVIRONMENT_PROTECTED",
       githubEnvironment: "production-postgres-source-repin",
@@ -199,6 +272,10 @@ describe("protected provider mutation workflows", () => {
         priorRunId: "33923801697",
         dismissedConfigEtag:
           "ac5fb1e97cc4451ab5c09d05ecf1bcf591646a90d04945017a68616363b3227f",
+        stagedRecoveryCandidateSha:
+          "e4ae715f997a14aec247c50e1b21f69c78de0fd0",
+        stagedRecoveryRunId: "34025400175",
+        stagedRecoveryPatchId: "05d6c851-3d44-4b27-90cf-9222fbe6e7a7",
       },
       mutationBoundary: {
         policySha256: boundaryPolicySha,
@@ -211,7 +288,10 @@ describe("protected provider mutation workflows", () => {
       recoveryStateMachine: {
         desiredWithEmptyStagedPatch: "RECONCILED_READ_ONLY",
         dismissedWithExactStagedPatch: "RECONCILED_COMMIT_ONLY",
-        dismissedWithEmptyStagedPatch: "RECONCILED_STAGE_AND_COMMIT",
+        ordinarySameCandidateDismissedWithEmptyStagedPatch:
+          "RECONCILED_STAGE_AND_COMMIT",
+        pinnedCrossCandidateDismissedWithEmptyStagedPatch:
+          "FAIL_CLOSED_STAGE_ALREADY_ATTEMPTED",
         armedWithEmptyStagedPatch: "NOT_APPLIED_NO_WRITE",
         allOtherStates: "FAIL_CLOSED_NO_WRITE",
       },
