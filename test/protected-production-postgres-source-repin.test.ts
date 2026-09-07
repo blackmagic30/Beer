@@ -452,7 +452,7 @@ function writeReconcileAuthority(
   safePrior: string[] = [],
   originalRunCompletedAt = "2026-09-01T00:08:00.000Z",
   priorCandidateSha = CANDIDATE,
-  postStageBridgeExact = false,
+  postStageBridgeExact = priorCandidateSha !== CANDIDATE,
 ) {
   const exactSafePrior = priorCandidateSha === CANDIDATE
     ? safePrior
@@ -497,7 +497,7 @@ function writeReconcileAuthority(
               priorCandidateSha,
               RECOVERY_BRIDGE_CANDIDATE,
               STAGED_RECOVERY_CANDIDATE,
-              ...(postStageBridgeExact ? [POST_STAGE_BRIDGE_CANDIDATE] : []),
+              POST_STAGE_BRIDGE_CANDIDATE,
               CANDIDATE,
             ],
       productionPostgresSourceRepinRecoveryBridgeExact:
@@ -889,7 +889,7 @@ function mutationCalls(provider: ReturnType<typeof providerMock>) {
 describe("protected production Postgres source lock", () => {
   it("pins and validates the complete reviewed v4 policy contract", () => {
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256).toBe(
-      "2072c6662c854cc0cbb8f182a529798891bdfc2d635642a92029869c27d52247",
+      "b572a7fef346b1f947fb4f72b43923cf347ade2d4247817e292e1c86e9152a7d",
     );
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256).toBe(
       "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
