@@ -499,7 +499,7 @@ describe("Railway mutation boundary guard", () => {
     ] })))).toBeNull();
   });
 
-  it("parses only exact metadata responses and discards raw deployment metadata", () => {
+  it("parses only exact metadata responses and discards raw deployment metadata", async () => {
     expect(
       railwayMutationBoundaryInternals.parseProjectTokenScopeResponse(
         JSON.stringify({
@@ -571,6 +571,31 @@ describe("Railway mutation boundary guard", () => {
     expect(sanitized).not.toBeNull();
     expect(JSON.stringify(sanitized)).not.toContain(rawConfigSecret);
 
+    const clearedRemediation = railwayMutationBoundaryInternals
+      .parseProductionPostgresResponse(
+        postgresResponse(undefined, {
+          image: SOURCE_IMAGE,
+          autoUpdates: {
+            ...DISABLED_AUTO_UPDATES,
+            remediationNotice: null,
+          },
+        }),
+      );
+    expect(clearedRemediation).toMatchObject({
+      configuredSource: {
+        autoUpdates: {
+          ...DISABLED_AUTO_UPDATES,
+          exactShape: true,
+          remediationNoticePresent: false,
+          snoozedUntilPresent: false,
+        },
+      },
+    });
+    expect(clearedRemediation).not.toBeNull();
+    const clearedResult = await runWith({ postgres: clearedRemediation! });
+    expect(clearedResult.code).toBe(0);
+    expect(clearedResult.receipt.checks.autoUpdatesDisabledExact).toBe(true);
+
     const armedRemediation = railwayMutationBoundaryInternals
       .parseProductionPostgresResponse(
         postgresResponse(undefined, {
@@ -591,6 +616,95 @@ describe("Railway mutation boundary guard", () => {
       },
     });
     expect(JSON.stringify(armedRemediation)).not.toContain(rawConfigSecret);
+
+    const clearedSnooze = railwayMutationBoundaryInternals
+      .parseProductionPostgresResponse(
+        postgresResponse(undefined, {
+          image: SOURCE_IMAGE,
+          autoUpdates: {
+            ...DISABLED_AUTO_UPDATES,
+            snoozedUntil: null,
+          },
+        }),
+      );
+    expect(clearedSnooze).toMatchObject({
+      configuredSource: {
+        autoUpdates: {
+          ...DISABLED_AUTO_UPDATES,
+          exactShape: true,
+          remediationNoticePresent: false,
+          snoozedUntilPresent: false,
+        },
+      },
+    });
+    expect(clearedSnooze).not.toBeNull();
+    const clearedSnoozeResult = await runWith({ postgres: clearedSnooze! });
+    expect(clearedSnoozeResult.code).toBe(0);
+    expect(
+      clearedSnoozeResult.receipt.checks.autoUpdatesDisabledExact,
+    ).toBe(true);
+
+    const clearedProviderMetadata = railwayMutationBoundaryInternals
+      .parseProductionPostgresResponse(
+        postgresResponse(undefined, {
+          image: SOURCE_IMAGE,
+          autoUpdates: {
+            ...DISABLED_AUTO_UPDATES,
+            remediationNotice: null,
+            snoozedUntil: null,
+          },
+        }),
+      );
+    expect(clearedProviderMetadata).toMatchObject({
+      configuredSource: {
+        autoUpdates: {
+          ...DISABLED_AUTO_UPDATES,
+          exactShape: true,
+          remediationNoticePresent: false,
+          snoozedUntilPresent: false,
+        },
+      },
+    });
+
+    const activeSnooze = railwayMutationBoundaryInternals
+      .parseProductionPostgresResponse(
+        postgresResponse(undefined, {
+          image: SOURCE_IMAGE,
+          autoUpdates: {
+            ...DISABLED_AUTO_UPDATES,
+            snoozedUntil: "2026-09-09T00:00:00.000Z",
+          },
+        }),
+      );
+    expect(activeSnooze).toMatchObject({
+      configuredSource: {
+        autoUpdates: {
+          exactShape: false,
+          remediationNoticePresent: false,
+          snoozedUntilPresent: true,
+        },
+      },
+    });
+
+    const unknownNullMetadata = railwayMutationBoundaryInternals
+      .parseProductionPostgresResponse(
+        postgresResponse(undefined, {
+          image: SOURCE_IMAGE,
+          autoUpdates: {
+            ...DISABLED_AUTO_UPDATES,
+            futureMetadata: null,
+          },
+        }),
+      );
+    expect(unknownNullMetadata).toMatchObject({
+      configuredSource: {
+        autoUpdates: {
+          exactShape: false,
+          remediationNoticePresent: false,
+          snoozedUntilPresent: false,
+        },
+      },
+    });
     expect(
       railwayMutationBoundaryInternals.parseEnvironmentBoundaryResponse(
         JSON.stringify({ errors: [{ message: "secret" }], data: null }),

@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  clearedRailwayImageAutoUpdatesExact,
   RAILWAY_MUTATION_POLICY_ID,
   emptyRailwayMutationBoundaryChecks,
   evaluateRailwayMutationBoundary,
@@ -359,9 +360,13 @@ function parseConfiguredServiceSource(
       type: typeof type === "string" ? type : null,
       schedule: typeof schedule === "string" ? schedule : null,
       tagMode: typeof tagMode === "string" ? tagMode : null,
-      exactShape: exactKeySet(rawAutoUpdates, ["type", "schedule", "tagMode"]),
-      remediationNoticePresent: Object.hasOwn(rawAutoUpdates, "remediationNotice"),
-      snoozedUntilPresent: Object.hasOwn(rawAutoUpdates, "snoozedUntil"),
+      exactShape: clearedRailwayImageAutoUpdatesExact(rawAutoUpdates),
+      remediationNoticePresent:
+        Object.hasOwn(rawAutoUpdates, "remediationNotice")
+        && rawAutoUpdates.remediationNotice !== null,
+      snoozedUntilPresent:
+        Object.hasOwn(rawAutoUpdates, "snoozedUntil")
+        && rawAutoUpdates.snoozedUntil !== null,
     };
   }
 

@@ -160,6 +160,29 @@ function plainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function clearedRailwayImageAutoUpdatesExact(value: unknown): boolean {
+  if (!plainObject(value)) return false;
+  // Railway serializes cleared provider metadata either by omission or as null.
+  // Keep every other provider-owned or future field outside the accepted shape.
+  const requiredKeys = ["type", "schedule", "tagMode"] as const;
+  const allowedKeys = new Set([
+    ...requiredKeys,
+    "remediationNotice",
+    "snoozedUntil",
+  ]);
+  const exactClearedShape =
+    requiredKeys.every((key) => Object.hasOwn(value, key))
+    && Object.keys(value).every((key) => allowedKeys.has(key))
+    && (!Object.hasOwn(value, "remediationNotice")
+      || value.remediationNotice === null)
+    && (!Object.hasOwn(value, "snoozedUntil")
+      || value.snoozedUntil === null);
+  return exactClearedShape
+    && value.type === "disabled"
+    && value.schedule === null
+    && value.tagMode === null;
+}
+
 export function sourceReferencePinsDigest(
   sourceImage: string,
   imageDigest: string,
