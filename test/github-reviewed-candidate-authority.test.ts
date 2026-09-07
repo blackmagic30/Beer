@@ -48,6 +48,18 @@ const SOURCE_LOCK_POST_STAGE_BRIDGE_REVIEWED_HEAD =
 const SOURCE_LOCK_POST_STAGE_BRIDGE_TREE =
   "7b0968d8986ed3ae9af68fc94804a7fa24cbd0f9";
 const SOURCE_LOCK_POST_STAGE_BRIDGE_RUN_ID = 34113262642;
+const SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE =
+  "b41d0314c155f5f9953a7dd17c195afa9aa97b9c";
+const SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_REVIEWED_HEAD =
+  "dc048e8783134b529d58dea302fbfaec067d3216";
+const SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_TREE =
+  "5fa5599dedbc32867c0c3eb14f200afc2a993283";
+const SOURCE_LOCK_FINAL_ZERO_WRITE_RUN_ID = 34118981931;
+const SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_ID = 10017539632;
+const SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_NAME =
+  "pintpath-production-postgres-source-lock-reconcile-b41d0314c155f5f9953a7dd17c195afa9aa97b9c-34118981931";
+const SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_DIGEST =
+  "sha256:f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb";
 const INCIDENT_ORIGINAL_CANDIDATE =
   "ac7130e0306802825922d21a4c61135b84edd43b";
 const INCIDENT_ORIGINAL_REVIEWED_HEAD =
@@ -181,6 +193,18 @@ function sourceLockPostStageBridgeRun() {
     createdAt: "2026-09-07T10:47:19Z",
     updatedAt: "2026-09-07T10:51:22Z",
     headSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
+  });
+}
+
+function sourceLockFinalZeroWriteRun() {
+  return workflowRun({
+    id: SOURCE_LOCK_FINAL_ZERO_WRITE_RUN_ID,
+    path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+    displayTitle: `Production Postgres source lock | reconcile | ${SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE}`,
+    conclusion: "failure",
+    createdAt: "2026-09-07T11:54:00Z",
+    updatedAt: "2026-09-07T11:58:19Z",
+    headSha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
   });
 }
 
@@ -401,6 +425,10 @@ function harness(options: {
   postStageBridgeTreeSha?: string;
   postStageBridgeReviewedTreeSha?: string;
   postStageBridgeMergedAt?: string;
+  finalZeroWriteBridgeParentSha?: string;
+  finalZeroWriteBridgeTreeSha?: string;
+  finalZeroWriteBridgeReviewedTreeSha?: string;
+  finalZeroWriteBridgeMergedAt?: string;
   stagedRecoveryArtifactCount?: number;
   stagedRecoveryArtifactId?: number;
   stagedRecoveryArtifactName?: string;
@@ -413,6 +441,18 @@ function harness(options: {
   stagedRecoveryArtifactRunId?: number;
   stagedRecoveryArtifactHeadBranch?: string;
   stagedRecoveryArtifactHeadSha?: string;
+  finalZeroWriteArtifactCount?: number;
+  finalZeroWriteArtifactId?: number;
+  finalZeroWriteArtifactName?: string;
+  finalZeroWriteArtifactDigest?: string;
+  finalZeroWriteArtifactBytes?: number;
+  finalZeroWriteArtifactExpired?: boolean;
+  finalZeroWriteArtifactCreatedAt?: string;
+  finalZeroWriteArtifactUpdatedAt?: string;
+  finalZeroWriteArtifactExpiresAt?: string;
+  finalZeroWriteArtifactRunId?: number;
+  finalZeroWriteArtifactHeadBranch?: string;
+  finalZeroWriteArtifactHeadSha?: string;
   prepareRunId?: string | null;
   target?: string;
   variableName?: string;
@@ -824,6 +864,39 @@ function harness(options: {
         },
       });
     }
+    if (
+      url.includes(
+        `/commits/${SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE}/pulls?`,
+      )
+    ) {
+      return response([
+        {
+          number: 87,
+          state: "closed",
+          merge_commit_sha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+          base: { ref: "main", repo: { full_name: REPOSITORY } },
+          head: { repo: { full_name: REPOSITORY } },
+        },
+      ]);
+    }
+    if (url.endsWith("/pulls/87")) {
+      return response({
+        number: 87,
+        state: "closed",
+        merged: true,
+        draft: false,
+        merge_commit_sha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+        merged_at:
+          options.finalZeroWriteBridgeMergedAt ?? "2026-09-07T11:53:25Z",
+        user: { id: 101 },
+        merged_by: { id: 202 },
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: {
+          sha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_REVIEWED_HEAD,
+          repo: { full_name: REPOSITORY },
+        },
+      });
+    }
     if (url.endsWith("/pulls/25")) {
       return response({
         number: 25,
@@ -973,6 +1046,42 @@ function harness(options: {
             SOURCE_LOCK_POST_STAGE_BRIDGE_TREE,
         },
         parents: [{ sha: SOURCE_LOCK_STAGED_RECOVERY_CANDIDATE }],
+      });
+    }
+    if (
+      url.endsWith(
+        `/git/commits/${SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE}`,
+      )
+    ) {
+      return response({
+        sha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+        tree: {
+          sha:
+            options.finalZeroWriteBridgeTreeSha ??
+            SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_TREE,
+        },
+        parents: [
+          {
+            sha:
+              options.finalZeroWriteBridgeParentSha ??
+              SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
+          },
+        ],
+      });
+    }
+    if (
+      url.endsWith(
+        `/git/commits/${SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_REVIEWED_HEAD}`,
+      )
+    ) {
+      return response({
+        sha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_REVIEWED_HEAD,
+        tree: {
+          sha:
+            options.finalZeroWriteBridgeReviewedTreeSha ??
+            SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_TREE,
+        },
+        parents: [{ sha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE }],
       });
     }
     if (url.includes(`/commits/${INCIDENT_ORIGINAL_CANDIDATE}/pulls?`)) {
@@ -1183,6 +1292,53 @@ function harness(options: {
               SOURCE_LOCK_STAGED_RECOVERY_CANDIDATE,
           },
         }],
+      });
+    }
+    if (
+      url.includes(
+        `/actions/runs/${SOURCE_LOCK_FINAL_ZERO_WRITE_RUN_ID}/artifacts?`,
+      )
+    ) {
+      const artifactCount = options.finalZeroWriteArtifactCount ?? 1;
+      return response({
+        total_count: artifactCount,
+        artifacts:
+          artifactCount === 0
+            ? []
+            : [
+                {
+                  id:
+                    options.finalZeroWriteArtifactId ??
+                    SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_ID,
+                  name:
+                    options.finalZeroWriteArtifactName ??
+                    SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_NAME,
+                  size_in_bytes: options.finalZeroWriteArtifactBytes ?? 4611,
+                  expired: options.finalZeroWriteArtifactExpired ?? false,
+                  digest:
+                    options.finalZeroWriteArtifactDigest ??
+                    SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_DIGEST,
+                  created_at:
+                    options.finalZeroWriteArtifactCreatedAt ??
+                    "2026-09-07T11:58:16Z",
+                  updated_at:
+                    options.finalZeroWriteArtifactUpdatedAt ??
+                    "2026-09-07T11:58:16Z",
+                  expires_at:
+                    options.finalZeroWriteArtifactExpiresAt ??
+                    "2026-10-07T11:58:15Z",
+                  workflow_run: {
+                    id:
+                      options.finalZeroWriteArtifactRunId ??
+                      SOURCE_LOCK_FINAL_ZERO_WRITE_RUN_ID,
+                    head_branch:
+                      options.finalZeroWriteArtifactHeadBranch ?? "main",
+                    head_sha:
+                      options.finalZeroWriteArtifactHeadSha ??
+                      SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+                  },
+                },
+              ],
       });
     }
     if (url.endsWith(`/actions/runs/${deploymentRunId}`)) {
@@ -2511,7 +2667,7 @@ describe("reviewed candidate mutation authority", () => {
     );
   });
 
-  it("binds the exact post-stage bridge and its safe skipped writer", async () => {
+  it("binds the exact six-SHA recovery chain and proven-zero-write final bridge", async () => {
     const selected = workflowRun({
       id: 33923801697,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
@@ -2534,26 +2690,28 @@ describe("reviewed candidate mutation authority", () => {
     });
     const stagedRecovery = sourceLockStagedRecoveryRun();
     const postStageBridge = sourceLockPostStageBridgeRun();
+    const finalZeroWrite = sourceLockFinalZeroWriteRun();
     const current = workflowRun({
       id: 661,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
       displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
       status: "in_progress",
       conclusion: null,
-      createdAt: "2026-09-07T11:10:00Z",
+      createdAt: "2026-09-07T12:10:00Z",
     });
     const common = {
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
       priorRunId: "33923801697",
       priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
-      candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
-      mergedAt: "2026-09-07T11:00:00Z",
+      candidateParentSha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-07T12:00:00Z",
       current,
       productionPostgresSourceRepinRuns: [
         selected,
         bridge,
         stagedRecovery,
         postStageBridge,
+        finalZeroWrite,
         current,
       ],
       jobEvidence: {
@@ -2561,6 +2719,7 @@ describe("reviewed candidate mutation authority", () => {
         34000245292: jobs(bridge, "skipped"),
         34025400175: jobs(stagedRecovery, "failure"),
         34113262642: jobs(postStageBridge, "skipped"),
+        34118981931: jobs(finalZeroWrite, "failure"),
       },
     };
     await expect(harness(common).verify()).resolves.toMatchObject({
@@ -2571,13 +2730,56 @@ describe("reviewed candidate mutation authority", () => {
         SOURCE_LOCK_RECOVERY_BRIDGE_CANDIDATE,
         SOURCE_LOCK_STAGED_RECOVERY_CANDIDATE,
         SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
+        SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
         CANDIDATE,
       ],
       productionPostgresSourceRepinRecoveryBridgeExact: true,
       productionPostgresSourceRepinPostStageBridgeExact: true,
+      productionPostgresSourceRepinFinalZeroWriteBridgeExact: true,
+      productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact: true,
+      provenZeroWriteProductionPostgresSourceRepinRunId: "34118981931",
       productionPostgresSourceRepinStagedRecoveryRunExact: true,
       noAdditionalPossiblyWritingProductionPostgresSourceLockRunsExact: true,
+      runnerLossRecoveryFinalZeroWriteRunCompletedAt:
+        "2026-09-07T11:58:19.000Z",
+      runnerLossRecoveryFinalZeroWriteSettlementSeconds: 60,
+      runnerLossRecoveryFinalZeroWriteWithinSettlementExact: true,
     });
+    const currentAt = (createdAt: string) =>
+      workflowRun({
+        id: 661,
+        path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
+        displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
+        status: "in_progress",
+        conclusion: null,
+        createdAt,
+      });
+    const settlementFixture = (createdAt: string) => {
+      const settlementCurrent = currentAt(createdAt);
+      return harness({
+        ...common,
+        mergedAt: "2026-09-07T11:58:20Z",
+        current: settlementCurrent,
+        productionPostgresSourceRepinRuns: [
+          selected,
+          bridge,
+          stagedRecovery,
+          postStageBridge,
+          finalZeroWrite,
+          settlementCurrent,
+        ],
+      });
+    };
+    await expect(
+      settlementFixture("2026-09-07T11:59:19Z").verify(),
+    ).resolves.toMatchObject({
+      runnerLossRecoveryFinalZeroWriteWithinSettlementExact: true,
+    });
+    await expect(
+      settlementFixture("2026-09-07T11:59:18.999Z").verify(),
+    ).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
 
     const substitutedRun = {
       ...postStageBridge,
@@ -2590,6 +2792,7 @@ describe("reviewed candidate mutation authority", () => {
         bridge,
         stagedRecovery,
         substitutedRun,
+        finalZeroWrite,
         current,
       ],
       jobEvidence: {
@@ -2615,6 +2818,61 @@ describe("reviewed candidate mutation authority", () => {
     await expect(harness({
       ...common,
       postStageBridgeMergedAt: "2026-09-07T10:32:28Z",
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...common,
+      candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...common,
+      finalZeroWriteBridgeParentSha: "9".repeat(40),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...common,
+      finalZeroWriteBridgeTreeSha: "8".repeat(40),
+      finalZeroWriteBridgeReviewedTreeSha: "8".repeat(40),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...common,
+      finalZeroWriteBridgeMergedAt: "2026-09-07T11:53:26Z",
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    const substitutedFinalZeroWrite = {
+      ...finalZeroWrite,
+      updated_at: "2026-09-07T11:58:20Z",
+    };
+    await expect(harness({
+      ...common,
+      productionPostgresSourceRepinRuns: [
+        selected,
+        bridge,
+        stagedRecovery,
+        postStageBridge,
+        substitutedFinalZeroWrite,
+        current,
+      ],
+      jobEvidence: {
+        ...common.jobEvidence,
+        34118981931: jobs(substitutedFinalZeroWrite, "failure"),
+      },
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
+    );
+    await expect(harness({
+      ...common,
+      jobEvidence: {
+        ...common.jobEvidence,
+        34118981931: jobs(finalZeroWrite, "skipped"),
+      },
     }).verify()).rejects.toThrow(
       "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",
     );
@@ -2646,7 +2904,7 @@ describe("reviewed candidate mutation authority", () => {
     );
   });
 
-  it("rejects missing, expired, or substituted staged source-lock recovery artifact metadata", async () => {
+  it("rejects missing, expired, or substituted recovery artifact metadata", async () => {
     const selected = workflowRun({
       id: 33923801697,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
@@ -2669,26 +2927,28 @@ describe("reviewed candidate mutation authority", () => {
     });
     const stagedRecovery = sourceLockStagedRecoveryRun();
     const postStageBridge = sourceLockPostStageBridgeRun();
+    const finalZeroWrite = sourceLockFinalZeroWriteRun();
     const current = workflowRun({
       id: 661,
       path: PRODUCTION_POSTGRES_SOURCE_REPIN_PATH,
       displayTitle: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_TITLE,
       status: "in_progress",
       conclusion: null,
-      createdAt: "2026-09-07T11:10:00Z",
+      createdAt: "2026-09-07T12:10:00Z",
     });
     const common = {
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
       priorRunId: "33923801697",
       priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
-      candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
-      mergedAt: "2026-09-07T11:00:00Z",
+      candidateParentSha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-07T12:00:00Z",
       current,
       productionPostgresSourceRepinRuns: [
         selected,
         bridge,
         stagedRecovery,
         postStageBridge,
+        finalZeroWrite,
         current,
       ],
       jobEvidence: {
@@ -2696,6 +2956,7 @@ describe("reviewed candidate mutation authority", () => {
         34000245292: jobs(bridge, "skipped"),
         34025400175: jobs(stagedRecovery, "failure"),
         34113262642: jobs(postStageBridge, "skipped"),
+        34118981931: jobs(finalZeroWrite, "failure"),
       },
     };
     for (const tampered of [
@@ -2711,6 +2972,24 @@ describe("reviewed candidate mutation authority", () => {
     ]) {
       await expect(harness({ ...common, ...tampered }).verify()).rejects.toThrow(
         "github_reviewed_candidate_authority_production_postgres_source_repin_staged_recovery_artifact_invalid",
+      );
+    }
+    for (const tampered of [
+      { finalZeroWriteArtifactCount: 0 },
+      { finalZeroWriteArtifactExpired: true },
+      { finalZeroWriteArtifactId: 10017539633 },
+      { finalZeroWriteArtifactDigest: `sha256:${"0".repeat(64)}` },
+      { finalZeroWriteArtifactBytes: 4612 },
+      { finalZeroWriteArtifactHeadBranch: "release" },
+      { finalZeroWriteArtifactHeadSha: "f".repeat(40) },
+      { finalZeroWriteArtifactRunId: 34118981932 },
+      { finalZeroWriteArtifactCreatedAt: "2026-09-07T11:58:17Z" },
+      { finalZeroWriteArtifactExpiresAt: "2026-09-07T12:00:00Z" },
+    ]) {
+      await expect(
+        harness({ ...common, ...tampered }).verify(),
+      ).rejects.toThrow(
+        "github_reviewed_candidate_authority_production_postgres_source_repin_final_zero_write_artifact_invalid",
       );
     }
   });
@@ -2915,6 +3194,7 @@ describe("reviewed candidate mutation authority", () => {
     });
     const stagedRecovery = sourceLockStagedRecoveryRun();
     const postStageBridge = sourceLockPostStageBridgeRun();
+    const finalZeroWrite = sourceLockFinalZeroWriteRun();
     const fixtureAt = (createdAt: string) => {
       const current = workflowRun({
         id: 661,
@@ -2928,14 +3208,15 @@ describe("reviewed candidate mutation authority", () => {
         operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
         priorRunId: "33923801697",
         priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
-        candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
-        mergedAt: "2026-09-07T11:00:00Z",
+        candidateParentSha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+        mergedAt: "2026-09-07T12:00:00Z",
         current,
         productionPostgresSourceRepinRuns: [
           selected,
           bridge,
           stagedRecovery,
           postStageBridge,
+          finalZeroWrite,
           current,
         ],
         jobEvidence: {
@@ -2943,6 +3224,7 @@ describe("reviewed candidate mutation authority", () => {
           34000245292: jobs(bridge, "skipped"),
           34025400175: jobs(stagedRecovery, "failure"),
           34113262642: jobs(postStageBridge, "skipped"),
+          34118981931: jobs(finalZeroWrite, "failure"),
         },
       });
     };
@@ -2970,14 +3252,15 @@ describe("reviewed candidate mutation authority", () => {
       operation: PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION,
       priorRunId: "33923801697",
       priorCandidateSha: SOURCE_LOCK_INCIDENT_CANDIDATE,
-      candidateParentSha: SOURCE_LOCK_POST_STAGE_BRIDGE_CANDIDATE,
-      mergedAt: "2026-09-07T11:00:00Z",
+      candidateParentSha: SOURCE_LOCK_FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
+      mergedAt: "2026-09-07T12:00:00Z",
       current: startsAfterDeadline,
       productionPostgresSourceRepinRuns: [
         selected,
         bridge,
         stagedRecovery,
         postStageBridge,
+        finalZeroWrite,
         startsAfterDeadline,
       ],
       jobEvidence: {
@@ -2985,6 +3268,7 @@ describe("reviewed candidate mutation authority", () => {
         34000245292: jobs(bridge, "skipped"),
         34025400175: jobs(stagedRecovery, "failure"),
         34113262642: jobs(postStageBridge, "skipped"),
+        34118981931: jobs(finalZeroWrite, "failure"),
       },
     }).verify()).rejects.toThrow(
       "github_reviewed_candidate_authority_production_postgres_source_repin_reconciliation_history_invalid",

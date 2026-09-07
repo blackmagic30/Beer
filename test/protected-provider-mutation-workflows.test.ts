@@ -121,6 +121,19 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain(
       "c7d351b11b355b5cdea2be8451d4933f4db609fcdf72f38e69ce2909e1846d3d",
     );
+    expect(workflow).toContain("10017539632");
+    expect(workflow).toContain(
+      "pintpath-production-postgres-source-lock-reconcile-b41d0314c155f5f9953a7dd17c195afa9aa97b9c-34118981931",
+    );
+    for (const exactHash of [
+      "f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb",
+      "3ceb5955cd12f1f1474d256637a0dfccd261f9d19867a70c436fc962cfe7b93e",
+      "13f7a2aebf6af92c47022174bc01a7c36cd1b391feabc84e745326686ad72a6d",
+      "3bb0746e5a6bade5c56ff8a4841b0b2406f25db1a3009f829965f3c867e60392",
+      "2f5d8d8f207233144fb305ab27d946e6d9e0a29d051d66d86748501bc402020f",
+    ]) {
+      expect(workflow).toContain(exactHash);
+    }
     expect(workflow).toContain(
       "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_INTENT_ARTIFACT_DIGEST",
     );
@@ -159,6 +172,9 @@ describe("protected provider mutation workflows", () => {
     const stagedRecoveryBinding = workflow.indexOf(
       "Bind the exact staged source-lock recovery evidence before the writer",
     );
+    const finalZeroWriteBinding = workflow.indexOf(
+      "Retrieve and seal the exact final zero-write bridge evidence",
+    );
     const reassertMain = workflow.indexOf(
       "Reassert exact current main immediately before the protected writer",
     );
@@ -174,12 +190,16 @@ describe("protected provider mutation workflows", () => {
     expect(intentUpload).toBeGreaterThan(prepare);
     expect(artifactBinding).toBeGreaterThan(intentUpload);
     expect(stagedRecoveryDownload).toBeGreaterThan(intentUpload);
+    expect(finalZeroWriteBinding).toBeGreaterThan(stagedRecoveryDownload);
+    expect(artifactBinding).toBeGreaterThan(finalZeroWriteBinding);
     expect(stagedRecoveryBinding).toBeGreaterThan(stagedRecoveryDownload);
     expect(reassertMain).toBeGreaterThan(stagedRecoveryBinding);
+    expect(reassertMain).toBeGreaterThan(finalZeroWriteBinding);
     expect(writer).toBeGreaterThan(artifactBinding);
     expect(writer).toBeGreaterThan(reassertMain);
     expect(mutationCredential).toBeGreaterThan(artifactBinding);
     expect(mutationCredential).toBeGreaterThan(stagedRecoveryBinding);
+    expect(mutationCredential).toBeGreaterThan(finalZeroWriteBinding);
     expect(workflow.slice(0, intentUpload)).not.toContain(
       "PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN",
     );
@@ -209,6 +229,69 @@ describe("protected provider mutation workflows", () => {
       expect(stagedRecoveryBlock).toContain(exactPredicate);
     }
 
+    const finalZeroWriteBlock = workflow.slice(
+      finalZeroWriteBinding,
+      artifactBinding,
+    );
+    for (const exactPredicate of [
+      "artifact_id=10017539632",
+      "final_run_id=34118981931",
+      ".id == $artifactId",
+      ".name == $name",
+      ".size_in_bytes == 4611",
+      '.digest == "sha256:f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb"',
+      ".expired == false",
+      '.created_at == "2026-09-07T11:58:16Z"',
+      '.updated_at == "2026-09-07T11:58:16Z"',
+      '.expires_at == "2026-10-07T11:58:15Z"',
+      ".workflow_run.id == $finalRunId",
+      ".workflow_run.repository_id == 1215862300",
+      ".workflow_run.head_repository_id == 1215862300",
+      '.workflow_run.head_branch == "main"',
+      '.workflow_run.head_sha == "b41d0314c155f5f9953a7dd17c195afa9aa97b9c"',
+      "--proto '=https' --proto-redir '=https' --max-redirs 3",
+      "/actions/artifacts/$artifact_id/zip",
+      'test "$(sha256sum "$archive" | awk \'{print $1}\')" = f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb',
+      'mapfile -t entries < <(unzip -Z1 "$archive")',
+      'test "${#entries[@]}" = "${#expected[@]}"',
+      'test "${entries[$index]}" = "${expected[$index]}"',
+      '[[ "${entries[$index]}" != /* ]]',
+      "[[ \"${entries[$index]}\" != *'..'* ]]",
+      '[[ "${entries[$index]}" != *\\\\* ]]',
+      'unzip -qq "$archive" -d "$root"',
+      "pintpath-production-postgres-source-lock-evidence/dispatch.json",
+      "pintpath-production-postgres-source-lock-evidence/reconcile-receipt.json",
+      "pintpath-production-postgres-source-lock-evidence/reconcile-terminal.json",
+      "pintpath-production-postgres-source-lock-evidence/reviewed-authority.json",
+      "pintpath-production-postgres-source-lock-intent/source-lock-intent.json",
+      'test -z "$(find "$root" -type l -print -quit)"',
+      'test -z "$(find "$root" ! -type d ! -type f -print -quit)"',
+      'test -z "$(find "$root" -type f -links +1 -print -quit)"',
+      'test "$(find "$root" -type f | wc -l | tr -d \' \')" = 5',
+      'test "$(stat -c %s "$dispatch")" = 339',
+      'test "$(stat -c %s "$receipt")" = 1669',
+      'test "$(stat -c %s "$terminal")" = 1823',
+      'test "$(stat -c %s "$authority")" = 2214',
+      'test "$(stat -c %s "$intent")" = 1893',
+      'test "$dispatch_sha256" = 3ceb5955cd12f1f1474d256637a0dfccd261f9d19867a70c436fc962cfe7b93e',
+      'test "$authority_sha256" = 13f7a2aebf6af92c47022174bc01a7c36cd1b391feabc84e745326686ad72a6d',
+      'test "$terminal_sha256" = 3bb0746e5a6bade5c56ff8a4841b0b2406f25db1a3009f829965f3c867e60392',
+      'test "$receipt_sha256" = 2f5d8d8f207233144fb305ab27d946e6d9e0a29d051d66d86748501bc402020f',
+      'test "$intent_sha256" = 61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c',
+      'cmp -s "$intent" "$RUNNER_TEMP/pintpath-production-postgres-source-lock-intent/source-lock-intent.json"',
+      ".receipt.attempts == {dismiss:0,stage:0,commit:0}",
+      ".receipt.totalMutationCalls == 0",
+      ".attempts == {dismiss:0,stage:0,commit:0}",
+      ".totalMutationCalls == 0",
+      "jq -S '.receipt' \"$terminal\"",
+      ".terminalSha256 = null | .checks.terminalEvidenceExact = false | .checks.receiptEvidenceExact = false",
+      'cmp -s "$RUNNER_TEMP/pintpath-final-zero-write-inner.json" "$RUNNER_TEMP/pintpath-final-zero-write-outer.json"',
+      "printf 'evidence_root=%s\\n' \"$root\"",
+      "printf 'evidence_exact=true\\n'",
+    ]) {
+      expect(finalZeroWriteBlock).toContain(exactPredicate);
+    }
+
     const writerBlock = workflow.slice(
       writer,
       workflow.indexOf(
@@ -223,6 +306,16 @@ describe("protected provider mutation workflows", () => {
       "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_TERMINAL_SHA256: ${{ steps.staged_recovery_binding.outputs.terminal_sha256 }}",
       "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_RECEIPT_SHA256: ${{ steps.staged_recovery_binding.outputs.receipt_sha256 }}",
       "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT: ${{ steps.staged_recovery_binding.outputs.evidence_exact }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_ID: ${{ steps.final_zero_write_binding.outputs.artifact_id }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_DIGEST: ${{ steps.final_zero_write_binding.outputs.artifact_digest }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_SIZE: ${{ steps.final_zero_write_binding.outputs.artifact_size }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_DISPATCH_SHA256: ${{ steps.final_zero_write_binding.outputs.dispatch_sha256 }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_AUTHORITY_SHA256: ${{ steps.final_zero_write_binding.outputs.authority_sha256 }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_TERMINAL_SHA256: ${{ steps.final_zero_write_binding.outputs.terminal_sha256 }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_RECEIPT_SHA256: ${{ steps.final_zero_write_binding.outputs.receipt_sha256 }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_INTENT_SHA256: ${{ steps.final_zero_write_binding.outputs.intent_sha256 }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_ROOT: ${{ steps.final_zero_write_binding.outputs.evidence_root }}",
+      "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_EXACT: ${{ steps.final_zero_write_binding.outputs.evidence_exact }}",
     ]) {
       expect(writerBlock).toContain(outputBinding);
     }
@@ -267,9 +360,13 @@ describe("protected provider mutation workflows", () => {
         desired: { schedule: null, tagMode: null, type: "disabled" },
       },
       githubAuthorityContract: {
-        reconcileCrossCandidateMaximumIntermediateCandidates: 3,
+        reconcileCrossCandidateMaximumIntermediateCandidates: 4,
         reconcilePinnedIncidentGraceHours: 168,
         reconcilePinnedPostStageBridgeRequired: true,
+        reconcilePinnedFinalZeroWriteBridgeRequired: true,
+        reconcilePinnedFinalZeroWriteArtifactRequired: true,
+        reconcilePinnedFinalZeroWriteRunMayHaveWrittenDispositionRequired: true,
+        reconcilePinnedFinalZeroWriteRunMustHaveZeroMutationCalls: true,
       },
       crossCandidateRecoveryIncident: {
         priorCandidateSha:
@@ -290,6 +387,40 @@ describe("protected provider mutation workflows", () => {
           "7b0968d8986ed3ae9af68fc94804a7fa24cbd0f9",
         postStageBridgePullRequestNumber: 85,
         postStageBridgeSkippedWriterRunId: "34113262642",
+        finalZeroWriteBridgeCandidateSha:
+          "b41d0314c155f5f9953a7dd17c195afa9aa97b9c",
+        finalZeroWriteBridgeReviewedHeadSha:
+          "dc048e8783134b529d58dea302fbfaec067d3216",
+        finalZeroWriteBridgeTreeSha: "5fa5599dedbc32867c0c3eb14f200afc2a993283",
+        finalZeroWriteBridgePullRequestNumber: 87,
+        finalZeroWriteRunId: "34118981931",
+        finalZeroWriteArtifactId: "10017539632",
+        finalZeroWriteArtifactDigest:
+          "sha256:f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb",
+        finalZeroWriteArtifactSize: "4611",
+        finalZeroWriteDispatchSha256:
+          "3ceb5955cd12f1f1474d256637a0dfccd261f9d19867a70c436fc962cfe7b93e",
+        finalZeroWriteAuthoritySha256:
+          "13f7a2aebf6af92c47022174bc01a7c36cd1b391feabc84e745326686ad72a6d",
+        finalZeroWriteTerminalSha256:
+          "3bb0746e5a6bade5c56ff8a4841b0b2406f25db1a3009f829965f3c867e60392",
+        finalZeroWriteReceiptSha256:
+          "2f5d8d8f207233144fb305ab27d946e6d9e0a29d051d66d86748501bc402020f",
+        finalZeroWriteIntentSha256:
+          "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+        sparseStagedPatchSha256:
+          "09400188004f81e97884ddc64134f3f18e18aa9d7981be7a6ee9f14151e6087c",
+      },
+      phases: {
+        reconcile: {
+          crossCandidateSparseProviderNormalizationMustBeExact: true,
+          crossCandidateFinalZeroWriteEvidenceRequired: true,
+        },
+      },
+      evidence: {
+        crossCandidateFinalZeroWriteArtifactRequired: true,
+        crossCandidateFinalZeroWriteArchiveAndLeafHashesRequired: true,
+        crossCandidateFinalZeroWriteExecutorRevalidationRequired: true,
       },
       mutationBoundary: {
         policySha256: boundaryPolicySha,
@@ -310,6 +441,36 @@ describe("protected provider mutation workflows", () => {
         allOtherStates: "FAIL_CLOSED_NO_WRITE",
       },
     });
+    expect(
+      (policy.mutationPlan as Record<string, unknown>)
+        .pinnedSparseStagedRecoveryPatch,
+    ).toEqual({
+      services: {
+        "4a2334a1-71e7-4745-970a-2cd95da10169": {
+          source: {
+            image:
+              "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+            autoUpdates: { schedule: null, tagMode: null },
+          },
+        },
+      },
+    });
+    expect(executor).toContain("function pinnedSparseStagedRecoveryPatch()");
+    expect(executor).toContain(
+      "sha256(sparse) === CROSS_CANDIDATE_RECOVERY.sparseStagedPatchSha256",
+    );
+    expect(executor).toContain("dismissedPinnedStagedRecoveryExact(current)");
+    const committedHistory = executor.slice(
+      executor.indexOf("function committedHistoryExact("),
+      executor.indexOf(
+        "\nfunction ",
+        executor.indexOf("function committedHistoryExact(") + 1,
+      ),
+    );
+    expect(committedHistory).toContain(
+      "stagedPatchExact(expectedStagedPatch) ||\n          pinnedStagedRecoveryPatchExact(expectedStagedPatch)",
+    );
+    expect(committedHistory).toContain("? pinnedSparseStagedRecoveryPatch()");
     expect(executor).toContain(policySha);
     expect(executor).toContain(boundaryPolicySha);
   });
