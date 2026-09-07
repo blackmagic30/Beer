@@ -77,6 +77,26 @@ export const PRODUCTION_POSTGRES_SOURCE_LOCK_ENVIRONMENT_BINDINGS = {
     "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_RECEIPT_SHA256",
   stagedRecoveryEvidenceExact:
     "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT",
+  finalZeroWriteArtifactId:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_ID",
+  finalZeroWriteArtifactDigest:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_DIGEST",
+  finalZeroWriteArtifactSize:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_SIZE",
+  finalZeroWriteDispatchSha256:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_DISPATCH_SHA256",
+  finalZeroWriteAuthoritySha256:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_AUTHORITY_SHA256",
+  finalZeroWriteTerminalSha256:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_TERMINAL_SHA256",
+  finalZeroWriteReceiptSha256:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_RECEIPT_SHA256",
+  finalZeroWriteIntentSha256:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_INTENT_SHA256",
+  finalZeroWriteEvidenceRoot:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_ROOT",
+  finalZeroWriteEvidenceExact:
+    "PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_EXACT",
 } as const;
 
 const POLICY_PATH =
@@ -87,7 +107,7 @@ const BOUNDARY_POLICY_PATH =
 // These are intentionally explicit review pins. Update both only in the same reviewed
 // candidate that updates the corresponding JSON policies.
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256 =
-  "2072c6662c854cc0cbb8f182a529798891bdfc2d635642a92029869c27d52247";
+  "00d79dac364e80ff72b1bc6bad5acbaee23aea6e9472e7ac442b2dd66da4adae";
 export const PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256 =
   "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079";
 
@@ -197,6 +217,37 @@ const CROSS_CANDIDATE_RECOVERY = {
   postStageBridgeSkippedWriterRunStartedAt: "2026-09-07T10:47:19Z",
   postStageBridgeSkippedWriterRunCompletedAt: "2026-09-07T10:51:22Z",
   postStageBridgeSkippedWriterRunConclusion: "failure",
+  finalZeroWriteBridgeCandidateSha: "b41d0314c155f5f9953a7dd17c195afa9aa97b9c",
+  finalZeroWriteBridgeReviewedHeadSha:
+    "dc048e8783134b529d58dea302fbfaec067d3216",
+  finalZeroWriteBridgeTreeSha: "5fa5599dedbc32867c0c3eb14f200afc2a993283",
+  finalZeroWriteBridgePullRequestNumber: 87,
+  finalZeroWriteBridgeMergedAt: "2026-09-07T11:53:25Z",
+  finalZeroWriteRunId: "34118981931",
+  finalZeroWriteRunCreatedAt: "2026-09-07T11:54:00Z",
+  finalZeroWriteRunStartedAt: "2026-09-07T11:54:00Z",
+  finalZeroWriteRunCompletedAt: "2026-09-07T11:58:19.000Z",
+  finalZeroWriteRunConclusion: "failure",
+  finalZeroWriteSettlementSeconds: 60,
+  finalZeroWriteArtifactId: "10017539632",
+  finalZeroWriteArtifactName:
+    "pintpath-production-postgres-source-lock-reconcile-b41d0314c155f5f9953a7dd17c195afa9aa97b9c-34118981931",
+  finalZeroWriteArtifactDigest:
+    "sha256:f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb",
+  finalZeroWriteArtifactSize: "4611",
+  finalZeroWriteArtifactCreatedAt: "2026-09-07T11:58:16Z",
+  finalZeroWriteDispatchSha256:
+    "3ceb5955cd12f1f1474d256637a0dfccd261f9d19867a70c436fc962cfe7b93e",
+  finalZeroWriteAuthoritySha256:
+    "13f7a2aebf6af92c47022174bc01a7c36cd1b391feabc84e745326686ad72a6d",
+  finalZeroWriteTerminalSha256:
+    "3bb0746e5a6bade5c56ff8a4841b0b2406f25db1a3009f829965f3c867e60392",
+  finalZeroWriteReceiptSha256:
+    "2f5d8d8f207233144fb305ab27d946e6d9e0a29d051d66d86748501bc402020f",
+  finalZeroWriteIntentSha256:
+    "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+  sparseStagedPatchSha256:
+    "09400188004f81e97884ddc64134f3f18e18aa9d7981be7a6ee9f14151e6087c",
 } as const;
 const PRODUCTION_POSTGRES_SOURCE_LOCK_RECOVERY_GRACE_HOURS = 24;
 const PRODUCTION_POSTGRES_SOURCE_LOCK_INCIDENT_RECOVERY_GRACE_HOURS = 7 * 24;
@@ -434,6 +485,8 @@ interface ReviewedAuthority {
     readonly originalRunCompletedAt: string;
     readonly stagedRecoveryRunId: string | null;
     readonly stagedRecoveryRunCompletedAt: string | null;
+    readonly finalZeroWriteRunId: string | null;
+    readonly finalZeroWriteRunCompletedAt: string | null;
   } | null;
 }
 
@@ -582,6 +635,10 @@ interface Dependencies {
   readonly writeOutput: (source: string) => void;
   readonly runBoundary: () => Promise<BoundaryObservation>;
   readonly verifyPolicy: (cwd: string) => boolean;
+  readonly verifyFinalZeroWriteEvidence: (
+    root: string,
+    parsedIntent: { readonly intent: Intent; readonly sha256: string },
+  ) => boolean;
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => Promise<void>;
 }
@@ -674,6 +731,22 @@ function providerNormalizedPatch(): Readonly<Record<string, unknown>> {
           image: IMMUTABLE_SOURCE,
           autoUpdates: {
             type: "disabled",
+            schedule: null,
+            tagMode: null,
+          },
+        },
+      },
+    },
+  };
+}
+
+function pinnedSparseStagedRecoveryPatch(): Readonly<Record<string, unknown>> {
+  return {
+    services: {
+      [SERVICE_ID]: {
+        source: {
+          image: IMMUTABLE_SOURCE,
+          autoUpdates: {
             schedule: null,
             tagMode: null,
           },
@@ -866,6 +939,9 @@ function reviewedAuthorityExact(
       "productionPostgresSourceRepinRecoveryChainCandidateShas",
       "productionPostgresSourceRepinRecoveryBridgeExact",
       "productionPostgresSourceRepinPostStageBridgeExact",
+      "productionPostgresSourceRepinFinalZeroWriteBridgeExact",
+      "productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact",
+      "provenZeroWriteProductionPostgresSourceRepinRunId",
       "exactPriorProductionPostgresSourceRepinCandidateRunBound",
       "secondProductionPostgresRemediationDismissPreventedExact",
       "runnerLossRecoveryOriginalRunCompletedAt",
@@ -880,6 +956,9 @@ function reviewedAuthorityExact(
       "runnerLossRecoveryStageSettlementSeconds",
       "runnerLossRecoveryStageGraceHours",
       "runnerLossRecoveryStageWithinGraceExact",
+      "runnerLossRecoveryFinalZeroWriteRunCompletedAt",
+      "runnerLossRecoveryFinalZeroWriteSettlementSeconds",
+      "runnerLossRecoveryFinalZeroWriteWithinSettlementExact",
     ] as const;
     const expectedOperation =
       args.phase === "reconcile"
@@ -941,6 +1020,12 @@ function reviewedAuthorityExact(
       const postStageBridgeValue =
         value.productionPostgresSourceRepinPostStageBridgeExact;
       const postStageBridgeExact = postStageBridgeValue === true;
+      const finalZeroWriteBridgeValue =
+        value.productionPostgresSourceRepinFinalZeroWriteBridgeExact;
+      const finalZeroWriteArtifactValue =
+        value.productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact;
+      const finalZeroWriteRunId =
+        value.provenZeroWriteProductionPostgresSourceRepinRunId;
       const stagedRecoveryRunExact =
         value.productionPostgresSourceRepinStagedRecoveryRunExact;
       const stagedRecoveryArtifactMetadataExact =
@@ -955,6 +1040,9 @@ function reviewedAuthorityExact(
       );
       const stagedRecoveryRunCompletedAt = crossCandidateExact
         ? parseTimestamp(value.runnerLossRecoveryStageRunCompletedAt)
+        : null;
+      const finalZeroWriteRunCompletedAt = crossCandidateExact
+        ? parseTimestamp(value.runnerLossRecoveryFinalZeroWriteRunCompletedAt)
         : null;
       if (
         typeof priorRunId !== "string" ||
@@ -971,23 +1059,25 @@ function reviewedAuthorityExact(
               intentCandidateSha,
               CROSS_CANDIDATE_RECOVERY.recoveryBridgeCandidateSha,
               CROSS_CANDIDATE_RECOVERY.stagedRecoveryCandidateSha,
-              ...(postStageBridgeExact
-                ? [CROSS_CANDIDATE_RECOVERY.postStageBridgeCandidateSha]
-                : []),
+              CROSS_CANDIDATE_RECOVERY.postStageBridgeCandidateSha,
+              CROSS_CANDIDATE_RECOVERY.finalZeroWriteBridgeCandidateSha,
               args.candidateSha,
             ]
             : [args.candidateSha],
         ) ||
         recoveryBridgeExact !== crossCandidateExact ||
         typeof postStageBridgeValue !== "boolean" ||
+        postStageBridgeExact !== crossCandidateExact ||
+        typeof finalZeroWriteBridgeValue !== "boolean" ||
+        finalZeroWriteBridgeValue !== crossCandidateExact ||
+        typeof finalZeroWriteArtifactValue !== "boolean" ||
+        finalZeroWriteArtifactValue !== crossCandidateExact ||
         value.safePriorSkippedWriteRunIds.includes(
           CROSS_CANDIDATE_RECOVERY.recoveryBridgeSkippedWriterRunId,
         ) !== crossCandidateExact ||
-        (crossCandidateExact
-          ? value.safePriorSkippedWriteRunIds.includes(
-              CROSS_CANDIDATE_RECOVERY.postStageBridgeSkippedWriterRunId,
-            ) !== postStageBridgeExact
-          : postStageBridgeExact !== false) ||
+        value.safePriorSkippedWriteRunIds.includes(
+          CROSS_CANDIDATE_RECOVERY.postStageBridgeSkippedWriterRunId,
+        ) !== crossCandidateExact ||
         priorRunId === env.GITHUB_RUN_ID ||
         value.safePriorSkippedWriteRunIds.includes(priorRunId) ||
         value.exactPriorProductionPostgresSourceRepinCandidateRunBound !==
@@ -1012,7 +1102,14 @@ function reviewedAuthorityExact(
               CROSS_CANDIDATE_RECOVERY.stagedRecoverySettlementSeconds ||
             value.runnerLossRecoveryStageGraceHours !==
               CROSS_CANDIDATE_RECOVERY.stagedRecoveryGraceHours ||
-            value.runnerLossRecoveryStageWithinGraceExact !== true
+            value.runnerLossRecoveryStageWithinGraceExact !== true ||
+            finalZeroWriteRunId !==
+              CROSS_CANDIDATE_RECOVERY.finalZeroWriteRunId ||
+            finalZeroWriteRunCompletedAt !==
+              CROSS_CANDIDATE_RECOVERY.finalZeroWriteRunCompletedAt ||
+            value.runnerLossRecoveryFinalZeroWriteSettlementSeconds !==
+              CROSS_CANDIDATE_RECOVERY.finalZeroWriteSettlementSeconds ||
+            value.runnerLossRecoveryFinalZeroWriteWithinSettlementExact !== true
           : stagedRecoveryRunId !== null ||
             value.runnerLossRecoveryStageRunCompletedAt !== null ||
             value
@@ -1020,7 +1117,12 @@ function reviewedAuthorityExact(
               true ||
             value.runnerLossRecoveryStageSettlementSeconds !== null ||
             value.runnerLossRecoveryStageGraceHours !== null ||
-            value.runnerLossRecoveryStageWithinGraceExact !== true)
+            value.runnerLossRecoveryStageWithinGraceExact !== true ||
+            finalZeroWriteRunId !== null ||
+            value.runnerLossRecoveryFinalZeroWriteRunCompletedAt !== null ||
+            value.runnerLossRecoveryFinalZeroWriteSettlementSeconds !== null ||
+            value.runnerLossRecoveryFinalZeroWriteWithinSettlementExact !==
+              false)
       )
         return null;
       recovery = {
@@ -1032,6 +1134,10 @@ function reviewedAuthorityExact(
           ? String(stagedRecoveryRunId)
           : null,
         stagedRecoveryRunCompletedAt,
+        finalZeroWriteRunId: crossCandidateExact
+          ? String(finalZeroWriteRunId)
+          : null,
+        finalZeroWriteRunCompletedAt,
       };
     }
     return {
@@ -1205,6 +1311,16 @@ function crossCandidateIncidentBindingExact(
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_TERMINAL_SHA256,
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_RECEIPT_SHA256,
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_ID,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_DIGEST,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_SIZE,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_DISPATCH_SHA256,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_AUTHORITY_SHA256,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_TERMINAL_SHA256,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_RECEIPT_SHA256,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_INTENT_SHA256,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_ROOT,
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_EXACT,
   ];
   if (!crossCandidate) {
     return incidentValues.every((value) => value === undefined || value === "");
@@ -1250,8 +1366,332 @@ function crossCandidateIncidentBindingExact(
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_RECEIPT_SHA256 ===
       CROSS_CANDIDATE_RECOVERY.stagedRecoveryReceiptSha256 &&
     env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT ===
+      "true" &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_ID ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteArtifactId &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_DIGEST ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteArtifactDigest &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_SIZE ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteArtifactSize &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_DISPATCH_SHA256 ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteDispatchSha256 &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_AUTHORITY_SHA256 ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteAuthoritySha256 &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_TERMINAL_SHA256 ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteTerminalSha256 &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_RECEIPT_SHA256 ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteReceiptSha256 &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_INTENT_SHA256 ===
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteIntentSha256 &&
+    typeof env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_ROOT ===
+      "string" &&
+    path.isAbsolute(
+      env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_ROOT,
+    ) &&
+    env.PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_EXACT ===
       "true"
   );
+}
+
+const FINAL_ZERO_WRITE_CHECK_KEYS = [
+  "policyExact",
+  "authorityExact",
+  "credentialsExact",
+  "tokenScopesExact",
+  "artifactBindingExact",
+  "priorRunGraceExact",
+  "intentExact",
+  "durableIntentExact",
+  "baselineExact",
+  "boundaryPreflightExact",
+  "dismissAttemptedAtMostOnce",
+  "dismissAcknowledgementExact",
+  "dismissedReadbackExact",
+  "stageAttemptedAtMostOnce",
+  "stageAcknowledgementExact",
+  "stagedReadbackOneExact",
+  "stagedReadbackTwoExact",
+  "precommitRaceAbsent",
+  "commitAttemptedAtMostOnce",
+  "commitAcknowledgementExact",
+  "committedHistoryExact",
+  "desiredStateExact",
+  "runtimeContinuityExact",
+  "inventoryContinuityExact",
+  "boundaryPostflightExact",
+  "terminalEvidenceExact",
+  "receiptEvidenceExact",
+] as const;
+
+function privateDirectoryExact(directory: string): boolean {
+  try {
+    const stat = fs.lstatSync(directory);
+    return (
+      stat.isDirectory() &&
+      !stat.isSymbolicLink() &&
+      fs.realpathSync(directory) === directory &&
+      (stat.mode & 0o077) === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readPinnedEvidenceFile(
+  root: string,
+  relative: string,
+  expectedBytes: number,
+  expectedSha256: string,
+): Buffer | null {
+  const filename = path.join(root, relative);
+  try {
+    const stat = fs.lstatSync(filename);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1 ||
+      stat.size !== expectedBytes ||
+      (stat.mode & 0o077) !== 0 ||
+      fs.realpathSync(filename) !== filename ||
+      !filename.startsWith(`${root}${path.sep}`)
+    ) {
+      return null;
+    }
+    const source = readPrivateJson(filename);
+    return sha256(source) === expectedSha256 ? source : null;
+  } catch {
+    return null;
+  }
+}
+
+function finalZeroWriteReceiptExact(
+  value: unknown,
+  terminalSha256: string | null,
+  evidenceDurable: boolean,
+): value is Record<string, unknown> {
+  if (
+    !exactKeys(value, [
+      "schemaVersion",
+      "operation",
+      "phase",
+      "candidateSha",
+      "outcome",
+      "intentSha256",
+      "patchId",
+      "attempts",
+      "totalMutationCalls",
+      "retryAllowed",
+      "deploymentAllowed",
+      "terminalSha256",
+      "checks",
+      "secretMaterialIncluded",
+      "providerCredentialsIncluded",
+      "rawProviderMetadataIncluded",
+    ]) ||
+    value.schemaVersion !== PROTECTED_PRODUCTION_POSTGRES_SOURCE_REPIN_SCHEMA ||
+    value.operation !== "production-postgres-source-repin" ||
+    value.phase !== "reconcile" ||
+    value.candidateSha !==
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteBridgeCandidateSha ||
+    value.outcome !== "failed_before_write" ||
+    value.intentSha256 !== CROSS_CANDIDATE_RECOVERY.intentSha256 ||
+    value.patchId !== null ||
+    !exactKeys(value.attempts, ["dismiss", "stage", "commit"]) ||
+    value.attempts.dismiss !== 0 ||
+    value.attempts.stage !== 0 ||
+    value.attempts.commit !== 0 ||
+    value.totalMutationCalls !== 0 ||
+    value.retryAllowed !== false ||
+    value.deploymentAllowed !== false ||
+    value.terminalSha256 !== terminalSha256 ||
+    !exactKeys(value.checks, FINAL_ZERO_WRITE_CHECK_KEYS) ||
+    value.checks.policyExact !== true ||
+    value.checks.authorityExact !== true ||
+    value.checks.credentialsExact !== true ||
+    value.checks.tokenScopesExact !== true ||
+    value.checks.artifactBindingExact !== true ||
+    value.checks.priorRunGraceExact !== true ||
+    value.checks.intentExact !== true ||
+    value.checks.durableIntentExact !== false ||
+    value.checks.baselineExact !== false ||
+    value.checks.boundaryPreflightExact !== false ||
+    value.checks.dismissAttemptedAtMostOnce !== true ||
+    value.checks.stageAttemptedAtMostOnce !== true ||
+    value.checks.commitAttemptedAtMostOnce !== true ||
+    value.checks.terminalEvidenceExact !== evidenceDurable ||
+    value.checks.receiptEvidenceExact !== evidenceDurable ||
+    FINAL_ZERO_WRITE_CHECK_KEYS.filter(
+      (name) =>
+        ![
+          "policyExact",
+          "authorityExact",
+          "credentialsExact",
+          "tokenScopesExact",
+          "artifactBindingExact",
+          "priorRunGraceExact",
+          "intentExact",
+          "dismissAttemptedAtMostOnce",
+          "stageAttemptedAtMostOnce",
+          "commitAttemptedAtMostOnce",
+          "terminalEvidenceExact",
+          "receiptEvidenceExact",
+        ].includes(name),
+    ).some(
+      (name) => (value.checks as Record<string, unknown>)[name] !== false,
+    ) ||
+    value.secretMaterialIncluded !== false ||
+    value.providerCredentialsIncluded !== false ||
+    value.rawProviderMetadataIncluded !== false
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function finalZeroWriteEvidenceExact(
+  root: string,
+  parsedIntent: { readonly intent: Intent; readonly sha256: string },
+): boolean {
+  const evidenceRoot = path.join(
+    root,
+    "pintpath-production-postgres-source-lock-evidence",
+  );
+  const intentRoot = path.join(
+    root,
+    "pintpath-production-postgres-source-lock-intent",
+  );
+  if (
+    !path.isAbsolute(root) ||
+    !privateDirectoryExact(root) ||
+    !privateDirectoryExact(evidenceRoot) ||
+    !privateDirectoryExact(intentRoot)
+  ) {
+    return false;
+  }
+  try {
+    if (
+      !stableExact(fs.readdirSync(root).sort(), [
+        "pintpath-production-postgres-source-lock-evidence",
+        "pintpath-production-postgres-source-lock-intent",
+      ]) ||
+      !stableExact(fs.readdirSync(evidenceRoot).sort(), [
+        "dispatch.json",
+        "reconcile-receipt.json",
+        "reconcile-terminal.json",
+        "reviewed-authority.json",
+      ]) ||
+      !stableExact(fs.readdirSync(intentRoot).sort(), [
+        "source-lock-intent.json",
+      ])
+    ) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  const dispatchSource = readPinnedEvidenceFile(
+    root,
+    "pintpath-production-postgres-source-lock-evidence/dispatch.json",
+    339,
+    CROSS_CANDIDATE_RECOVERY.finalZeroWriteDispatchSha256,
+  );
+  const authoritySource = readPinnedEvidenceFile(
+    root,
+    "pintpath-production-postgres-source-lock-evidence/reviewed-authority.json",
+    2214,
+    CROSS_CANDIDATE_RECOVERY.finalZeroWriteAuthoritySha256,
+  );
+  const terminalSource = readPinnedEvidenceFile(
+    root,
+    "pintpath-production-postgres-source-lock-evidence/reconcile-terminal.json",
+    1823,
+    CROSS_CANDIDATE_RECOVERY.finalZeroWriteTerminalSha256,
+  );
+  const receiptSource = readPinnedEvidenceFile(
+    root,
+    "pintpath-production-postgres-source-lock-evidence/reconcile-receipt.json",
+    1669,
+    CROSS_CANDIDATE_RECOVERY.finalZeroWriteReceiptSha256,
+  );
+  const intentSource = readPinnedEvidenceFile(
+    root,
+    "pintpath-production-postgres-source-lock-intent/source-lock-intent.json",
+    1893,
+    CROSS_CANDIDATE_RECOVERY.finalZeroWriteIntentSha256,
+  );
+  if (
+    dispatchSource === null ||
+    authoritySource === null ||
+    terminalSource === null ||
+    receiptSource === null ||
+    intentSource === null ||
+    parsedIntent.sha256 !==
+      CROSS_CANDIDATE_RECOVERY.finalZeroWriteIntentSha256 ||
+    !intentSource.equals(Buffer.from(canonical(parsedIntent.intent)))
+  ) {
+    return false;
+  }
+  try {
+    const dispatch = JSON.parse(dispatchSource.toString("utf8")) as unknown;
+    const authority = JSON.parse(authoritySource.toString("utf8")) as unknown;
+    const terminal = JSON.parse(terminalSource.toString("utf8")) as unknown;
+    const durableReceipt = JSON.parse(
+      receiptSource.toString("utf8"),
+    ) as unknown;
+    if (
+      !stableExact(dispatch, {
+        schemaVersion: "pintpath-production-postgres-source-lock-dispatch/v2",
+        candidateSha: CROSS_CANDIDATE_RECOVERY.finalZeroWriteBridgeCandidateSha,
+        operationMode: "reconcile",
+        priorCandidateSha: CROSS_CANDIDATE_RECOVERY.priorCandidateSha,
+        priorRunId: CROSS_CANDIDATE_RECOVERY.priorRunId,
+        workflowRunId: CROSS_CANDIDATE_RECOVERY.finalZeroWriteRunId,
+        secretMaterialIncluded: false,
+      }) ||
+      !record(authority) ||
+      authority.candidateSha !==
+        CROSS_CANDIDATE_RECOVERY.finalZeroWriteBridgeCandidateSha ||
+      authority.reviewedPrHeadSha !==
+        CROSS_CANDIDATE_RECOVERY.finalZeroWriteBridgeReviewedHeadSha ||
+      authority.reviewedPullRequestNumber !==
+        CROSS_CANDIDATE_RECOVERY.finalZeroWriteBridgePullRequestNumber ||
+      authority.workflowRunId !==
+        CROSS_CANDIDATE_RECOVERY.finalZeroWriteRunId ||
+      authority.workflowRunAttempt !== 1 ||
+      authority.reviewedAuthorityExact !== true ||
+      authority.freshDispatchWriteGuardExact !== true ||
+      !exactKeys(terminal, ["schemaVersion", "phase", "receipt"]) ||
+      terminal.schemaVersion !==
+        "pintpath-production-postgres-source-lock-terminal/v2" ||
+      terminal.phase !== "reconcile" ||
+      !finalZeroWriteReceiptExact(terminal.receipt, null, false) ||
+      !finalZeroWriteReceiptExact(
+        durableReceipt,
+        CROSS_CANDIDATE_RECOVERY.finalZeroWriteTerminalSha256,
+        true,
+      )
+    ) {
+      return false;
+    }
+    const normalized = {
+      ...durableReceipt,
+      terminalSha256: null,
+      checks: {
+        ...(durableReceipt.checks as Record<string, unknown>),
+        terminalEvidenceExact: false,
+        receiptEvidenceExact: false,
+      },
+    };
+    return stableExact(terminal.receipt, normalized);
+  } catch {
+    return false;
+  } finally {
+    dispatchSource.fill(0);
+    authoritySource.fill(0);
+    terminalSource.fill(0);
+    receiptSource.fill(0);
+    intentSource.fill(0);
+  }
 }
 
 async function readBounded(response: Response): Promise<string> {
@@ -1767,7 +2207,7 @@ function patchEmpty(patch: ProviderPatch): boolean {
   );
 }
 
-function stagedPatchExact(patch: ProviderPatch): boolean {
+function stagedPatchMetadataExact(patch: ProviderPatch): boolean {
   return (
     UUID.test(patch.id) &&
     patch.environmentId === PRODUCTION_ENVIRONMENT_ID &&
@@ -1777,19 +2217,39 @@ function stagedPatchExact(patch: ProviderPatch): boolean {
     patch.updatedAt !== null &&
     Date.parse(patch.createdAt) <= Date.parse(patch.updatedAt) &&
     patch.appliedAt === null &&
-    patch.lastAppliedError === null &&
+    patch.lastAppliedError === null
+  );
+}
+
+function stagedPatchExact(patch: ProviderPatch): boolean {
+  return (
+    stagedPatchMetadataExact(patch) &&
     stableExact(patch.patch, providerNormalizedPatch())
   );
 }
 
 function pinnedStagedRecoveryPatchExact(patch: ProviderPatch): boolean {
+  const sparse = stable(pinnedSparseStagedRecoveryPatch());
   return (
-    stagedPatchExact(patch) &&
+    stagedPatchMetadataExact(patch) &&
+    sparse !== null &&
+    sha256(sparse) === CROSS_CANDIDATE_RECOVERY.sparseStagedPatchSha256 &&
+    stableExact(patch.patch, pinnedSparseStagedRecoveryPatch()) &&
     patch.id === CROSS_CANDIDATE_RECOVERY.stagedRecoveryPatchId &&
     patch.createdAt ===
       CROSS_CANDIDATE_RECOVERY.stagedRecoveryPatchCreatedAt &&
     patch.updatedAt ===
       CROSS_CANDIDATE_RECOVERY.stagedRecoveryPatchUpdatedAt
+  );
+}
+
+function dismissedPinnedStagedRecoveryExact(state: ProviderState): boolean {
+  return (
+    pinnedRuntimeExact(state) &&
+    state.sourceImage === MUTABLE_SOURCE &&
+    state.configuredSourceImage === MUTABLE_SOURCE &&
+    stableExact(state.autoUpdates, DISMISSED_AUTO_UPDATES) &&
+    pinnedStagedRecoveryPatchExact(state.stagedPatch)
   );
 }
 
@@ -1884,7 +2344,7 @@ function committedHistoryTransitionExact(
 ): boolean {
   const staged = before.stagedPatch;
   if (
-    !stagedPatchExact(staged) ||
+    (!stagedPatchExact(staged) && !pinnedStagedRecoveryPatchExact(staged)) ||
     committed.id !== staged.id ||
     committed.createdAt !== staged.createdAt ||
     committed.appliedAt === null ||
@@ -2026,7 +2486,8 @@ function committedHistoryExact(
       Date.parse(patch.createdAt) <= Date.parse(patch.appliedAt) &&
       Date.parse(patch.appliedAt) <= Date.parse(patch.updatedAt) &&
       (expectedStagedPatch === null ||
-        (stagedPatchExact(expectedStagedPatch) &&
+        ((stagedPatchExact(expectedStagedPatch) ||
+          pinnedStagedRecoveryPatchExact(expectedStagedPatch)) &&
           patch.id === expectedStagedPatch.id &&
           patch.createdAt === expectedStagedPatch.createdAt &&
           Date.parse(patch.appliedAt) >=
@@ -2036,7 +2497,13 @@ function committedHistoryExact(
           Date.parse(patch.appliedAt) >=
             Date.parse(expectedCommitNotBefore))) &&
       patch.lastAppliedError === null &&
-      stableExact(patch.patch, providerNormalizedPatch()),
+      stableExact(
+        patch.patch,
+        expectedStagedPatch !== null &&
+          pinnedStagedRecoveryPatchExact(expectedStagedPatch)
+          ? pinnedSparseStagedRecoveryPatch()
+          : providerNormalizedPatch(),
+      ),
   );
   return matches.length === 1 ? matches[0]! : null;
 }
@@ -2115,8 +2582,13 @@ function policyExact(cwd: string): boolean {
         reconcilePriorIntentCandidateShaRequired: true,
         reconcileSelectedPriorRunMustBeOneAmbiguousApply: true,
         reconcileCrossCandidateLinearReviewedRecoveryChainRequired: true,
-        reconcileCrossCandidateMaximumIntermediateCandidates: 3,
+        reconcileCrossCandidateMaximumIntermediateCandidates: 4,
         reconcileCrossCandidateRecoveryPinnedIncidentOnly: true,
+        reconcilePinnedPostStageBridgeRequired: true,
+        reconcilePinnedFinalZeroWriteBridgeRequired: true,
+        reconcilePinnedFinalZeroWriteArtifactRequired: true,
+        reconcilePinnedFinalZeroWriteRunMayHaveWrittenDispositionRequired: true,
+        reconcilePinnedFinalZeroWriteRunMustHaveZeroMutationCalls: true,
         reconcileSecondMayHaveWrittenRunAllowed: false,
         reconcilePinnedStageOnlySecondMayHaveWrittenRunAllowed: true,
         reconcilePinnedStageOnlyRunMustHaveZeroDismissAndCommitAttempts: true,
@@ -2164,6 +2636,8 @@ function policyExact(cwd: string): boolean {
           priorRunGraceAttestationRequired: true,
           crossCandidatePriorTerminalArtifactRequired: true,
           crossCandidateEntryMustBeExactPinnedStagedPatch: true,
+          crossCandidateSparseProviderNormalizationMustBeExact: true,
+          crossCandidateFinalZeroWriteEvidenceRequired: true,
           crossCandidateConfigEtagPreservedThroughPrecommit: true,
           crossCandidateFinalConfigEtagMustChange: true,
           additionalDismissAllowed: false,
@@ -2177,6 +2651,7 @@ function policyExact(cwd: string): boolean {
         confirmation: CONFIRMATION,
         requestedPatch: requestedPatch(),
         providerNormalizedPatch: providerNormalizedPatch(),
+        pinnedSparseStagedRecoveryPatch: pinnedSparseStagedRecoveryPatch(),
         dismissOperationName: "serviceInstanceVulnRemediationDismiss",
         dismissMaximumAttempts: 1,
         dismissAcknowledgementRequired: true,
@@ -2259,6 +2734,9 @@ function policyExact(cwd: string): boolean {
         crossCandidatePriorTerminalAndReceiptHashesRequired: true,
         crossCandidateStagedRecoveryArtifactRequired: true,
         crossCandidateStagedRecoveryTerminalAndReceiptHashesRequired: true,
+        crossCandidateFinalZeroWriteArtifactRequired: true,
+        crossCandidateFinalZeroWriteArchiveAndLeafHashesRequired: true,
+        crossCandidateFinalZeroWriteExecutorRevalidationRequired: true,
         secretMaterialAllowed: false,
         secretDerivedCommitmentsAllowed: false,
         rawProviderMetadataAllowed: false,
@@ -2638,9 +3116,9 @@ async function stageAndCommit(
     const retryableStale =
       safePreStageState !== null && stableExact(state, safePreStageState);
     const stateExact =
-      dismissedStagedExact(state) &&
-      (!pinnedStagedRecoveryRequired ||
-        pinnedStagedRecoveryPatchExact(state.stagedPatch)) &&
+      (pinnedStagedRecoveryRequired
+        ? dismissedPinnedStagedRecoveryExact(state)
+        : dismissedStagedExact(state)) &&
       (requiredConfigEtag === null || state.configEtag === requiredConfigEtag) &&
       runtimeContinuitySha256(state) === baselineRuntimeSha256 &&
       (safePreStageState === null ||
@@ -2683,10 +3161,11 @@ async function stageAndCommit(
       }
 
       const patchExact =
-        stagedPatchReadbackExact(patchReadback) &&
-        (!pinnedStagedRecoveryRequired ||
-          (pinnedStagedRecoveryPatchExact(patchReadback.active) &&
-            pinnedStagedRecoveryPatchExact(patchReadback.selected)));
+        stableExact(patchReadback.active, patchReadback.selected) &&
+        (pinnedStagedRecoveryRequired
+          ? pinnedStagedRecoveryPatchExact(patchReadback.active) &&
+            pinnedStagedRecoveryPatchExact(patchReadback.selected)
+          : stagedPatchReadbackExact(patchReadback));
       if (!patchExact) throw new Error("stage_readback_invalid");
 
       const boundaryExact = boundaryFailsOnly(boundary, [
@@ -2699,6 +3178,7 @@ async function stageAndCommit(
         boundary,
         SOURCE_LOCK_ALLOWED_FALSE_BOUNDARY_CHECKS,
       );
+      stateChecks.boundaryPreflightExact = boundaryExact;
       if (!boundaryExact && !boundaryStillPreStage) {
         throw new Error("boundary_invalid");
       }
@@ -2882,6 +3362,7 @@ export async function runProtectedProductionPostgresSourceRepin(
     writeOutput: (source) => process.stdout.write(source),
     runBoundary: () => defaultBoundary(env, fetchImpl),
     verifyPolicy: policyExact,
+    verifyFinalZeroWriteEvidence: finalZeroWriteEvidenceExact,
     now: Date.now,
     sleep: (milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -2979,6 +3460,20 @@ export async function runProtectedProductionPostgresSourceRepin(
     stateChecks.intentExact = parsedIntent !== null;
     if (parsedIntent === null) throw new Error("intent_invalid");
     intentSha256 = parsedIntent.sha256;
+    const crossCandidateRecovery =
+      args.phase === "reconcile" &&
+      args.priorCandidateSha !== null &&
+      args.priorCandidateSha !== args.candidateSha;
+    const finalZeroWriteEvidenceRoot =
+      dependencies.env
+        .PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_ROOT ??
+      "";
+    const finalZeroWriteEvidenceBound =
+      !crossCandidateRecovery ||
+      dependencies.verifyFinalZeroWriteEvidence(
+        finalZeroWriteEvidenceRoot,
+        parsedIntent,
+      );
     stateChecks.artifactBindingExact =
       artifactBindingExact(parsedIntent, args, dependencies.env) &&
       crossCandidateIncidentBindingExact(
@@ -2986,7 +3481,9 @@ export async function runProtectedProductionPostgresSourceRepin(
         parsedIntent,
         authority,
         dependencies.env,
-      );
+      ) &&
+      finalZeroWriteEvidenceBound;
+    stateChecks.durableIntentExact = stateChecks.artifactBindingExact;
     if (!stateChecks.artifactBindingExact) throw new Error("artifact_invalid");
     const intent = parsedIntent.intent;
 
@@ -3018,6 +3515,23 @@ export async function runProtectedProductionPostgresSourceRepin(
             CROSS_CANDIDATE_RECOVERY.stagedRecoverySettlementSeconds * 1_000 &&
           stagedRecoveryElapsedMilliseconds <=
             CROSS_CANDIDATE_RECOVERY.stagedRecoveryGraceHours * 60 * 60 * 1_000);
+      const finalZeroWriteElapsedMilliseconds =
+        recoveryAuthority?.crossCandidateExact === true &&
+          recoveryAuthority.finalZeroWriteRunCompletedAt !== null
+          ? currentTime -
+            Date.parse(recoveryAuthority.finalZeroWriteRunCompletedAt)
+          : 0;
+      const finalZeroWriteSettlementExact =
+        recoveryAuthority?.crossCandidateExact !== true ||
+        (recoveryAuthority.finalZeroWriteRunId ===
+            CROSS_CANDIDATE_RECOVERY.finalZeroWriteRunId &&
+          recoveryAuthority.finalZeroWriteRunCompletedAt ===
+            CROSS_CANDIDATE_RECOVERY.finalZeroWriteRunCompletedAt &&
+          finalZeroWriteElapsedMilliseconds >=
+            CROSS_CANDIDATE_RECOVERY.finalZeroWriteSettlementSeconds * 1_000 &&
+          recoveryElapsedMilliseconds <= recoveryGraceHours * 60 * 60 * 1_000 &&
+          stagedRecoveryElapsedMilliseconds <=
+            CROSS_CANDIDATE_RECOVERY.stagedRecoveryGraceHours * 60 * 60 * 1_000);
       const exact =
         !sameRun &&
         recoveryAuthority !== null &&
@@ -3033,7 +3547,8 @@ export async function runProtectedProductionPostgresSourceRepin(
         dependencies.env
           .PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_PRIOR_RUN_GRACE ===
           PRIOR_RUN_GRACE_ATTESTATION &&
-        stagedRecoveryGraceExact;
+        stagedRecoveryGraceExact &&
+        finalZeroWriteSettlementExact;
       stateChecks.priorRunGraceExact = exact;
       return exact;
     };
@@ -3129,7 +3644,7 @@ export async function runProtectedProductionPostgresSourceRepin(
       if (crossCandidateRecovery) {
         stateChecks.baselineExact =
           stateChecks.baselineExact &&
-          dismissedStagedExact(current) &&
+          dismissedPinnedStagedRecoveryExact(current) &&
           pinnedStagedRecoveryPatchExact(current.stagedPatch) &&
           current.configEtag ===
             CROSS_CANDIDATE_RECOVERY.dismissedConfigEtag;
@@ -3289,7 +3804,9 @@ export const protectedProductionPostgresSourceRepinInternals = {
   committedHistoryExact,
   desiredStateExact,
   dismissedBaselineExact,
+  dismissedPinnedStagedRecoveryExact,
   dismissedStagedExact,
+  finalZeroWriteEvidenceExact,
   parseArgs,
   parseBoundaryOutput,
   parseCommitAcknowledgement,
@@ -3301,6 +3818,8 @@ export const protectedProductionPostgresSourceRepinInternals = {
   parseState,
   policyExact,
   providerNormalizedPatch,
+  pinnedSparseStagedRecoveryPatch,
+  pinnedStagedRecoveryPatchExact,
   requestedPatch,
   runtimeContinuitySha256,
   stagedPatchReadbackExact,

@@ -74,6 +74,25 @@ const PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_BRIDGE = Object.freeze({
   postStageBridgeSkippedWriterRunStartedAt: "2026-09-07T10:47:19Z",
   postStageBridgeSkippedWriterRunCompletedAt: "2026-09-07T10:51:22Z",
   postStageBridgeSkippedWriterRunConclusion: "failure",
+  finalZeroWriteBridgeCandidateSha: "b41d0314c155f5f9953a7dd17c195afa9aa97b9c",
+  finalZeroWriteBridgeReviewedHeadSha:
+    "dc048e8783134b529d58dea302fbfaec067d3216",
+  finalZeroWriteBridgeTreeSha: "5fa5599dedbc32867c0c3eb14f200afc2a993283",
+  finalZeroWriteBridgePullRequestNumber: 87,
+  finalZeroWriteBridgeMergedAt: "2026-09-07T11:53:25Z",
+  finalZeroWriteRunId: "34118981931",
+  finalZeroWriteRunCreatedAt: "2026-09-07T11:54:00Z",
+  finalZeroWriteRunStartedAt: "2026-09-07T11:54:00Z",
+  finalZeroWriteRunCompletedAt: "2026-09-07T11:58:19Z",
+  finalZeroWriteRunConclusion: "failure",
+  finalZeroWriteSettlementSeconds: 60,
+  finalZeroWriteArtifactId: 10017539632,
+  finalZeroWriteArtifactName:
+    "pintpath-production-postgres-source-lock-reconcile-b41d0314c155f5f9953a7dd17c195afa9aa97b9c-34118981931",
+  finalZeroWriteArtifactDigest:
+    "sha256:f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb",
+  finalZeroWriteArtifactBytes: 4611,
+  finalZeroWriteArtifactCreatedAt: "2026-09-07T11:58:16Z",
 });
 const NONTERMINAL_RUN_STATUSES = new Set([
   "in_progress",
@@ -543,6 +562,7 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
       recoveryBridge: null,
       stagedRecovery: null,
       postStageBridge: null,
+      finalZeroWriteBridge: null,
     });
   }
   const priorPull = await verifyReviewedPullRequest(
@@ -567,8 +587,9 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     Array.isArray(currentCommit?.parents) &&
     currentCommit.parents.length === 1;
   const expected = PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_BRIDGE;
-  const usesPostStageBridge =
-    currentCommit?.parents?.[0]?.sha === expected.postStageBridgeCandidateSha;
+  const usesFinalZeroWriteBridge =
+    currentCommit?.parents?.[0]?.sha ===
+    expected.finalZeroWriteBridgeCandidateSha;
   if (priorMergedAtMs >= currentMergedAtMs || !currentCommitExact) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
@@ -578,8 +599,7 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     priorPull.reviewedPrHeadSha !== expected.priorReviewedHeadSha ||
     priorPull.treeSha !== expected.priorTreeSha ||
     priorPull.mergedAt !== expected.priorMergedAt ||
-    currentCommit.parents[0]?.sha !== expected.stagedRecoveryCandidateSha &&
-    !usesPostStageBridge
+    !usesFinalZeroWriteBridge
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
@@ -615,28 +635,38 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     expected.stagedRecoveryMergedAt,
     "production_postgres_source_repin_reconciliation_history_invalid",
   );
-  const postStageBridgePull = usesPostStageBridge
-    ? await verifyReviewedPullRequest(
-      input.fetchImpl,
-      input.token,
-      policy,
-      expected.postStageBridgeCandidateSha,
-    )
-    : null;
-  const postStageBridgeCommit = usesPostStageBridge
-    ? await githubGet(
-      input.fetchImpl,
-      input.token,
-      REPOSITORY,
-      `/git/commits/${expected.postStageBridgeCandidateSha}`,
-    )
-    : null;
-  const postStageBridgeMergedAtMs = usesPostStageBridge
-    ? parseTimestamp(
-      expected.postStageBridgeMergedAt,
-      "production_postgres_source_repin_reconciliation_history_invalid",
-    )
-    : null;
+  const postStageBridgePull = await verifyReviewedPullRequest(
+    input.fetchImpl,
+    input.token,
+    policy,
+    expected.postStageBridgeCandidateSha,
+  );
+  const postStageBridgeCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${expected.postStageBridgeCandidateSha}`,
+  );
+  const postStageBridgeMergedAtMs = parseTimestamp(
+    expected.postStageBridgeMergedAt,
+    "production_postgres_source_repin_reconciliation_history_invalid",
+  );
+  const finalZeroWriteBridgePull = await verifyReviewedPullRequest(
+    input.fetchImpl,
+    input.token,
+    policy,
+    expected.finalZeroWriteBridgeCandidateSha,
+  );
+  const finalZeroWriteBridgeCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${expected.finalZeroWriteBridgeCandidateSha}`,
+  );
+  const finalZeroWriteBridgeMergedAtMs = parseTimestamp(
+    expected.finalZeroWriteBridgeMergedAt,
+    "production_postgres_source_repin_reconciliation_history_invalid",
+  );
   if (
     bridgePull.number !== expected.pullRequestNumber ||
     bridgePull.reviewedPrHeadSha !== expected.reviewedHeadSha ||
@@ -659,23 +689,39 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     stagedRecoveryCommit.parents.length !== 1 ||
     stagedRecoveryCommit.parents[0]?.sha !== expected.candidateSha ||
     bridgeMergedAtMs >= stagedRecoveryMergedAtMs ||
-    (usesPostStageBridge
-      ? postStageBridgePull?.number !==
-          expected.postStageBridgePullRequestNumber ||
-        postStageBridgePull?.reviewedPrHeadSha !==
-          expected.postStageBridgeReviewedHeadSha ||
-        postStageBridgePull?.treeSha !== expected.postStageBridgeTreeSha ||
-        postStageBridgePull?.mergedAt !== expected.postStageBridgeMergedAt ||
-        postStageBridgeCommit?.sha !== expected.postStageBridgeCandidateSha ||
-        postStageBridgeCommit?.tree?.sha !== expected.postStageBridgeTreeSha ||
-        !Array.isArray(postStageBridgeCommit?.parents) ||
-        postStageBridgeCommit.parents.length !== 1 ||
-        postStageBridgeCommit.parents[0]?.sha !==
-          expected.stagedRecoveryCandidateSha ||
-        postStageBridgeMergedAtMs === null ||
-        stagedRecoveryMergedAtMs >= postStageBridgeMergedAtMs ||
-        postStageBridgeMergedAtMs >= currentMergedAtMs
-      : stagedRecoveryMergedAtMs >= currentMergedAtMs)
+    postStageBridgePull?.number !==
+      expected.postStageBridgePullRequestNumber ||
+    postStageBridgePull?.reviewedPrHeadSha !==
+      expected.postStageBridgeReviewedHeadSha ||
+    postStageBridgePull?.treeSha !== expected.postStageBridgeTreeSha ||
+    postStageBridgePull?.mergedAt !== expected.postStageBridgeMergedAt ||
+    postStageBridgeCommit?.sha !== expected.postStageBridgeCandidateSha ||
+    postStageBridgeCommit?.tree?.sha !== expected.postStageBridgeTreeSha ||
+    !Array.isArray(postStageBridgeCommit?.parents) ||
+    postStageBridgeCommit.parents.length !== 1 ||
+    postStageBridgeCommit.parents[0]?.sha !==
+      expected.stagedRecoveryCandidateSha ||
+    postStageBridgeMergedAtMs === null ||
+    stagedRecoveryMergedAtMs >= postStageBridgeMergedAtMs ||
+    finalZeroWriteBridgePull?.number !==
+      expected.finalZeroWriteBridgePullRequestNumber ||
+    finalZeroWriteBridgePull?.reviewedPrHeadSha !==
+      expected.finalZeroWriteBridgeReviewedHeadSha ||
+    finalZeroWriteBridgePull?.treeSha !==
+      expected.finalZeroWriteBridgeTreeSha ||
+    finalZeroWriteBridgePull?.mergedAt !==
+      expected.finalZeroWriteBridgeMergedAt ||
+    finalZeroWriteBridgeCommit?.sha !==
+      expected.finalZeroWriteBridgeCandidateSha ||
+    finalZeroWriteBridgeCommit?.tree?.sha !==
+      expected.finalZeroWriteBridgeTreeSha ||
+    !Array.isArray(finalZeroWriteBridgeCommit?.parents) ||
+    finalZeroWriteBridgeCommit.parents.length !== 1 ||
+    finalZeroWriteBridgeCommit.parents[0]?.sha !==
+      expected.postStageBridgeCandidateSha ||
+    finalZeroWriteBridgeMergedAtMs === null ||
+    postStageBridgeMergedAtMs >= finalZeroWriteBridgeMergedAtMs ||
+    finalZeroWriteBridgeMergedAtMs >= currentMergedAtMs
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
@@ -685,7 +731,8 @@ async function verifyProductionPostgresSourceRepinRecoveryCandidates(
     crossCandidate: true,
     recoveryBridge: expected,
     stagedRecovery: expected,
-    postStageBridge: usesPostStageBridge ? expected : null,
+    postStageBridge: expected,
+    finalZeroWriteBridge: expected,
   });
 }
 
@@ -933,9 +980,20 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
   input,
   currentRun,
 ) {
+  const completeCrossCandidateBridge =
+    input.recoveryBridge !== null &&
+    input.stagedRecovery !== null &&
+    input.postStageBridge !== null &&
+    input.finalZeroWriteBridge !== null;
+  const noCrossCandidateBridge =
+    input.recoveryBridge === null &&
+    input.stagedRecovery === null &&
+    input.postStageBridge === null &&
+    input.finalZeroWriteBridge === null;
   if (
-    input.crossCandidate !==
-      (input.recoveryBridge !== null && input.stagedRecovery !== null)
+    input.crossCandidate
+      ? !completeCrossCandidateBridge
+      : !noCrossCandidateBridge
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
@@ -958,6 +1016,9 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
         ...(input.postStageBridge == null
           ? []
           : [input.postStageBridge.postStageBridgeCandidateSha]),
+        ...(input.finalZeroWriteBridge == null
+          ? []
+          : [input.finalZeroWriteBridge.finalZeroWriteBridgeCandidateSha]),
       ]),
   ]);
   const currentReconcileConfiguration = operationConfiguration(
@@ -980,6 +1041,7 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
   let currentSeen = false;
   let selectedOriginal = null;
   let selectedStagedRecovery = null;
+  let selectedFinalZeroWrite = null;
   const safePriorSkippedWriteRunIds = [];
   for (const observed of history) {
     const observedCandidateSha = observed?.head_sha;
@@ -1070,6 +1132,35 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
       });
       continue;
     }
+    if (
+      input.finalZeroWriteBridge !== null &&
+      String(run.id) === input.finalZeroWriteBridge.finalZeroWriteRunId
+    ) {
+      if (
+        selectedFinalZeroWrite !== null ||
+        run.head_sha !==
+          input.finalZeroWriteBridge.finalZeroWriteBridgeCandidateSha ||
+        configuration.displayTitle !==
+          `Production Postgres source lock | reconcile | ${input.finalZeroWriteBridge.finalZeroWriteBridgeCandidateSha}` ||
+        run.created_at !==
+          input.finalZeroWriteBridge.finalZeroWriteRunCreatedAt ||
+        run.run_started_at !==
+          input.finalZeroWriteBridge.finalZeroWriteRunStartedAt ||
+        run.updated_at !==
+          input.finalZeroWriteBridge.finalZeroWriteRunCompletedAt ||
+        run.conclusion !==
+          input.finalZeroWriteBridge.finalZeroWriteRunConclusion ||
+        disposition !== "may-have-written"
+      ) {
+        fail("production_postgres_source_repin_reconciliation_history_invalid");
+      }
+      selectedFinalZeroWrite = Object.freeze({
+        run,
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+      });
+      continue;
+    }
     if (disposition !== "skipped") {
       fail("production_postgres_source_repin_reconciliation_history_invalid");
     }
@@ -1083,6 +1174,7 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     );
   if (!currentSeen || selectedOriginal === null ||
     (input.crossCandidate && selectedStagedRecovery === null) ||
+    (input.crossCandidate && selectedFinalZeroWrite === null) ||
     (input.crossCandidate &&
       selectedOriginal.updatedAt >= input.currentCandidateMergedAtMs) ||
     (selectedStagedRecovery !== null &&
@@ -1146,6 +1238,12 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
       postStageBridgeRun?.updated_at,
       "production_postgres_source_repin_reconciliation_history_invalid",
     );
+  const finalZeroWriteBridgeMergedAtMs = input.finalZeroWriteBridge == null
+    ? null
+    : parseTimestamp(
+      input.finalZeroWriteBridge.finalZeroWriteBridgeMergedAt,
+      "production_postgres_source_repin_reconciliation_history_invalid",
+    );
   if (
     input.postStageBridge != null && (
       postStageBridgeRun?.head_sha !==
@@ -1165,10 +1263,24 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
       postStageBridgeRunCompletedAtMs === null ||
       postStageBridgeRunCreatedAtMs <= postStageBridgeMergedAtMs ||
       postStageBridgeRunCompletedAtMs >= input.currentCandidateMergedAtMs ||
+      finalZeroWriteBridgeMergedAtMs === null ||
+      postStageBridgeRunCompletedAtMs >= finalZeroWriteBridgeMergedAtMs ||
       !safePriorSkippedWriteRunIds.includes(
         input.postStageBridge.postStageBridgeSkippedWriterRunId,
       )
     )
+  ) {
+    fail("production_postgres_source_repin_reconciliation_history_invalid");
+  }
+  if (
+    input.finalZeroWriteBridge !== null &&
+    (selectedFinalZeroWrite === null ||
+      finalZeroWriteBridgeMergedAtMs === null ||
+      selectedFinalZeroWrite.createdAt <= finalZeroWriteBridgeMergedAtMs ||
+      selectedFinalZeroWrite.updatedAt >= input.currentCandidateMergedAtMs ||
+      selectedFinalZeroWrite.updatedAt >= currentRun.startedAt ||
+      currentRun.startedAt - selectedFinalZeroWrite.updatedAt <
+        input.finalZeroWriteBridge.finalZeroWriteSettlementSeconds * 1_000)
   ) {
     fail("production_postgres_source_repin_reconciliation_history_invalid");
   }
@@ -1230,6 +1342,59 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
       );
     }
   }
+  if (input.finalZeroWriteBridge !== null) {
+    const artifactListing = await githubGet(
+      input.fetchImpl,
+      input.token,
+      REPOSITORY,
+      `/actions/runs/${input.finalZeroWriteBridge.finalZeroWriteRunId}/artifacts?name=${encodeURIComponent(input.finalZeroWriteBridge.finalZeroWriteArtifactName)}&per_page=100&page=1`,
+    );
+    const artifact =
+      Array.isArray(artifactListing?.artifacts) &&
+      artifactListing.artifacts.length === 1
+        ? artifactListing.artifacts[0]
+        : null;
+    const artifactCreatedAt = parseTimestamp(
+      artifact?.created_at,
+      "production_postgres_source_repin_final_zero_write_artifact_invalid",
+    );
+    const artifactUpdatedAt = parseTimestamp(
+      artifact?.updated_at,
+      "production_postgres_source_repin_final_zero_write_artifact_invalid",
+    );
+    const artifactExpiresAt = parseTimestamp(
+      artifact?.expires_at,
+      "production_postgres_source_repin_final_zero_write_artifact_invalid",
+    );
+    if (
+      selectedFinalZeroWrite === null ||
+      artifactListing?.total_count !== 1 ||
+      artifact?.id !== input.finalZeroWriteBridge.finalZeroWriteArtifactId ||
+      artifact?.name !==
+        input.finalZeroWriteBridge.finalZeroWriteArtifactName ||
+      artifact?.size_in_bytes !==
+        input.finalZeroWriteBridge.finalZeroWriteArtifactBytes ||
+      artifact?.expired !== false ||
+      artifact?.digest !==
+        input.finalZeroWriteBridge.finalZeroWriteArtifactDigest ||
+      artifact?.created_at !==
+        input.finalZeroWriteBridge.finalZeroWriteArtifactCreatedAt ||
+      artifact?.updated_at !==
+        input.finalZeroWriteBridge.finalZeroWriteArtifactCreatedAt ||
+      artifact?.workflow_run?.id !==
+        Number(input.finalZeroWriteBridge.finalZeroWriteRunId) ||
+      artifact?.workflow_run?.head_branch !== "main" ||
+      artifact?.workflow_run?.head_sha !==
+        input.finalZeroWriteBridge.finalZeroWriteBridgeCandidateSha ||
+      artifactCreatedAt !== artifactUpdatedAt ||
+      artifactUpdatedAt > selectedFinalZeroWrite.updatedAt ||
+      artifactExpiresAt <= currentRun.startedAt
+    ) {
+      fail(
+        "production_postgres_source_repin_final_zero_write_artifact_invalid",
+      );
+    }
+  }
   return Object.freeze({
     safePriorSkippedWriteRunIds: safePriorSkippedWriteRunIds.sort(
       (left, right) => Number(left) - Number(right),
@@ -1253,12 +1418,23 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
           ...(input.postStageBridge == null
             ? []
             : [input.postStageBridge.postStageBridgeCandidateSha]),
+          ...(input.finalZeroWriteBridge == null
+            ? []
+            : [input.finalZeroWriteBridge.finalZeroWriteBridgeCandidateSha]),
           input.candidateSha,
         ],
     productionPostgresSourceRepinRecoveryBridgeExact:
       input.recoveryBridge !== null,
     productionPostgresSourceRepinPostStageBridgeExact:
       input.postStageBridge != null,
+    productionPostgresSourceRepinFinalZeroWriteBridgeExact:
+      input.finalZeroWriteBridge !== null,
+    productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact:
+      input.finalZeroWriteBridge !== null,
+    provenZeroWriteProductionPostgresSourceRepinRunId:
+      selectedFinalZeroWrite === null
+        ? null
+        : String(selectedFinalZeroWrite.run.id),
     exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
     secondProductionPostgresRemediationDismissPreventedExact: true,
     runnerLossRecoveryOriginalRunCompletedAt: new Date(
@@ -1286,6 +1462,14 @@ async function verifyProductionPostgresSourceRepinReconciliationHistory(
     runnerLossRecoveryStageGraceHours:
       input.stagedRecovery?.stagedRecoveryGraceHours ?? null,
     runnerLossRecoveryStageWithinGraceExact: true,
+    runnerLossRecoveryFinalZeroWriteRunCompletedAt:
+      selectedFinalZeroWrite === null
+        ? null
+        : new Date(selectedFinalZeroWrite.updatedAt).toISOString(),
+    runnerLossRecoveryFinalZeroWriteSettlementSeconds:
+      input.finalZeroWriteBridge?.finalZeroWriteSettlementSeconds ?? null,
+    runnerLossRecoveryFinalZeroWriteWithinSettlementExact:
+      input.finalZeroWriteBridge !== null,
   });
 }
 
@@ -2962,6 +3146,9 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
         productionPostgresSourceRepinRecoveryCandidateAuthority.stagedRecovery,
       postStageBridge:
         productionPostgresSourceRepinRecoveryCandidateAuthority.postStageBridge,
+      finalZeroWriteBridge:
+        productionPostgresSourceRepinRecoveryCandidateAuthority
+          .finalZeroWriteBridge,
     }, currentRun)
     : input.operation === "cold-recovery-reconcile-quiesce"
     ? await verifyColdQuiesceReconciliationHistory({
@@ -3153,6 +3340,14 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
         productionPostgresSourceRepinPostStageBridgeExact:
           operationHistory
             .productionPostgresSourceRepinPostStageBridgeExact,
+        productionPostgresSourceRepinFinalZeroWriteBridgeExact:
+          operationHistory
+            .productionPostgresSourceRepinFinalZeroWriteBridgeExact,
+        productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact:
+          operationHistory
+            .productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact,
+        provenZeroWriteProductionPostgresSourceRepinRunId:
+          operationHistory.provenZeroWriteProductionPostgresSourceRepinRunId,
         exactPriorProductionPostgresSourceRepinCandidateRunBound:
           operationHistory
             .exactPriorProductionPostgresSourceRepinCandidateRunBound,
@@ -3186,6 +3381,13 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
           operationHistory.runnerLossRecoveryStageGraceHours,
         runnerLossRecoveryStageWithinGraceExact:
           operationHistory.runnerLossRecoveryStageWithinGraceExact,
+        runnerLossRecoveryFinalZeroWriteRunCompletedAt:
+          operationHistory.runnerLossRecoveryFinalZeroWriteRunCompletedAt,
+        runnerLossRecoveryFinalZeroWriteSettlementSeconds:
+          operationHistory.runnerLossRecoveryFinalZeroWriteSettlementSeconds,
+        runnerLossRecoveryFinalZeroWriteWithinSettlementExact:
+          operationHistory
+            .runnerLossRecoveryFinalZeroWriteWithinSettlementExact,
       }
       : {}),
     ...(RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation)

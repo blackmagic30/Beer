@@ -96,8 +96,13 @@
     "reconcilePriorIntentCandidateShaRequired": true,
     "reconcileSelectedPriorRunMustBeOneAmbiguousApply": true,
     "reconcileCrossCandidateLinearReviewedRecoveryChainRequired": true,
-    "reconcileCrossCandidateMaximumIntermediateCandidates": 3,
+    "reconcileCrossCandidateMaximumIntermediateCandidates": 4,
     "reconcileCrossCandidateRecoveryPinnedIncidentOnly": true,
+    "reconcilePinnedPostStageBridgeRequired": true,
+    "reconcilePinnedFinalZeroWriteBridgeRequired": true,
+    "reconcilePinnedFinalZeroWriteArtifactRequired": true,
+    "reconcilePinnedFinalZeroWriteRunMayHaveWrittenDispositionRequired": true,
+    "reconcilePinnedFinalZeroWriteRunMustHaveZeroMutationCalls": true,
     "reconcileSecondMayHaveWrittenRunAllowed": false,
     "reconcilePinnedStageOnlySecondMayHaveWrittenRunAllowed": true,
     "reconcilePinnedStageOnlyRunMustHaveZeroDismissAndCommitAttempts": true,
@@ -144,6 +149,8 @@
       "priorRunGraceAttestationRequired": true,
       "crossCandidatePriorTerminalArtifactRequired": true,
       "crossCandidateEntryMustBeExactPinnedStagedPatch": true,
+      "crossCandidateSparseProviderNormalizationMustBeExact": true,
+      "crossCandidateFinalZeroWriteEvidenceRequired": true,
       "crossCandidateConfigEtagPreservedThroughPrecommit": true,
       "crossCandidateFinalConfigEtagMustChange": true,
       "additionalDismissAllowed": false,
@@ -213,7 +220,29 @@
     "postStageBridgeSkippedWriterRunCreatedAt": "2026-09-07T10:47:19Z",
     "postStageBridgeSkippedWriterRunStartedAt": "2026-09-07T10:47:19Z",
     "postStageBridgeSkippedWriterRunCompletedAt": "2026-09-07T10:51:22Z",
-    "postStageBridgeSkippedWriterRunConclusion": "failure"
+    "postStageBridgeSkippedWriterRunConclusion": "failure",
+    "finalZeroWriteBridgeCandidateSha": "b41d0314c155f5f9953a7dd17c195afa9aa97b9c",
+    "finalZeroWriteBridgeReviewedHeadSha": "dc048e8783134b529d58dea302fbfaec067d3216",
+    "finalZeroWriteBridgeTreeSha": "5fa5599dedbc32867c0c3eb14f200afc2a993283",
+    "finalZeroWriteBridgePullRequestNumber": 87,
+    "finalZeroWriteBridgeMergedAt": "2026-09-07T11:53:25Z",
+    "finalZeroWriteRunId": "34118981931",
+    "finalZeroWriteRunCreatedAt": "2026-09-07T11:54:00Z",
+    "finalZeroWriteRunStartedAt": "2026-09-07T11:54:00Z",
+    "finalZeroWriteRunCompletedAt": "2026-09-07T11:58:19.000Z",
+    "finalZeroWriteRunConclusion": "failure",
+    "finalZeroWriteSettlementSeconds": 60,
+    "finalZeroWriteArtifactId": "10017539632",
+    "finalZeroWriteArtifactName": "pintpath-production-postgres-source-lock-reconcile-b41d0314c155f5f9953a7dd17c195afa9aa97b9c-34118981931",
+    "finalZeroWriteArtifactDigest": "sha256:f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb",
+    "finalZeroWriteArtifactSize": "4611",
+    "finalZeroWriteArtifactCreatedAt": "2026-09-07T11:58:16Z",
+    "finalZeroWriteDispatchSha256": "3ceb5955cd12f1f1474d256637a0dfccd261f9d19867a70c436fc962cfe7b93e",
+    "finalZeroWriteAuthoritySha256": "13f7a2aebf6af92c47022174bc01a7c36cd1b391feabc84e745326686ad72a6d",
+    "finalZeroWriteTerminalSha256": "3bb0746e5a6bade5c56ff8a4841b0b2406f25db1a3009f829965f3c867e60392",
+    "finalZeroWriteReceiptSha256": "2f5d8d8f207233144fb305ab27d946e6d9e0a29d051d66d86748501bc402020f",
+    "finalZeroWriteIntentSha256": "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+    "sparseStagedPatchSha256": "09400188004f81e97884ddc64134f3f18e18aa9d7981be7a6ee9f14151e6087c"
   },
   "mutationPlan": {
     "confirmation": "LOCK_PRODUCTION_POSTGRES_SOURCE_AND_DISABLE_AUTO_UPDATES_WITHOUT_DEPLOY",
@@ -240,6 +269,19 @@
             "image": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
             "autoUpdates": {
               "type": "disabled",
+              "schedule": null,
+              "tagMode": null
+            }
+          }
+        }
+      }
+    },
+    "pinnedSparseStagedRecoveryPatch": {
+      "services": {
+        "4a2334a1-71e7-4745-970a-2cd95da10169": {
+          "source": {
+            "image": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:7383de344f558c61a16ecdcb3e6fc86f05c45c82a4e02ad77d96aa72b5ae2ba8",
+            "autoUpdates": {
               "schedule": null,
               "tagMode": null
             }
@@ -323,6 +365,9 @@
     "crossCandidatePriorTerminalAndReceiptHashesRequired": true,
     "crossCandidateStagedRecoveryArtifactRequired": true,
     "crossCandidateStagedRecoveryTerminalAndReceiptHashesRequired": true,
+    "crossCandidateFinalZeroWriteArtifactRequired": true,
+    "crossCandidateFinalZeroWriteArchiveAndLeafHashesRequired": true,
+    "crossCandidateFinalZeroWriteExecutorRevalidationRequired": true,
     "secretMaterialAllowed": false,
     "secretDerivedCommitmentsAllowed": false,
     "rawProviderMetadataAllowed": false

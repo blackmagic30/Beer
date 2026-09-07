@@ -50,6 +50,9 @@ const STAGED_RECOVERY_RUN_ID = "34025400175";
 const STAGED_RECOVERY_RUN_COMPLETED_AT = "2026-09-06T09:47:28Z";
 const POST_STAGE_BRIDGE_CANDIDATE =
   "82d149681d9716f6964a05b80d0c50adbdf7d24a";
+const FINAL_ZERO_WRITE_BRIDGE_CANDIDATE =
+  "b41d0314c155f5f9953a7dd17c195afa9aa97b9c";
+const FINAL_ZERO_WRITE_RUN_ID = "34118981931";
 const RECOVERY_BRIDGE_SKIPPED_WRITER_RUN_ID = "34000245292";
 const POST_STAGE_BRIDGE_SKIPPED_WRITER_RUN_ID = "34113262642";
 const INCIDENT_DISMISSED_ETAG =
@@ -172,7 +175,7 @@ function emptyPatch() {
   };
 }
 
-function stagedPatch() {
+function stagedPatch(pinnedSparseRecovery = false) {
   return {
     id: PATCH_ID,
     environmentId: PRODUCTION_ENVIRONMENT_ID,
@@ -182,9 +185,14 @@ function stagedPatch() {
     updatedAt: "2026-09-06T09:47:23.893Z",
     appliedAt: null,
     lastAppliedError: null,
-    patch:
-      protectedProductionPostgresSourceRepinInternals.providerNormalizedPatch(),
+    patch: pinnedSparseRecovery
+      ? protectedProductionPostgresSourceRepinInternals.pinnedSparseStagedRecoveryPatch()
+      : protectedProductionPostgresSourceRepinInternals.providerNormalizedPatch(),
   };
+}
+
+function pinnedSparseStagedPatch() {
+  return stagedPatch(true);
 }
 
 function committedPatch(runId: string, candidateSha = CANDIDATE) {
@@ -202,8 +210,9 @@ function committedPatch(runId: string, candidateSha = CANDIDATE) {
       ? "2026-09-06T09:48:30.000Z"
       : "2026-09-06T09:48:25.000Z",
     lastAppliedError: null,
-    patch:
-      protectedProductionPostgresSourceRepinInternals.providerNormalizedPatch(),
+    patch: pinnedIncident
+      ? protectedProductionPostgresSourceRepinInternals.pinnedSparseStagedRecoveryPatch()
+      : protectedProductionPostgresSourceRepinInternals.providerNormalizedPatch(),
   };
 }
 
@@ -226,12 +235,17 @@ function providerState(
     historyOverride?: unknown[];
     configEtag?: string;
     intentCandidateSha?: string;
+    pinnedSparseRecovery?: boolean;
   } = {},
 ) {
   const instanceId = options.runningInstanceId ?? RUNNING_INSTANCE_ID;
   const exactDeployment = deployment(instanceId);
   const sourceImage = kind === "desired" ? IMMUTABLE_SOURCE : MUTABLE_SOURCE;
-  const activePatch = kind === "staged" ? stagedPatch() : emptyPatch();
+  const pinnedSparseRecovery =
+    options.pinnedSparseRecovery ??
+    options.configEtag === INCIDENT_DISMISSED_ETAG;
+  const activePatch =
+    kind === "staged" ? stagedPatch(pinnedSparseRecovery) : emptyPatch();
   const history =
     options.historyOverride ??
     (kind === "desired"
@@ -242,7 +256,7 @@ function providerState(
           ),
         ]
       : kind === "staged"
-        ? [stagedPatch()]
+        ? [stagedPatch(pinnedSparseRecovery)]
         : []);
   return {
     data: {
@@ -391,6 +405,15 @@ function patchReadback() {
   return { data: { active: stagedPatch(), selected: stagedPatch() } };
 }
 
+function pinnedSparsePatchReadback() {
+  return {
+    data: {
+      active: pinnedSparseStagedPatch(),
+      selected: pinnedSparseStagedPatch(),
+    },
+  };
+}
+
 function stageAcknowledgement() {
   const { patch: _patch, ...acknowledgement } = stagedPatch();
   return { data: { environmentStageChanges: acknowledgement } };
@@ -414,6 +437,50 @@ function createEvidence(runId = RUN_ID, safePrior = [PRIOR_RUN_ID]) {
   const authorityFile = path.join(directory, "reviewed-authority.json");
   writeAuthority(authorityFile, runId, safePrior);
   return { directory, authorityFile };
+}
+
+const FINAL_ZERO_WRITE_FIXTURE_ROOT = path.join(
+  process.cwd(),
+  "test/fixtures/production-postgres-final-zero-write",
+);
+const FINAL_ZERO_WRITE_FIXTURE_DIRECTORIES = [
+  "pintpath-production-postgres-source-lock-evidence",
+  "pintpath-production-postgres-source-lock-intent",
+] as const;
+const FINAL_ZERO_WRITE_FIXTURE_FILES = [
+  "pintpath-production-postgres-source-lock-evidence/dispatch.json",
+  "pintpath-production-postgres-source-lock-evidence/reconcile-receipt.json",
+  "pintpath-production-postgres-source-lock-evidence/reconcile-terminal.json",
+  "pintpath-production-postgres-source-lock-evidence/reviewed-authority.json",
+  "pintpath-production-postgres-source-lock-intent/source-lock-intent.json",
+] as const;
+
+function createFinalZeroWriteEvidenceFixture() {
+  const parent = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-final-zero-write-")),
+  );
+  temporaryDirectories.push(parent);
+  fs.chmodSync(parent, 0o700);
+  const root = path.join(parent, "artifact");
+  fs.cpSync(FINAL_ZERO_WRITE_FIXTURE_ROOT, root, { recursive: true });
+  fs.chmodSync(root, 0o700);
+  for (const directory of FINAL_ZERO_WRITE_FIXTURE_DIRECTORIES) {
+    fs.chmodSync(path.join(root, directory), 0o700);
+  }
+  for (const file of FINAL_ZERO_WRITE_FIXTURE_FILES) {
+    fs.chmodSync(path.join(root, file), 0o600);
+  }
+  const intentSource = fs.readFileSync(
+    path.join(
+      root,
+      "pintpath-production-postgres-source-lock-intent/source-lock-intent.json",
+    ),
+  );
+  return {
+    root: fs.realpathSync(root),
+    intent: JSON.parse(intentSource.toString("utf8")),
+    sha256: sha256(intentSource),
+  };
 }
 
 function writeAuthority(filename: string, runId: string, safePrior: string[]) {
@@ -452,7 +519,7 @@ function writeReconcileAuthority(
   safePrior: string[] = [],
   originalRunCompletedAt = "2026-09-01T00:08:00.000Z",
   priorCandidateSha = CANDIDATE,
-  postStageBridgeExact = false,
+  postStageBridgeExact = priorCandidateSha !== CANDIDATE,
 ) {
   const exactSafePrior = priorCandidateSha === CANDIDATE
     ? safePrior
@@ -497,13 +564,20 @@ function writeReconcileAuthority(
               priorCandidateSha,
               RECOVERY_BRIDGE_CANDIDATE,
               STAGED_RECOVERY_CANDIDATE,
-              ...(postStageBridgeExact ? [POST_STAGE_BRIDGE_CANDIDATE] : []),
+              POST_STAGE_BRIDGE_CANDIDATE,
+              FINAL_ZERO_WRITE_BRIDGE_CANDIDATE,
               CANDIDATE,
             ],
       productionPostgresSourceRepinRecoveryBridgeExact:
         priorCandidateSha !== CANDIDATE,
       productionPostgresSourceRepinPostStageBridgeExact:
         postStageBridgeExact,
+      productionPostgresSourceRepinFinalZeroWriteBridgeExact:
+        priorCandidateSha !== CANDIDATE,
+      productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact:
+        priorCandidateSha !== CANDIDATE,
+      provenZeroWriteProductionPostgresSourceRepinRunId:
+        priorCandidateSha === CANDIDATE ? null : FINAL_ZERO_WRITE_RUN_ID,
       exactPriorProductionPostgresSourceRepinCandidateRunBound: true,
       secondProductionPostgresRemediationDismissPreventedExact: true,
       runnerLossRecoveryOriginalRunCompletedAt: originalRunCompletedAt,
@@ -527,6 +601,12 @@ function writeReconcileAuthority(
       runnerLossRecoveryStageGraceHours:
         priorCandidateSha === CANDIDATE ? null : 168,
       runnerLossRecoveryStageWithinGraceExact: true,
+      runnerLossRecoveryFinalZeroWriteRunCompletedAt:
+        priorCandidateSha === CANDIDATE ? null : "2026-09-07T11:58:19.000Z",
+      runnerLossRecoveryFinalZeroWriteSettlementSeconds:
+        priorCandidateSha === CANDIDATE ? null : 60,
+      runnerLossRecoveryFinalZeroWriteWithinSettlementExact:
+        priorCandidateSha !== CANDIDATE,
     })}\n`,
     { mode: 0o600 },
   );
@@ -694,6 +774,10 @@ async function run(
   now: () => number = () => Date.parse("2026-09-01T00:10:00.000Z"),
   priorCandidateSha = CANDIDATE,
   sleep: (milliseconds: number) => Promise<void> = async () => undefined,
+  verifyFinalZeroWriteEvidence: (
+    root: string,
+    parsedIntent: { readonly intent: unknown; readonly sha256: string },
+  ) => boolean = () => true,
 ) {
   let output = "";
   let lastBoundary: ReturnType<typeof boundary> | undefined;
@@ -716,6 +800,7 @@ async function run(
       return lastBoundary;
     },
     verifyPolicy: () => true,
+    verifyFinalZeroWriteEvidence,
     now,
     sleep,
     writeOutput: (source) => {
@@ -863,6 +948,26 @@ function boundEnvironment(
             "c7d351b11b355b5cdea2be8451d4933f4db609fcdf72f38e69ce2909e1846d3d",
           PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_STAGED_RECOVERY_EVIDENCE_EXACT:
             "true",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_ID:
+            "10017539632",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_DIGEST:
+            "sha256:f0c5751504b52d3f13b8f3763a2293768b847ea5b96f5f9e57a6b527a6b1d0bb",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_ARTIFACT_SIZE:
+            "4611",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_DISPATCH_SHA256:
+            "3ceb5955cd12f1f1474d256637a0dfccd261f9d19867a70c436fc962cfe7b93e",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_AUTHORITY_SHA256:
+            "13f7a2aebf6af92c47022174bc01a7c36cd1b391feabc84e745326686ad72a6d",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_TERMINAL_SHA256:
+            "3bb0746e5a6bade5c56ff8a4841b0b2406f25db1a3009f829965f3c867e60392",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_RECEIPT_SHA256:
+            "2f5d8d8f207233144fb305ab27d946e6d9e0a29d051d66d86748501bc402020f",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_INTENT_SHA256:
+            "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_ROOT:
+            prepared.evidence.directory,
+          PINTPATH_PRODUCTION_POSTGRES_SOURCE_LOCK_FINAL_ZERO_WRITE_EVIDENCE_EXACT:
+            "true",
         }
       : {}),
   };
@@ -889,7 +994,7 @@ function mutationCalls(provider: ReturnType<typeof providerMock>) {
 describe("protected production Postgres source lock", () => {
   it("pins and validates the complete reviewed v4 policy contract", () => {
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_POLICY_SHA256).toBe(
-      "2072c6662c854cc0cbb8f182a529798891bdfc2d635642a92029869c27d52247",
+      "00d79dac364e80ff72b1bc6bad5acbaee23aea6e9472e7ac442b2dd66da4adae",
     );
     expect(PRODUCTION_POSTGRES_SOURCE_LOCK_BOUNDARY_POLICY_SHA256).toBe(
       "a61ccb5493bbb15e37c8b158f441219b4540937d9dd0ab46ddc0a0cf0be84079",
@@ -926,6 +1031,85 @@ describe("protected production Postgres source lock", () => {
     expect(policy.autoUpdates.armed.remediationNotice.currentVersion).toBe(
       "17.10",
     );
+  });
+
+  it("revalidates the exact final-zero-write artifact leaves in private executor custody", () => {
+    const fixture = createFinalZeroWriteEvidenceFixture();
+
+    expect(fixture.sha256).toBe(
+      "61381d0ea3fd5394bb4de33b63379fcd13f524614797a434ff2b3e13f862bf9c",
+    );
+    expect(
+      protectedProductionPostgresSourceRepinInternals.finalZeroWriteEvidenceExact(
+        fixture.root,
+        fixture,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects tampered final-zero-write leaves, custody, and intent bindings", () => {
+    const verify = (
+      fixture: ReturnType<typeof createFinalZeroWriteEvidenceFixture>,
+      root = fixture.root,
+    ) =>
+      protectedProductionPostgresSourceRepinInternals.finalZeroWriteEvidenceExact(
+        root,
+        fixture,
+      );
+    const dispatchRelative =
+      "pintpath-production-postgres-source-lock-evidence/dispatch.json";
+
+    const changed = createFinalZeroWriteEvidenceFixture();
+    fs.appendFileSync(path.join(changed.root, dispatchRelative), "\n");
+    expect(verify(changed)).toBe(false);
+
+    const missing = createFinalZeroWriteEvidenceFixture();
+    fs.unlinkSync(path.join(missing.root, dispatchRelative));
+    expect(verify(missing)).toBe(false);
+
+    const extra = createFinalZeroWriteEvidenceFixture();
+    fs.writeFileSync(path.join(extra.root, "unexpected.json"), "{}\n", {
+      mode: 0o600,
+    });
+    expect(verify(extra)).toBe(false);
+
+    const symbolic = createFinalZeroWriteEvidenceFixture();
+    const symbolicDispatch = path.join(symbolic.root, dispatchRelative);
+    const symbolicTarget = path.join(
+      path.dirname(symbolic.root),
+      "dispatch.json",
+    );
+    fs.copyFileSync(symbolicDispatch, symbolicTarget);
+    fs.chmodSync(symbolicTarget, 0o600);
+    fs.unlinkSync(symbolicDispatch);
+    fs.symlinkSync(symbolicTarget, symbolicDispatch);
+    expect(verify(symbolic)).toBe(false);
+
+    const hardLinked = createFinalZeroWriteEvidenceFixture();
+    fs.linkSync(
+      path.join(hardLinked.root, dispatchRelative),
+      path.join(path.dirname(hardLinked.root), "dispatch-link.json"),
+    );
+    expect(verify(hardLinked)).toBe(false);
+
+    const permissive = createFinalZeroWriteEvidenceFixture();
+    fs.chmodSync(permissive.root, 0o755);
+    expect(verify(permissive)).toBe(false);
+
+    const noncanonical = createFinalZeroWriteEvidenceFixture();
+    expect(
+      verify(
+        noncanonical,
+        `${noncanonical.root}/../${path.basename(noncanonical.root)}`,
+      ),
+    ).toBe(false);
+
+    const mismatchedIntent = createFinalZeroWriteEvidenceFixture();
+    mismatchedIntent.intent = {
+      ...mismatchedIntent.intent,
+      commitMessage: "forged",
+    };
+    expect(verify(mismatchedIntent)).toBe(false);
   });
 
   it("binds the current runtime and exact source/auto-update mutation primitives", () => {
@@ -980,6 +1164,47 @@ describe("protected production Postgres source lock", () => {
           },
         },
       },
+    });
+    expect(
+      protectedProductionPostgresSourceRepinInternals.pinnedSparseStagedRecoveryPatch(),
+    ).toEqual({
+      services: {
+        [SERVICE_ID]: {
+          source: {
+            image: IMMUTABLE_SOURCE,
+            autoUpdates: { schedule: null, tagMode: null },
+          },
+        },
+      },
+    });
+    expect(
+      protectedProductionPostgresSourceRepinInternals.pinnedStagedRecoveryPatchExact(
+        pinnedSparseStagedPatch(),
+      ),
+    ).toBe(true);
+  });
+
+  it("composes same-candidate recovery authority without a final-zero-write bridge", () => {
+    const evidence = createEvidence(PRIOR_RUN_ID, []);
+    writeReconcileAuthority(
+      evidence.authorityFile,
+      RUN_ID,
+      PRIOR_RUN_ID,
+      [],
+      "2026-08-31T00:10:00.000Z",
+    );
+    const authority = JSON.parse(
+      fs.readFileSync(evidence.authorityFile, "utf8"),
+    ) as Record<string, unknown>;
+
+    expect(authority).toMatchObject({
+      crossCandidateProductionPostgresSourceRepinRecoveryExact: false,
+      productionPostgresSourceRepinFinalZeroWriteBridgeExact: false,
+      productionPostgresSourceRepinFinalZeroWriteArtifactMetadataExact: false,
+      provenZeroWriteProductionPostgresSourceRepinRunId: null,
+      runnerLossRecoveryFinalZeroWriteRunCompletedAt: null,
+      runnerLossRecoveryFinalZeroWriteSettlementSeconds: null,
+      runnerLossRecoveryFinalZeroWriteWithinSettlementExact: false,
     });
   });
 
@@ -1513,7 +1738,7 @@ describe("protected production Postgres source lock", () => {
           configEtag: "d".repeat(64),
         }),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const result = await run(
       "reconcile",
@@ -1522,7 +1747,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code, result.output).toBe(0);
@@ -1569,7 +1794,7 @@ describe("protected production Postgres source lock", () => {
           configEtag: "d".repeat(64),
         }),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const accepted = await run(
       "reconcile",
@@ -1578,7 +1803,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-07T11:10:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(accepted.code, accepted.output).toBe(0);
@@ -1615,7 +1840,7 @@ describe("protected production Postgres source lock", () => {
       [],
       boundEnvironment("reconcile", rejectedPrepared, RUN_ID, true),
       rejectedPrepared.intentFile,
-      () => Date.parse("2026-09-07T11:10:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(rejected.code).toBe(1);
@@ -1659,7 +1884,7 @@ describe("protected production Postgres source lock", () => {
         [],
         boundEnvironment("reconcile", malformedPrepared, RUN_ID, true),
         malformedPrepared.intentFile,
-        () => Date.parse("2026-09-07T11:10:00.000Z"),
+        () => Date.parse("2026-09-07T12:00:00.000Z"),
         INCIDENT_CANDIDATE,
       );
       expect(malformedResult.code).toBe(1);
@@ -1695,7 +1920,7 @@ describe("protected production Postgres source lock", () => {
         exactDesired,
         structuredClone(exactDesired),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -1712,7 +1937,7 @@ describe("protected production Postgres source lock", () => {
       ],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -1754,7 +1979,7 @@ describe("protected production Postgres source lock", () => {
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -1765,7 +1990,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), stagedBoundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -1808,7 +2033,7 @@ describe("protected production Postgres source lock", () => {
           runningInstanceId: "22222222-2222-4222-8222-222222222222",
         }),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -1819,7 +2044,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -1865,7 +2090,7 @@ describe("protected production Postgres source lock", () => {
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
         drifted,
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -1876,7 +2101,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -1920,7 +2145,7 @@ describe("protected production Postgres source lock", () => {
         exactDesired,
         structuredClone(exactDesired),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -1931,7 +2156,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -1975,7 +2200,7 @@ describe("protected production Postgres source lock", () => {
           structuredClone(exactDesired),
           structuredClone(exactDesired),
         ],
-        patches: [patchReadback(), patchReadback()],
+        patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
       });
       const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -1992,7 +2217,7 @@ describe("protected production Postgres source lock", () => {
         ],
         boundEnvironment("reconcile", prepared, RUN_ID, true),
         prepared.intentFile,
-        () => Date.parse("2026-09-06T10:00:00.000Z"),
+        () => Date.parse("2026-09-07T12:00:00.000Z"),
         INCIDENT_CANDIDATE,
         sleep,
       );
@@ -2032,7 +2257,7 @@ describe("protected production Postgres source lock", () => {
         exactDesired,
         structuredClone(exactDesired),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -2043,7 +2268,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -2088,7 +2313,7 @@ describe("protected production Postgres source lock", () => {
         contradictory,
         structuredClone(contradictory),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -2099,7 +2324,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -2139,7 +2364,7 @@ describe("protected production Postgres source lock", () => {
         exactDesired,
         structuredClone(exactDesired),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const sleep = vi.fn(async (_milliseconds: number) => undefined);
 
@@ -2155,7 +2380,7 @@ describe("protected production Postgres source lock", () => {
       ],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
       sleep,
     );
@@ -2273,7 +2498,7 @@ describe("protected production Postgres source lock", () => {
           historyOverride: [substitutedCommittedPatch],
         }),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const result = await run(
       "reconcile",
@@ -2282,7 +2507,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -2318,7 +2543,7 @@ describe("protected production Postgres source lock", () => {
       [],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -2365,7 +2590,7 @@ describe("protected production Postgres source lock", () => {
         [],
         boundEnvironment("reconcile", prepared, RUN_ID, true),
         prepared.intentFile,
-        () => Date.parse("2026-09-06T10:00:00.000Z"),
+        () => Date.parse("2026-09-07T12:00:00.000Z"),
         INCIDENT_CANDIDATE,
       );
       expect(result.code).toBe(1);
@@ -2377,6 +2602,54 @@ describe("protected production Postgres source lock", () => {
       expect(mutationCalls(provider)).toEqual([]);
     },
   );
+
+  it("cross-candidate recovery rejects a sparse staged-patch mismatch before any write", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const forgedPatch = {
+      ...pinnedSparseStagedPatch(),
+      patch:
+        protectedProductionPostgresSourceRepinInternals.providerNormalizedPatch(),
+    };
+    expect(
+      protectedProductionPostgresSourceRepinInternals.pinnedStagedRecoveryPatchExact(
+        forgedPatch,
+      ),
+    ).toBe(false);
+    const staged = providerState("staged", {
+      configEtag: INCIDENT_DISMISSED_ETAG,
+      pinnedSparseRecovery: true,
+      historyOverride: [structuredClone(forgedPatch)],
+    });
+    staged.data.staged.patch = forgedPatch.patch;
+    const provider = providerMock({ states: [staged] });
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      attempts: { dismiss: 0, stage: 0, commit: 0 },
+      totalMutationCalls: 0,
+      checks: { baselineExact: false },
+    });
+    expect(mutationCalls(provider)).toEqual([]);
+  });
 
   it("cross-candidate recovery rejects a substituted staged-run evidence artifact before any write", async () => {
     const prepared = historicalIncidentPrepared();
@@ -2399,7 +2672,7 @@ describe("protected production Postgres source lock", () => {
       [],
       env,
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -2409,6 +2682,51 @@ describe("protected production Postgres source lock", () => {
       checks: { artifactBindingExact: false },
     });
     expect(mutationCalls(provider)).toEqual([]);
+  });
+
+  it("cross-candidate recovery rejects forged final-zero-write evidence before any source-lock mutation", async () => {
+    const prepared = historicalIncidentPrepared();
+    writeReconcileAuthority(
+      prepared.evidence.authorityFile,
+      RUN_ID,
+      INCIDENT_RUN_ID,
+      [],
+      "2026-09-04T22:07:38.000Z",
+      INCIDENT_CANDIDATE,
+    );
+    const provider = providerMock();
+    const forgedEvidenceVerifier = vi.fn(() => false);
+    const result = await run(
+      "reconcile",
+      prepared.evidence,
+      provider,
+      [],
+      boundEnvironment("reconcile", prepared, RUN_ID, true),
+      prepared.intentFile,
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
+      INCIDENT_CANDIDATE,
+      async () => undefined,
+      forgedEvidenceVerifier,
+    );
+
+    expect(forgedEvidenceVerifier).toHaveBeenCalledOnce();
+    expect(result.code).toBe(1);
+    expect(result.receipt).toMatchObject({
+      outcome: "failed_before_write",
+      attempts: { dismiss: 0, stage: 0, commit: 0 },
+      totalMutationCalls: 0,
+      checks: {
+        artifactBindingExact: false,
+        durableIntentExact: false,
+        baselineExact: false,
+      },
+    });
+    expect(mutationCalls(provider)).toEqual([]);
+    expect(provider.calls.map((call) => call.operationName)).toEqual([
+      "PintPathProductionPostgresSourceLockScope",
+      "PintPathProductionPostgresSourceLockScope",
+      "PintPathProductionPostgresSourceLockScope",
+    ]);
   });
 
   it("cross-candidate recovery rebinds the pinned patch timestamps on both patch readbacks", async () => {
@@ -2421,7 +2739,7 @@ describe("protected production Postgres source lock", () => {
       "2026-09-04T22:07:38.000Z",
       INCIDENT_CANDIDATE,
     );
-    const changedReadback = patchReadback();
+    const changedReadback = pinnedSparsePatchReadback();
     changedReadback.data.active.updatedAt = "2026-09-06T09:47:23.894Z";
     changedReadback.data.selected.updatedAt = "2026-09-06T09:47:23.894Z";
     const provider = providerMock({
@@ -2437,7 +2755,7 @@ describe("protected production Postgres source lock", () => {
       [],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -2459,7 +2777,7 @@ describe("protected production Postgres source lock", () => {
       "2026-09-04T22:07:38.000Z",
       INCIDENT_CANDIDATE,
     );
-    const changedSecondReadback = patchReadback();
+    const changedSecondReadback = pinnedSparsePatchReadback();
     changedSecondReadback.data.selected.updatedAt =
       "2026-09-06T09:47:23.894Z";
     const provider = providerMock({
@@ -2467,7 +2785,7 @@ describe("protected production Postgres source lock", () => {
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
       ],
-      patches: [patchReadback(), changedSecondReadback],
+      patches: [pinnedSparsePatchReadback(), changedSecondReadback],
     });
     const result = await run(
       "reconcile",
@@ -2476,7 +2794,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -2523,7 +2841,7 @@ describe("protected production Postgres source lock", () => {
             configEtag: "d".repeat(64),
           }),
         ],
-        patches: [patchReadback(), patchReadback()],
+        patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
       });
       const result = await run(
         "reconcile",
@@ -2554,7 +2872,12 @@ describe("protected production Postgres source lock", () => {
       INCIDENT_CANDIDATE,
     );
     const provider = providerMock({
-      states: [providerState("staged", { configEtag: "e".repeat(64) })],
+      states: [
+        providerState("staged", {
+          configEtag: "e".repeat(64),
+          pinnedSparseRecovery: true,
+        }),
+      ],
     });
     const result = await run(
       "reconcile",
@@ -2563,7 +2886,7 @@ describe("protected production Postgres source lock", () => {
       [],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -2595,7 +2918,7 @@ describe("protected production Postgres source lock", () => {
           configEtag: INCIDENT_DISMISSED_ETAG,
         }),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const result = await run(
       "reconcile",
@@ -2604,7 +2927,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary(), stagedBoundary(), boundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);
@@ -2646,7 +2969,7 @@ describe("protected production Postgres source lock", () => {
         [],
         boundEnvironment("reconcile", prepared, RUN_ID, true),
         prepared.intentFile,
-        () => Date.parse("2026-09-06T10:00:00.000Z"),
+        () => Date.parse("2026-09-07T12:00:00.000Z"),
         INCIDENT_CANDIDATE,
       );
       expect(result.code).toBe(1);
@@ -2672,9 +2995,12 @@ describe("protected production Postgres source lock", () => {
     const provider = providerMock({
       states: [
         providerState("staged", { configEtag: INCIDENT_DISMISSED_ETAG }),
-        providerState("staged", { configEtag: "e".repeat(64) }),
+        providerState("staged", {
+          configEtag: "e".repeat(64),
+          pinnedSparseRecovery: true,
+        }),
       ],
-      patches: [patchReadback(), patchReadback()],
+      patches: [pinnedSparsePatchReadback(), pinnedSparsePatchReadback()],
     });
     const result = await run(
       "reconcile",
@@ -2683,7 +3009,7 @@ describe("protected production Postgres source lock", () => {
       [stagedBoundary()],
       boundEnvironment("reconcile", prepared, RUN_ID, true),
       prepared.intentFile,
-      () => Date.parse("2026-09-06T10:00:00.000Z"),
+      () => Date.parse("2026-09-07T12:00:00.000Z"),
       INCIDENT_CANDIDATE,
     );
     expect(result.code).toBe(1);

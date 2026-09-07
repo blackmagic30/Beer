@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "pintpath-production-postgres-source-lock-dispatch/v2",
+  "candidateSha": "b41d0314c155f5f9953a7dd17c195afa9aa97b9c",
+  "operationMode": "reconcile",
+  "priorCandidateSha": "52049a1ef414e274e47197e28726387c90d96990",
+  "priorRunId": "33923801697",
+  "workflowRunId": "34118981931",
+  "secretMaterialIncluded": false
+}
