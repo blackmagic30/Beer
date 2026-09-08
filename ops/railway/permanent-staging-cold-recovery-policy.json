@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-cold-recovery-policy/v2",
+  "schemaVersion": "pintpath-permanent-staging-cold-recovery-policy/v4",
   "policyId": "pintpath-permanent-staging-one-time-cold-recovery",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "repository": "blackmagic30/Beer",
@@ -128,12 +128,25 @@
         null,
         0
       ],
-      "singleCommandRegions": [
+      "singleEnvironmentPatchCommitRegions": [
         "europe-west4-drams3a",
         "asia-southeast1-eqsg3a"
       ],
       "maximumAttempts": 1,
       "automaticRetryAllowed": false,
+      "transport": "direct-graphql",
+      "operationName": "PintPathEnvironmentPatchCommit",
+      "mutation": "environmentPatchCommit",
+      "zeroReplicaRegionsEncodedAsJsonNull": true,
+      "commitMessageBindsCandidateAndRunId": true,
+      "completeProviderPatchHistoryPrewriteRequired": true,
+      "prewriteExactCommitMessageMatches": 0,
+      "postflightExactCommitMessageMatches": 1,
+      "matchingPatchMustBeNewestCommittedAndCrossFetched": true,
+      "providerHistoryContinuityRequired": true,
+      "finalProviderStateReadMustImmediatelyPrecedeMutation": true,
+      "providerCasOrLockVerified": false,
+      "externalMutationFreezeEnforcement": "operational_attestation_only",
       "lostAcknowledgementMayReconcileOnlyFromExactConfiguredZeroPostflight": true,
       "runtimeMustBeAbsentBeforeAndAfter": true,
       "deploymentSourceAndTopologyMustRemainUnchangedExceptReplicas": true
@@ -148,15 +161,10 @@
       "sameCandidateAndPrepareChainRequired": true,
       "providerMutationAllowed": false,
       "scaleCredentialAllowed": false,
+      "providerHistoryClaimed": false,
       "runtimeMustBeAbsentBeforeAndAfter": true,
       "deploymentSourceTopologyAndVariablesMustRemainUnchanged": true
     }
-  },
-  "railwayCli": {
-    "version": "5.32.0",
-    "releaseUrl": "https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
-    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
-    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
   },
   "mutationBoundary": {
     "policyPath": "ops/railway/production-staging-mutation-policy.json",
@@ -172,6 +180,10 @@
     "truthfulConfiguredReplicaTopologyBindingRequired": true,
     "legacyAggregateMustNotImpersonateConfiguredTopology": true,
     "configuredOneToZeroReceiptRequired": true,
+    "completeProviderPatchHistoryRequiredBeforeWrite": true,
+    "currentQuiesceProviderPatchHistoryRequired": true,
+    "legacyAndPriorQuiesceNoWriteProofRequired": true,
+    "providerHistoryMustUseVariableKeyOnlyProjection": true,
     "readOnlyRunnerLossReconciliationMustBindPriorRun": true,
     "secretMaterialAllowed": false,
     "secretDerivedCommitmentsAllowed": false

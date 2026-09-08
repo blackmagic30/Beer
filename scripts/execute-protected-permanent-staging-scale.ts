@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,6 +29,14 @@ import {
   parseProductionScaleActivationPrerequisiteVerification,
   type ProductionScaleActivationPrerequisiteVerification,
 } from "./verify-production-maintenance-role-limit-prerequisites.js";
+import {
+  commitRailwayReplicaEnvironmentPatch,
+  railwayEnvironmentPatchCommitVariables,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+  type RailwayEnvironmentPatchCommitAttempt,
+  type RailwayRegionReplicaTarget,
+} from "./lib/railway-environment-patch-commit.js";
 
 export const PROTECTED_STAGING_SCALE_SCHEMA =
   PROTECTED_SCALE_RECEIPT_SCHEMA;
@@ -50,10 +57,13 @@ const PRODUCTION_DOMAIN = "pintpath.au";
 const APPLICATION_TARGET_PORT = 8080;
 const POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const POLICY_SHA256 =
-  "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608";
+  "e960db6dde4c367ae26148d5e4c0e013b8f8cb5e4923bdced9a606d965673cb0";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
-const CLI_SHA256 = "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43";
+export const PROTECTED_SCALE_EXTERNAL_MUTATION_FREEZE_ATTESTATION =
+  "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN" as const;
+const EXTERNAL_MUTATION_FREEZE_ENFORCEMENT =
+  "operational_attestation_only" as const;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -62,7 +72,6 @@ const RUN_ID_PATTERN = /^[1-9][0-9]*$/;
 const TOKEN_PATTERN = /^[^\r\n\0]{16,4096}$/;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const QUERY_TIMEOUT_MS = 20_000;
-const COMMAND_TIMEOUT_MS = 60_000;
 const RECONCILIATION_TIMEOUT_MS = 5 * 60_000;
 const RECONCILIATION_INTERVAL_MS = 5_000;
 
@@ -85,11 +94,16 @@ export const PROTECTED_STAGING_SCALE_SNAPSHOT_QUERY = `query PintPathProtectedSc
     id
     config(decryptVariables: false)
   }
+  staged: environmentStagedChanges(environmentId: $environmentId) {
+    environmentId
+    patch(decryptVariables: false)
+  }
   serviceInstance(environmentId: $environmentId, serviceId: $serviceId) {
     id
     serviceId
     environmentId
     numReplicas
+    source { repo image }
     latestDeployment { id status deploymentStopped snapshotId }
     activeDeployments { id status deploymentStopped }
     domains {
@@ -109,6 +123,41 @@ export const PROTECTED_STAGING_SCALE_SNAPSHOT_QUERY = `query PintPathProtectedSc
 
 export const PROTECTED_STAGING_SCALE_TOKEN_SCOPE_QUERY =
   `query PintPathProtectedScaleTokenScope { projectToken { projectId environmentId } }`;
+export const PROTECTED_STAGING_SCALE_PATCH_HISTORY_QUERY =
+  `query PintPathProtectedScalePatchHistory(
+  $environmentId: String!
+  $after: String
+) {
+  environmentPatches(environmentId: $environmentId, first: 100, after: $after) {
+    edges {
+      cursor
+      node {
+        id
+        environmentId
+        status
+        createdAt
+        updatedAt
+        appliedAt
+        message
+        patch(decryptVariables: false)
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}`;
+export const PROTECTED_STAGING_SCALE_PATCH_QUERY =
+  `query PintPathProtectedScalePatch($id: String!) {
+  environmentPatch(id: $id) {
+    id
+    environmentId
+    status
+    createdAt
+    updatedAt
+    appliedAt
+    message
+    patch(decryptVariables: false)
+  }
+}`;
 
 type Direction =
   | "out"
@@ -136,6 +185,12 @@ interface ProtectedScaleSnapshot
   extends RailwayApplicationDeploymentAttestationProviderSnapshot {
   readonly configuredReplicas: number;
   readonly configuredRegions: readonly RailwayRegionReplicaCount[];
+  readonly serviceSource: {
+    readonly repo: string | null;
+    readonly image: string | null;
+  };
+  readonly environmentConfig: unknown;
+  readonly stagedPatchEmpty: true;
 }
 
 const STAGING_TARGET: ScaleTarget = Object.freeze({
@@ -147,13 +202,6 @@ const PRODUCTION_TARGET: ScaleTarget = Object.freeze({
   domain: PRODUCTION_DOMAIN,
 });
 
-interface CommandResult {
-  readonly code: number | null;
-  readonly timedOut: boolean;
-  readonly stdoutSha256: string;
-  readonly stderrSha256: string;
-}
-
 interface Dependencies {
   readonly argv: readonly string[];
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -163,7 +211,6 @@ interface Dependencies {
   readonly sleep: (milliseconds: number) => Promise<void>;
   readonly boundaryCheck: () => Promise<0 | 1>;
   readonly reassertRepositoryState: (cwd: string, candidateSha: string) => boolean;
-  readonly validateCli: (filename: string) => boolean;
   readonly validateProductionActivationPrerequisite: (
     source: string,
     expected: {
@@ -173,11 +220,21 @@ interface Dependencies {
       readonly now: Date;
     },
   ) => ProductionScaleActivationPrerequisiteVerification;
-  readonly runCommand: (
-    executable: string,
-    args: readonly string[],
+  readonly commitScale: (
     token: string,
-  ) => Promise<CommandResult>;
+    input: {
+      readonly environmentId: string;
+      readonly serviceId: string;
+      readonly regions: readonly RailwayRegionReplicaTarget[];
+      readonly commitMessage: string;
+    },
+  ) => Promise<RailwayEnvironmentPatchCommitAttempt>;
+  readonly readPatchHistory: (
+    token: string,
+    environmentId: string,
+    commitMessage: string,
+    expectedPatch: unknown,
+  ) => Promise<ScalePatchHistoryEvidence>;
   readonly probeRuntime: (
     target: ScaleTarget,
     candidateSha: string,
@@ -195,11 +252,13 @@ interface ScaleReceipt {
   readonly direction: Direction | null;
   readonly outcome:
     | "scaled"
+    | "reconciled_scaled"
     | "already_converged"
     | "blocked"
     | "failed_before_attempt"
     | "mutation_uncertain";
   readonly candidateSha: string | null;
+  readonly githubRunId: string | null;
   readonly startedAt: string;
   readonly completedAt: string;
   readonly desiredReplicas: ReplicaCount | null;
@@ -208,8 +267,28 @@ interface ScaleReceipt {
   readonly retryAllowed: false;
   readonly intentSha256: string | null;
   readonly terminalEvidenceSha256: string | null;
-  readonly commandStdoutSha256: string | null;
-  readonly commandStderrSha256: string | null;
+  readonly directMutationEvidence: {
+    readonly operationName:
+      typeof RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME;
+    readonly operation: "environmentPatchCommit";
+    readonly transportOutcome:
+      RailwayEnvironmentPatchCommitAttempt["outcome"] | null;
+    readonly querySha256: string;
+    readonly variablesSha256: string | null;
+    readonly requestBodySha256: string | null;
+    readonly responseBodySha256: string | null;
+    readonly acknowledgementSha256: string | null;
+    readonly acknowledgementExact: boolean;
+    readonly commitMessageSha256: string | null;
+    readonly zeroRegionsEncodedAsJsonNull: boolean;
+    readonly providerCasOrLockVerified: false;
+    readonly externalMutationFreezeEnforcement:
+      typeof EXTERNAL_MUTATION_FREEZE_ENFORCEMENT;
+  };
+  readonly providerHistoryEvidence: {
+    readonly prewrite: ScalePatchHistoryEvidence | null;
+    readonly postflight: ScalePatchHistoryEvidence | null;
+  };
   readonly productionActivationPrerequisite: {
     readonly runId: string;
     readonly verificationSha256: string;
@@ -225,13 +304,17 @@ interface ScaleReceipt {
     readonly before: ReplicaTopologySnapshot | null;
     readonly immediatelyBeforeWrite: ReplicaTopologySnapshot | null;
     readonly after: ReplicaTopologySnapshot | null;
-    readonly commandAssignments: readonly string[];
+    readonly patchRegions: readonly RailwayRegionReplicaTarget[];
+    readonly environmentConfigCollateralUnchanged: boolean;
   };
+  readonly secretMaterialIncluded: false;
+  readonly secretDerivedCommitmentsIncluded: false;
   readonly checks: {
     policyExact: boolean;
     githubAuthorityExact: boolean;
+    externalMutationFreezeAttested: boolean;
     tokenScopesExact: boolean;
-    cliExact: boolean;
+    directMutationContractExact: boolean;
     boundaryPreflightExact: boolean;
     targetPreflightExact: boolean;
     productionActivationPrerequisiteExact: boolean;
@@ -240,12 +323,17 @@ interface ScaleReceipt {
     durableIntentExact: boolean;
     repositoryPrewriteReasserted: boolean;
     writeAttemptedAtMostOnce: boolean;
+    mutationResponseClassified: boolean;
     acknowledgementExact: boolean;
+    lostAcknowledgementExact: boolean;
+    providerHistoryPrewriteExact: boolean;
+    providerHistoryPostflightExact: boolean;
     postflightAttempted: boolean;
     targetPostflightExact: boolean;
     runtimePostflightExact: boolean;
     candidateUnchanged: boolean;
     deploymentUnchanged: boolean;
+    providerConfigurationCollateralUnchanged: boolean;
     replicaTopologyEvidenceExact: boolean;
     boundaryPostflightExact: boolean;
     terminalEvidenceExact: boolean;
@@ -258,6 +346,40 @@ interface ReplicaTopologySnapshot {
   readonly configuredRegions: readonly RailwayRegionReplicaCount[];
   readonly configuredTopologySha256: string;
   readonly legacyAggregateReplicas: number | null;
+  readonly serviceSourceSha256: string;
+  readonly stagedPatchEmpty: true;
+}
+
+export interface ScalePatchHistoryEvidence {
+  readonly querySha256: {
+    readonly history: string;
+    readonly patch: string;
+  };
+  readonly pages: readonly {
+    readonly requestAfter: string | null;
+    readonly count: number;
+    readonly endCursor: string | null;
+    readonly hasNextPage: boolean;
+  }[];
+  readonly pageCount: number;
+  readonly rowCount: number;
+  readonly rowsProjectionSha256: string;
+  readonly nonMatchingRowsProjectionSha256: string;
+  readonly paginationCompleteExact: boolean;
+  readonly matchingPatchCount: number;
+  readonly matchingPatch: {
+    readonly rowIndex: 0;
+    readonly idSha256: string;
+    readonly status: "COMMITTED";
+    readonly createdAt: string;
+    readonly updatedAt: string;
+    readonly appliedAt: string;
+    readonly messageSha256: string;
+    readonly patchSha256: string;
+    readonly crossFetchExact: true;
+  } | null;
+  readonly secretMaterialIncluded: false;
+  readonly secretDerivedCommitmentsIncluded: false;
 }
 
 function sha256(value: string | Buffer): string {
@@ -266,6 +388,42 @@ function sha256(value: string | Buffer): string {
 
 function canonical(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function sortObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortObjectKeys);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(Object.keys(value as Record<string, unknown>)
+    .sort().map((key) => [
+      key,
+      sortObjectKeys((value as Record<string, unknown>)[key]),
+    ]));
+}
+
+function canonicalProviderJson(value: unknown): string {
+  return `${JSON.stringify(sortObjectKeys(value), null, 2)}\n`;
+}
+
+function environmentConfigCollateral(value: unknown): unknown | null {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return null;
+    }
+    const copy = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    if (typeof copy.services !== "object" || copy.services === null ||
+      Array.isArray(copy.services)) return null;
+    const service = (copy.services as Record<string, unknown>)[SERVICE_ID];
+    if (typeof service !== "object" || service === null || Array.isArray(service)) {
+      return null;
+    }
+    const deploy = (service as Record<string, unknown>).deploy;
+    if (typeof deploy !== "object" || deploy === null || Array.isArray(deploy) ||
+      !Object.hasOwn(deploy, "multiRegionConfig")) return null;
+    delete (deploy as Record<string, unknown>).multiRegionConfig;
+    return copy;
+  } catch {
+    return null;
+  }
 }
 
 function exactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
@@ -369,22 +527,6 @@ function parseArguments(argv: readonly string[]): {
     : null;
 }
 
-function validateCli(filename: string): boolean {
-  let bytes: Buffer | null = null;
-  try {
-    bytes = readTrustedRegularFile(filename, {
-      minBytes: 1,
-      maxBytes: 128 * 1024 * 1024,
-      requireExecutable: true,
-    });
-    return sha256(bytes) === CLI_SHA256;
-  } catch {
-    return false;
-  } finally {
-    bytes?.fill(0);
-  }
-}
-
 function readProductionActivationPrerequisite(
   filename: string,
   evidenceDirectory: string,
@@ -439,75 +581,6 @@ function durableWrite(directory: string, leaf: string, source: string): string {
   return sha256(source);
 }
 
-function runCommand(
-  executable: string,
-  args: readonly string[],
-  token: string,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let timedOut = false;
-    let settled = false;
-    const child = spawn(executable, [...args], {
-      shell: false,
-      detached: true,
-      env: {
-        HOME: "/nonexistent",
-        LANG: "C",
-        LC_ALL: "C",
-        RAILWAY_TOKEN: token,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const collect = (
-      existing: string,
-      existingBytes: number,
-      chunk: Buffer,
-    ): readonly [string, number] => {
-      if (existingBytes + chunk.length > MAX_RESPONSE_BYTES) {
-        try { process.kill(-child.pid!, "SIGTERM"); } catch { /* reconciled below */ }
-        return [existing, existingBytes];
-      }
-      return [`${existing}${chunk.toString("utf8")}`, existingBytes + chunk.length];
-    };
-    child.stdout.on("data", (chunk: Buffer) => {
-      [stdout, stdoutBytes] = collect(stdout, stdoutBytes, chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      [stderr, stderrBytes] = collect(stderr, stderrBytes, chunk);
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try { process.kill(-child.pid!, "SIGTERM"); } catch { /* reconciled below */ }
-    }, COMMAND_TIMEOUT_MS);
-    child.on("error", () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        code: null,
-        timedOut,
-        stdoutSha256: sha256(stdout),
-        stderrSha256: sha256(stderr),
-      });
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        code,
-        timedOut,
-        stdoutSha256: sha256(stdout),
-        stderrSha256: sha256(stderr),
-      });
-    });
-  });
-}
-
 async function readJson(response: Response): Promise<unknown> {
   if (!response.ok || !/^application\/json(?:;|$)/i.test(
     response.headers.get("content-type") ?? "",
@@ -547,6 +620,186 @@ function parseScope(value: unknown, environmentId = STAGING_ENVIRONMENT_ID): boo
     && value.data.projectToken.environmentId === environmentId;
 }
 
+function canonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) &&
+    new Date(milliseconds).toISOString() === value;
+}
+
+export async function readPatchHistory(
+  fetchImpl: typeof fetch,
+  token: string,
+  environmentId: string,
+  commitMessage: string,
+  expectedPatch: unknown,
+): Promise<ScalePatchHistoryEvidence> {
+  let after: string | null = null;
+  let previousCreatedAt: number | null = null;
+  const ids = new Set<string>();
+  const cursors = new Set<string>();
+  const endCursors = new Set<string>();
+  const pages: Array<ScalePatchHistoryEvidence["pages"][number]> = [];
+  const projections: unknown[] = [];
+  const nonMatchingProjections: unknown[] = [];
+  const matchingNodes: Record<string, unknown>[] = [];
+  while (pages.length < 8) {
+    const requestAfter: string | null = after;
+    const value = await graphql(
+      fetchImpl,
+      token,
+      PROTECTED_STAGING_SCALE_PATCH_HISTORY_QUERY,
+      { environmentId, after },
+    );
+    if (!exactKeys(value, ["data"]) ||
+      !exactKeys(value.data, ["environmentPatches"]) ||
+      !exactKeys(value.data.environmentPatches, ["edges", "pageInfo"]) ||
+      !Array.isArray(value.data.environmentPatches.edges) ||
+      value.data.environmentPatches.edges.length > 100 ||
+      !exactKeys(value.data.environmentPatches.pageInfo, [
+        "hasNextPage",
+        "endCursor",
+      ]) || typeof value.data.environmentPatches.pageInfo.hasNextPage !== "boolean") {
+      throw new Error("provider_patch_history_invalid");
+    }
+    const edges = value.data.environmentPatches.edges;
+    const pageInfo = value.data.environmentPatches.pageInfo;
+    const hasNextPage = pageInfo.hasNextPage as boolean;
+    if (hasNextPage && edges.length !== 100) {
+      throw new Error("provider_patch_history_invalid");
+    }
+    for (const edge of edges) {
+      if (!exactKeys(edge, ["cursor", "node"]) ||
+        typeof edge.cursor !== "string" || edge.cursor.length < 1 ||
+        edge.cursor.length > 4096 || cursors.has(edge.cursor) ||
+        !exactKeys(edge.node, [
+          "id",
+          "environmentId",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "appliedAt",
+          "message",
+          "patch",
+        ]) || typeof edge.node.id !== "string" ||
+        !UUID_PATTERN.test(edge.node.id) || ids.has(edge.node.id) ||
+        edge.node.environmentId !== environmentId ||
+        typeof edge.node.status !== "string" ||
+        !canonicalTimestamp(edge.node.createdAt) ||
+        !canonicalTimestamp(edge.node.updatedAt) ||
+        !(edge.node.appliedAt === null || canonicalTimestamp(edge.node.appliedAt)) ||
+        !(edge.node.message === null || typeof edge.node.message === "string")) {
+        throw new Error("provider_patch_history_invalid");
+      }
+      const createdAt = Date.parse(edge.node.createdAt);
+      const updatedAt = Date.parse(edge.node.updatedAt);
+      const appliedAt = edge.node.appliedAt === null
+        ? null
+        : Date.parse(edge.node.appliedAt);
+      if (createdAt > updatedAt || (appliedAt !== null && appliedAt > updatedAt)) {
+        throw new Error("provider_patch_history_invalid");
+      }
+      if (previousCreatedAt !== null && createdAt >= previousCreatedAt) {
+        throw new Error("provider_patch_history_invalid");
+      }
+      previousCreatedAt = createdAt;
+      cursors.add(edge.cursor);
+      ids.add(edge.node.id);
+      if (ids.size > 800) throw new Error("provider_patch_history_invalid");
+      const isMatch = edge.node.message === commitMessage;
+      const projection = {
+        id: edge.node.id,
+        environmentId: edge.node.environmentId,
+        status: edge.node.status,
+        createdAt: edge.node.createdAt,
+        updatedAt: edge.node.updatedAt,
+        appliedAt: edge.node.appliedAt,
+        messageMatchesTarget: isMatch,
+      };
+      projections.push(projection);
+      if (!isMatch) nonMatchingProjections.push(projection);
+      if (isMatch) {
+        if (projections.length !== 1) {
+          throw new Error("provider_patch_history_invalid");
+        }
+        if (edge.node.status !== "COMMITTED" ||
+          !canonicalTimestamp(edge.node.appliedAt) ||
+          canonicalProviderJson(edge.node.patch) !==
+            canonicalProviderJson(expectedPatch)) {
+          throw new Error("provider_patch_history_invalid");
+        }
+        matchingNodes.push(edge.node);
+      }
+    }
+    const endCursor = pageInfo.endCursor;
+    if (!(endCursor === null || typeof endCursor === "string") ||
+      (edges.length === 0 ? endCursor !== null :
+        endCursor !== (edges.at(-1) as Record<string, unknown>).cursor) ||
+      (typeof endCursor === "string" && endCursors.has(endCursor))) {
+      throw new Error("provider_patch_history_invalid");
+    }
+    if (typeof endCursor === "string") endCursors.add(endCursor);
+    pages.push({
+      requestAfter,
+      count: edges.length,
+      endCursor,
+      hasNextPage,
+    });
+    if (!hasNextPage) break;
+    if (typeof endCursor !== "string" || endCursor === requestAfter) {
+      throw new Error("provider_patch_history_invalid");
+    }
+    after = endCursor;
+  }
+  if (pages.length === 0 || pages.at(-1)?.hasNextPage !== false ||
+    matchingNodes.length > 1) throw new Error("provider_patch_history_invalid");
+  let matchingPatch: ScalePatchHistoryEvidence["matchingPatch"] = null;
+  if (matchingNodes.length === 1) {
+    const node = matchingNodes[0]!;
+    const crossFetched = await graphql(
+      fetchImpl,
+      token,
+      PROTECTED_STAGING_SCALE_PATCH_QUERY,
+      { id: node.id },
+    );
+    if (!exactKeys(crossFetched, ["data"]) ||
+      !exactKeys(crossFetched.data, ["environmentPatch"]) ||
+      canonicalProviderJson(crossFetched.data.environmentPatch) !==
+        canonicalProviderJson(node)) {
+      throw new Error("provider_patch_history_invalid");
+    }
+    matchingPatch = {
+      rowIndex: 0,
+      idSha256: sha256(node.id as string),
+      status: "COMMITTED",
+      createdAt: node.createdAt as string,
+      updatedAt: node.updatedAt as string,
+      appliedAt: node.appliedAt as string,
+      messageSha256: sha256(commitMessage),
+      patchSha256: sha256(canonicalProviderJson(expectedPatch)),
+      crossFetchExact: true,
+    };
+  }
+  return {
+    querySha256: {
+      history: sha256(PROTECTED_STAGING_SCALE_PATCH_HISTORY_QUERY),
+      patch: sha256(PROTECTED_STAGING_SCALE_PATCH_QUERY),
+    },
+    pages,
+    pageCount: pages.length,
+    rowCount: projections.length,
+    rowsProjectionSha256: sha256(canonicalProviderJson(projections)),
+    nonMatchingRowsProjectionSha256: sha256(
+      canonicalProviderJson(nonMatchingProjections),
+    ),
+    paginationCompleteExact: true,
+    matchingPatchCount: matchingNodes.length,
+    matchingPatch,
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  };
+}
+
 function parseDiscovery(value: unknown): string | null {
   if (!exactKeys(value, ["data"])
     || !exactKeys(value.data, ["serviceInstance"])
@@ -581,9 +834,29 @@ async function querySnapshot(
     },
   );
   if (!exactKeys(response, ["data"])
-    || !exactKeys(response.data, ["environment", "serviceInstance", "deployment"])
+    || !exactKeys(response.data, [
+      "environment",
+      "staged",
+      "serviceInstance",
+      "deployment",
+    ])
     || !exactKeys(response.data.environment, ["id", "config"])
-    || response.data.environment.id !== target.environmentId) {
+    || response.data.environment.id !== target.environmentId
+    || !exactKeys(response.data.staged, ["environmentId", "patch"])
+    || response.data.staged.environmentId !== target.environmentId
+    || !exactKeys(response.data.staged.patch, [])
+    || typeof response.data.serviceInstance !== "object"
+    || response.data.serviceInstance === null
+    || Array.isArray(response.data.serviceInstance)) {
+    throw new Error("provider_snapshot_invalid");
+  }
+  const serviceInstanceRecord = response.data.serviceInstance as
+    Record<string, unknown>;
+  if (!exactKeys(serviceInstanceRecord.source, ["repo", "image"])
+    || !(serviceInstanceRecord.source.repo === null ||
+      typeof serviceInstanceRecord.source.repo === "string")
+    || !(serviceInstanceRecord.source.image === null ||
+      typeof serviceInstanceRecord.source.image === "string")) {
     throw new Error("provider_snapshot_invalid");
   }
   const topology = parseRailwayMultiRegionReplicaTopology(
@@ -593,9 +866,11 @@ async function querySnapshot(
   if (topology.kind !== "configured") {
     throw new Error("provider_snapshot_invalid");
   }
+  const { source: serviceSource, ...serviceInstance } =
+    serviceInstanceRecord;
   const source = JSON.stringify({
     data: {
-      serviceInstance: response.data.serviceInstance,
+      serviceInstance,
       deployment: response.data.deployment,
     },
   });
@@ -603,10 +878,20 @@ async function querySnapshot(
     source,
   );
   if (!snapshot) throw new Error("provider_snapshot_invalid");
+  const collateralConfig = environmentConfigCollateral(
+    response.data.environment.config,
+  );
+  if (collateralConfig === null) throw new Error("provider_snapshot_invalid");
   return Object.freeze({
     ...snapshot,
     configuredReplicas: topology.configuredTotal,
     configuredRegions: topology.regions,
+    serviceSource: Object.freeze({
+      repo: (serviceSource as Record<string, unknown>).repo as string | null,
+      image: (serviceSource as Record<string, unknown>).image as string | null,
+    }),
+    environmentConfig: response.data.environment.config,
+    stagedPatchEmpty: true as const,
   });
 }
 
@@ -733,17 +1018,17 @@ function snapshotExact(
     && snapshot.configuredRegions.every(({ region }) => allowedRegions.has(region))
     && snapshot.configuredRegions.every(({ numReplicas }) =>
       Number.isSafeInteger(numReplicas) && numReplicas >= 0)
-    && (replicas === 0
-      ? snapshot.configuredRegions.every(({ numReplicas }) => numReplicas === 0)
-      : placement === "any-single-region"
+    && (placement === "any-single-region"
         ? snapshot.configuredRegions.filter(({ numReplicas }) => numReplicas > 0)
           .length === 1
           && snapshot.configuredRegions.some(({ numReplicas }) =>
             numReplicas === replicas)
-        : snapshot.configuredRegions.some(({ region, numReplicas }) =>
-          region === REGION && numReplicas === replicas)
-          && snapshot.configuredRegions.every(({ region, numReplicas }) =>
-            region === REGION || numReplicas === 0));
+        : replicas === 0
+          ? snapshot.configuredRegions.every(({ numReplicas }) => numReplicas === 0)
+          : snapshot.configuredRegions.some(({ region, numReplicas }) =>
+            region === REGION && numReplicas === replicas)
+            && snapshot.configuredRegions.every(({ region, numReplicas }) =>
+              region === REGION || numReplicas === 0));
   return snapshot.serviceId === SERVICE_ID
     && snapshot.environmentId === target.environmentId
     && configuredTopologyExact
@@ -765,15 +1050,17 @@ function snapshotExact(
     && snapshot.domains[0].targetPort === APPLICATION_TARGET_PORT;
 }
 
-function scaleAssignments(
-  snapshot: ProtectedScaleSnapshot,
+function scalePatchRegions(
+  target: ScaleTarget,
   desiredReplicas: ReplicaCount,
-): readonly string[] {
-  const regions = new Set(snapshot.configuredRegions.map(({ region }) => region));
-  regions.add(REGION);
-  return [...regions]
-    .sort()
-    .map((region) => `${region}=${region === REGION ? desiredReplicas : 0}`);
+): readonly RailwayRegionReplicaTarget[] {
+  const regions = target.environmentId === STAGING_ENVIRONMENT_ID
+    ? [REGION, LEGACY_STAGING_REGION]
+    : [REGION];
+  return [...regions].sort().map((region) => Object.freeze({
+    region,
+    numReplicas: region === REGION ? desiredReplicas : 0,
+  }));
 }
 
 function topologySnapshot(
@@ -788,7 +1075,22 @@ function topologySnapshot(
     ...configured,
     configuredTopologySha256: sha256(canonical(configured)),
     legacyAggregateReplicas: snapshot.numReplicas,
+    serviceSourceSha256: sha256(canonicalProviderJson(snapshot.serviceSource)),
+    stagedPatchEmpty: snapshot.stagedPatchEmpty,
   };
+}
+
+function providerConfigurationCollateralExact(
+  before: ProtectedScaleSnapshot,
+  after: ProtectedScaleSnapshot,
+): boolean {
+  const beforeConfig = environmentConfigCollateral(before.environmentConfig);
+  const afterConfig = environmentConfigCollateral(after.environmentConfig);
+  return beforeConfig !== null && afterConfig !== null &&
+    canonicalProviderJson(beforeConfig) === canonicalProviderJson(afterConfig) &&
+    canonicalProviderJson(before.serviceSource) ===
+      canonicalProviderJson(after.serviceSource) &&
+    before.stagedPatchEmpty && after.stagedPatchEmpty;
 }
 
 function topologyReceipt(
@@ -796,7 +1098,7 @@ function topologyReceipt(
   before: ProtectedScaleSnapshot | null,
   immediatelyBeforeWrite: ProtectedScaleSnapshot | null,
   after: ProtectedScaleSnapshot | null,
-  commandAssignments: readonly string[],
+  patchRegions: readonly RailwayRegionReplicaTarget[],
 ): ScaleReceipt["replicaTopology"] {
   return {
     authoritySource: "environment.config(decryptVariables:false)",
@@ -807,7 +1109,9 @@ function topologyReceipt(
     before: topologySnapshot(before),
     immediatelyBeforeWrite: topologySnapshot(immediatelyBeforeWrite),
     after: topologySnapshot(after),
-    commandAssignments,
+    patchRegions,
+    environmentConfigCollateralUnchanged: before !== null && after !== null &&
+      providerConfigurationCollateralExact(before, after),
   };
 }
 
@@ -819,7 +1123,7 @@ function topologyEvidenceExact(
   before: ProtectedScaleSnapshot | null,
   immediatelyBeforeWrite: ProtectedScaleSnapshot | null,
   after: ProtectedScaleSnapshot | null,
-  commandAssignments: readonly string[],
+  patchRegions: readonly RailwayRegionReplicaTarget[],
 ): boolean {
   const receiptExact = protectedScaleReplicaTopologyExact(
     topologyReceipt(
@@ -827,7 +1131,7 @@ function topologyEvidenceExact(
       before,
       immediatelyBeforeWrite,
       after,
-      commandAssignments,
+      patchRegions,
     ),
     {
       direction,
@@ -846,7 +1150,7 @@ function topologyEvidenceExact(
     target,
   )) return false;
   if (attempts === 0) {
-    return immediatelyBeforeWrite === null && commandAssignments.length === 0
+    return immediatelyBeforeWrite === null && patchRegions.length === 0
       && authoritativeSnapshotIdentity(before) === authoritativeSnapshotIdentity(after)
       && before.configuredReplicas === desiredReplicas;
   }
@@ -863,17 +1167,19 @@ function topologyEvidenceExact(
       target,
       placement,
     )
-    && canonical(commandAssignments)
-      === canonical(scaleAssignments(immediatelyBeforeWrite, desiredReplicas));
+    && canonical(patchRegions)
+      === canonical(scalePatchRegions(target, desiredReplicas));
 }
 
-function deploymentIdentity(snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot): string {
+function deploymentIdentity(snapshot: ProtectedScaleSnapshot): string {
   return canonical({
     latestDeployment: snapshot.latestDeployment,
     activeDeployments: snapshot.activeDeployments,
     deployment: snapshot.deployment,
     domains: snapshot.domains,
     serviceInstanceId: snapshot.serviceInstanceId,
+    serviceSource: snapshot.serviceSource,
+    stagedPatchEmpty: snapshot.stagedPatchEmpty,
   });
 }
 
@@ -884,6 +1190,9 @@ function authoritativeSnapshotIdentity(snapshot: ProtectedScaleSnapshot): string
     environmentId: snapshot.environmentId,
     configuredReplicas: snapshot.configuredReplicas,
     configuredRegions: snapshot.configuredRegions,
+    serviceSource: snapshot.serviceSource,
+    environmentConfig: snapshot.environmentConfig,
+    stagedPatchEmpty: snapshot.stagedPatchEmpty,
     latestDeployment: snapshot.latestDeployment,
     activeDeployments: snapshot.activeDeployments,
     domains: snapshot.domains,
@@ -930,7 +1239,7 @@ function policyExact(cwd: string): boolean {
         "region",
         "githubEnvironment",
         "requiredGitRef",
-        "railwayCli",
+        "directMutation",
         "lifecycle",
         "productionConvergence",
         "workerBootstrap",
@@ -938,7 +1247,7 @@ function policyExact(cwd: string): boolean {
         "evidence",
       ]) &&
       value.schemaVersion ===
-        "pintpath-permanent-staging-scale-evidence-policy/v2" &&
+        "pintpath-permanent-staging-scale-evidence-policy/v3" &&
       value.activationState === PROTECTED_STAGING_SCALE_STATE &&
       value.projectId === PROJECT_ID &&
       value.productionEnvironmentId === PRODUCTION_ENVIRONMENT_ID &&
@@ -948,6 +1257,44 @@ function policyExact(cwd: string): boolean {
       value.region === REGION &&
       value.githubEnvironment === "permanent-staging-scale-evidence" &&
       value.requiredGitRef === "refs/heads/main" &&
+      exactKeys(value.directMutation, [
+        "endpoint",
+        "operationName",
+        "operation",
+        "maximumAttempts",
+        "automaticRetriesAllowed",
+        "stagingFullRegionPatchRequired",
+        "stagingRegions",
+        "productionRegions",
+        "zeroRegionsEncodedAsJsonNull",
+        "emptyStagedPatchRequired",
+        "providerHistoryContinuityRequired",
+        "providerPatchCrossFetchRequired",
+        "lostAcknowledgementReconciliationAllowed",
+        "providerCasOrLockVerified",
+        "externalMutationFreezeAttestation",
+        "externalMutationFreezeEnforcement",
+      ]) &&
+      value.directMutation.endpoint === GRAPHQL_ENDPOINT &&
+      value.directMutation.operationName ===
+        RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME &&
+      value.directMutation.operation === "environmentPatchCommit" &&
+      value.directMutation.maximumAttempts === 1 &&
+      value.directMutation.automaticRetriesAllowed === false &&
+      value.directMutation.stagingFullRegionPatchRequired === true &&
+      canonical(value.directMutation.stagingRegions) ===
+        canonical([REGION, LEGACY_STAGING_REGION]) &&
+      canonical(value.directMutation.productionRegions) === canonical([REGION]) &&
+      value.directMutation.zeroRegionsEncodedAsJsonNull === true &&
+      value.directMutation.emptyStagedPatchRequired === true &&
+      value.directMutation.providerHistoryContinuityRequired === true &&
+      value.directMutation.providerPatchCrossFetchRequired === true &&
+      value.directMutation.lostAcknowledgementReconciliationAllowed === true &&
+      value.directMutation.providerCasOrLockVerified === false &&
+      value.directMutation.externalMutationFreezeAttestation ===
+        PROTECTED_SCALE_EXTERNAL_MUTATION_FREEZE_ATTESTATION &&
+      value.directMutation.externalMutationFreezeEnforcement ===
+        EXTERNAL_MUTATION_FREEZE_ENFORCEMENT &&
       exactKeys(value.productionConvergence, [
         "environmentId",
         "publicOrigin",
@@ -1043,8 +1390,9 @@ function emptyChecks(): ScaleReceipt["checks"] {
   return {
     policyExact: false,
     githubAuthorityExact: false,
+    externalMutationFreezeAttested: false,
     tokenScopesExact: false,
-    cliExact: false,
+    directMutationContractExact: false,
     boundaryPreflightExact: false,
     targetPreflightExact: false,
     productionActivationPrerequisiteExact: false,
@@ -1053,12 +1401,17 @@ function emptyChecks(): ScaleReceipt["checks"] {
     durableIntentExact: false,
     repositoryPrewriteReasserted: false,
     writeAttemptedAtMostOnce: true,
+    mutationResponseClassified: false,
     acknowledgementExact: false,
+    lostAcknowledgementExact: false,
+    providerHistoryPrewriteExact: false,
+    providerHistoryPostflightExact: false,
     postflightAttempted: false,
     targetPostflightExact: false,
     runtimePostflightExact: false,
     candidateUnchanged: false,
     deploymentUnchanged: false,
+    providerConfigurationCollateralUnchanged: false,
     replicaTopologyEvidenceExact: false,
     boundaryPostflightExact: false,
     terminalEvidenceExact: false,
@@ -1066,10 +1419,205 @@ function emptyChecks(): ScaleReceipt["checks"] {
   };
 }
 
+export function protectedScaleCommitMessage(
+  direction: Direction,
+  candidateSha: string,
+  runId: string,
+): string {
+  return `PintPath scale ${direction} ${candidateSha} run ${runId}`;
+}
+
+function directMutationEvidence(
+  attempt: RailwayEnvironmentPatchCommitAttempt | null,
+  variables: Record<string, unknown> | null,
+  commitMessage: string | null,
+): ScaleReceipt["directMutationEvidence"] {
+  const requestBody = variables === null ? null : JSON.stringify({
+    operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+    query: RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+    variables,
+  });
+  const multiRegionConfig = variables !== null &&
+      typeof variables.patch === "object" && variables.patch !== null &&
+      !Array.isArray(variables.patch)
+    ? ((variables.patch as Record<string, unknown>).services as
+      Record<string, unknown> | undefined)?.[SERVICE_ID]
+    : null;
+  const deploy = typeof multiRegionConfig === "object" &&
+      multiRegionConfig !== null && !Array.isArray(multiRegionConfig)
+    ? (multiRegionConfig as Record<string, unknown>).deploy
+    : null;
+  const topology = typeof deploy === "object" && deploy !== null &&
+      !Array.isArray(deploy)
+    ? (deploy as Record<string, unknown>).multiRegionConfig
+    : null;
+  const zeroRegionsEncodedAsJsonNull = typeof topology === "object" &&
+    topology !== null && !Array.isArray(topology);
+  return {
+    operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+    operation: "environmentPatchCommit",
+    transportOutcome: attempt?.outcome ?? null,
+    querySha256: attempt?.querySha256 ??
+      sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION),
+    variablesSha256: attempt?.variablesSha256 ??
+      (variables === null ? null : sha256(JSON.stringify(variables))),
+    requestBodySha256: attempt?.requestBodySha256 ??
+      (requestBody === null ? null : sha256(requestBody)),
+    responseBodySha256: attempt?.responseBodySha256 ?? null,
+    acknowledgementSha256: attempt?.acknowledgementSha256 ?? null,
+    acknowledgementExact: attempt?.acknowledgementExact ?? false,
+    commitMessageSha256: commitMessage === null ? null : sha256(commitMessage),
+    zeroRegionsEncodedAsJsonNull:
+      attempt?.zeroRegionsEncodedAsJsonNull ?? zeroRegionsEncodedAsJsonNull,
+    providerCasOrLockVerified: false,
+    externalMutationFreezeEnforcement: EXTERNAL_MUTATION_FREEZE_ENFORCEMENT,
+  };
+}
+
+function mutationAttemptEvidenceExact(
+  attempt: RailwayEnvironmentPatchCommitAttempt,
+  variables: Record<string, unknown>,
+): boolean {
+  const requestBody = JSON.stringify({
+    operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+    query: RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+    variables,
+  });
+  const acknowledgementRelationExact = attempt.outcome === "acknowledged"
+    ? attempt.acknowledgementExact &&
+      typeof attempt.acknowledgementSha256 === "string" &&
+      SHA256_PATTERN.test(attempt.acknowledgementSha256) &&
+      typeof attempt.responseBodySha256 === "string" &&
+      SHA256_PATTERN.test(attempt.responseBodySha256)
+    : attempt.acknowledgementExact === false &&
+      attempt.acknowledgementSha256 === null &&
+      (attempt.responseBodySha256 === null ||
+        SHA256_PATTERN.test(attempt.responseBodySha256));
+  return attempt.operationName ===
+      RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME &&
+    attempt.querySha256 === sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION) &&
+    attempt.variablesSha256 === sha256(JSON.stringify(variables)) &&
+    attempt.requestBodySha256 === sha256(requestBody) &&
+    attempt.zeroRegionsEncodedAsJsonNull === true &&
+    acknowledgementRelationExact;
+}
+
+function patchHistoryPagesExact(
+  pages: readonly ScalePatchHistoryEvidence["pages"][number][],
+  rowCount: number,
+): boolean {
+  if (pages.length < 1 || pages.length > 8) return false;
+  let expectedAfter: string | null = null;
+  let rows = 0;
+  const endCursors = new Set<string>();
+  for (const [index, page] of pages.entries()) {
+    if (!exactKeys(page, [
+      "requestAfter",
+      "count",
+      "endCursor",
+      "hasNextPage",
+    ]) || page.requestAfter !== expectedAfter ||
+      !Number.isSafeInteger(page.count) || page.count < 0 || page.count > 100 ||
+      typeof page.hasNextPage !== "boolean" ||
+      !(page.endCursor === null || typeof page.endCursor === "string") ||
+      (typeof page.endCursor === "string" &&
+        (page.endCursor.length < 1 || page.endCursor.length > 4096 ||
+          /[\r\n\0]/.test(page.endCursor) || endCursors.has(page.endCursor))) ||
+      (page.count === 0 ? page.endCursor !== null : page.endCursor === null) ||
+      (page.hasNextPage && page.count !== 100) ||
+      (page.hasNextPage !== (index < pages.length - 1))) return false;
+    rows += page.count;
+    if (typeof page.endCursor === "string") {
+      endCursors.add(page.endCursor);
+    }
+    expectedAfter = page.endCursor;
+  }
+  return rows === rowCount;
+}
+
+export function patchHistoryEvidenceExact(
+  value: ScalePatchHistoryEvidence,
+  matchingCount: 0 | 1,
+  expectedCommitMessage: string,
+  expectedPatch: unknown,
+  producerWindow?: {
+    readonly startedAtMs: number;
+    readonly completedAtMs: number;
+  },
+): boolean {
+  const expectedMessageSha256 = sha256(expectedCommitMessage);
+  const expectedPatchSha256 = sha256(canonicalProviderJson(expectedPatch));
+  if (!exactKeys(value, [
+    "querySha256",
+    "pages",
+    "pageCount",
+    "rowCount",
+    "rowsProjectionSha256",
+    "nonMatchingRowsProjectionSha256",
+    "paginationCompleteExact",
+    "matchingPatchCount",
+    "matchingPatch",
+    "secretMaterialIncluded",
+    "secretDerivedCommitmentsIncluded",
+  ]) || !exactKeys(value.querySha256, ["history", "patch"]) ||
+    !Array.isArray(value.pages)) return false;
+  return value.querySha256.history ===
+      sha256(PROTECTED_STAGING_SCALE_PATCH_HISTORY_QUERY) &&
+    value.querySha256.patch === sha256(PROTECTED_STAGING_SCALE_PATCH_QUERY) &&
+    value.pageCount === value.pages.length && value.pageCount >= 1 &&
+    value.pageCount <= 8 && Number.isSafeInteger(value.rowCount) &&
+    value.rowCount >= 0 && value.rowCount <= 800 &&
+    patchHistoryPagesExact(value.pages, value.rowCount) &&
+    SHA256_PATTERN.test(value.rowsProjectionSha256) &&
+    SHA256_PATTERN.test(value.nonMatchingRowsProjectionSha256) &&
+    value.paginationCompleteExact && value.matchingPatchCount === matchingCount &&
+    value.secretMaterialIncluded === false &&
+    value.secretDerivedCommitmentsIncluded === false &&
+    (matchingCount === 0
+      ? value.matchingPatch === null &&
+        value.rowsProjectionSha256 === value.nonMatchingRowsProjectionSha256
+      : exactKeys(value.matchingPatch, [
+          "rowIndex",
+          "idSha256",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "appliedAt",
+          "messageSha256",
+          "patchSha256",
+          "crossFetchExact",
+        ]) && value.matchingPatch.rowIndex === 0 &&
+        value.matchingPatch.crossFetchExact === true &&
+        value.matchingPatch.status === "COMMITTED" &&
+        SHA256_PATTERN.test(value.matchingPatch.idSha256) &&
+        canonicalTimestamp(value.matchingPatch.createdAt) &&
+        canonicalTimestamp(value.matchingPatch.updatedAt) &&
+        canonicalTimestamp(value.matchingPatch.appliedAt) &&
+        Date.parse(value.matchingPatch.createdAt) <=
+          Date.parse(value.matchingPatch.updatedAt) &&
+        Date.parse(value.matchingPatch.appliedAt) <=
+          Date.parse(value.matchingPatch.updatedAt) &&
+        (producerWindow === undefined || (
+          Date.parse(value.matchingPatch.createdAt) >=
+            producerWindow.startedAtMs &&
+          Date.parse(value.matchingPatch.appliedAt) >=
+            producerWindow.startedAtMs &&
+          Date.parse(value.matchingPatch.createdAt) <=
+            producerWindow.completedAtMs &&
+          Date.parse(value.matchingPatch.appliedAt) <=
+            producerWindow.completedAtMs &&
+          Date.parse(value.matchingPatch.updatedAt) <=
+            producerWindow.completedAtMs
+        )) &&
+        value.matchingPatch.messageSha256 === expectedMessageSha256 &&
+        value.matchingPatch.patchSha256 === expectedPatchSha256);
+}
+
 function receipt(
   direction: Direction | null,
   outcome: ScaleReceipt["outcome"],
   candidateSha: string | null,
+  githubRunId: string | null,
   startedAt: string,
   completedAt: string,
   desiredReplicas: ReplicaCount | null,
@@ -1080,7 +1628,11 @@ function receipt(
   productionActivationPrerequisite:
     ScaleReceipt["productionActivationPrerequisite"],
   replicaTopology: ScaleReceipt["replicaTopology"],
-  command: CommandResult | null,
+  mutationAttempt: RailwayEnvironmentPatchCommitAttempt | null,
+  mutationVariables: Record<string, unknown> | null,
+  commitMessage: string | null,
+  providerHistoryPrewrite: ScalePatchHistoryEvidence | null,
+  providerHistoryPostflight: ScalePatchHistoryEvidence | null,
   checks: ScaleReceipt["checks"],
 ): ScaleReceipt {
   return {
@@ -1089,6 +1641,7 @@ function receipt(
     direction,
     outcome,
     candidateSha,
+    githubRunId,
     startedAt,
     completedAt,
     desiredReplicas,
@@ -1097,10 +1650,19 @@ function receipt(
     retryAllowed: false,
     intentSha256,
     terminalEvidenceSha256,
-    commandStdoutSha256: command?.stdoutSha256 ?? null,
-    commandStderrSha256: command?.stderrSha256 ?? null,
+    directMutationEvidence: directMutationEvidence(
+      mutationAttempt,
+      mutationVariables,
+      commitMessage,
+    ),
+    providerHistoryEvidence: {
+      prewrite: providerHistoryPrewrite,
+      postflight: providerHistoryPostflight,
+    },
     productionActivationPrerequisite,
     replicaTopology,
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
     checks,
   };
 }
@@ -1119,10 +1681,21 @@ export async function runProtectedPermanentStagingScale(
       argv: ["--policy", BOUNDARY_POLICY_PATH],
     }),
     reassertRepositoryState,
-    validateCli,
     validateProductionActivationPrerequisite:
       parseProductionScaleActivationPrerequisiteVerification,
-    runCommand,
+    commitScale: (token, input) => commitRailwayReplicaEnvironmentPatch(
+      fetch,
+      token,
+      input,
+    ),
+    readPatchHistory: (token, environmentId, commitMessage, expectedPatch) =>
+      readPatchHistory(
+        fetch,
+        token,
+        environmentId,
+        commitMessage,
+        expectedPatch,
+      ),
     probeRuntime: (target, candidateSha, deploymentId, expectation) => probeRuntime(
       fetch,
       target,
@@ -1145,6 +1718,9 @@ export async function runProtectedPermanentStagingScale(
   const checks = emptyChecks();
   const direction = args?.direction ?? null;
   const candidateSha = args?.candidateSha ?? null;
+  const githubRunId = RUN_ID_PATTERN.test(dependencies.env.GITHUB_RUN_ID ?? "")
+    ? dependencies.env.GITHUB_RUN_ID!
+    : null;
   const desiredReplicas = direction === "quiesce-staging-zero" ? 0
     : direction === "converge-one" || direction === "bootstrap-staging-one" ? 1
       : direction === "out" || direction === "converge-production-two" ? 2 : null;
@@ -1152,12 +1728,17 @@ export async function runProtectedPermanentStagingScale(
   let attempts: 0 | 1 = 0;
   let intentSha: string | null = null;
   let terminalSha: string | null = null;
-  let command: CommandResult | null = null;
+  let mutationAttempt: RailwayEnvironmentPatchCommitAttempt | null = null;
+  let mutationVariables: Record<string, unknown> | null = null;
+  let commitMessage: string | null = null;
+  let providerHistoryPrewrite: ScalePatchHistoryEvidence | null = null;
+  let providerHistoryPostflight: ScalePatchHistoryEvidence | null = null;
   let outcome: ScaleReceipt["outcome"] = "blocked";
   let before: ProtectedScaleSnapshot | null = null;
   let immediatelyBeforeWrite: ProtectedScaleSnapshot | null = null;
   let after: ProtectedScaleSnapshot | null = null;
-  let commandAssignments: readonly string[] = [];
+  let patchRegions: readonly RailwayRegionReplicaTarget[] = [];
+  let intendedPatchRegions: readonly RailwayRegionReplicaTarget[] = [];
   let deploymentIdSha256: string | null = null;
   let metadataToken = "";
   let productionActivationVerification:
@@ -1179,10 +1760,15 @@ export async function runProtectedPermanentStagingScale(
       && dependencies.env.GITHUB_REF === "refs/heads/main"
       && dependencies.env.GITHUB_SHA === args.candidateSha
       && dependencies.env.PINTPATH_SCALE_CONFIRMATION === confirmation
-      && (direction === "converge-one"
-        || dependencies.env.GITHUB_RUN_ATTEMPT === "1");
+      && dependencies.env.GITHUB_RUN_ATTEMPT === "1";
+    checks.externalMutationFreezeAttested =
+      dependencies.env.PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION ===
+        PROTECTED_SCALE_EXTERNAL_MUTATION_FREEZE_ATTESTATION;
     if (!args || !checks.policyExact || !checks.githubAuthorityExact) {
       throw new Error("authority_invalid");
+    }
+    if (!checks.externalMutationFreezeAttested) {
+      throw new Error("external_mutation_freeze_invalid");
     }
     const productionActivationRunId = args.productionActivationRunId
       ?? dependencies.env.PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID
@@ -1191,7 +1777,7 @@ export async function runProtectedPermanentStagingScale(
       ?? dependencies.env.PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE
       ?? null;
     if (direction === "converge-production-two") {
-      const currentRunId = dependencies.env.GITHUB_RUN_ID ?? "";
+      const currentRunId = githubRunId ?? "";
       if (
         !productionActivationRunId
         || !RUN_ID_PATTERN.test(productionActivationRunId)
@@ -1253,7 +1839,6 @@ export async function runProtectedPermanentStagingScale(
     const mutationToken = direction === "converge-production-two"
       ? dependencies.env.PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN ?? ""
       : dependencies.env.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN ?? "";
-    const cli = dependencies.env.PINTPATH_RAILWAY_CLI_PATH ?? "";
     if (!TOKEN_PATTERN.test(metadataToken) || !TOKEN_PATTERN.test(mutationToken)
       || metadataToken === mutationToken) throw new Error("token_invalid");
     const [metadataScope, mutationScope] = await Promise.all([
@@ -1262,9 +1847,47 @@ export async function runProtectedPermanentStagingScale(
     ]);
     checks.tokenScopesExact = parseScope(metadataScope, target.environmentId)
       && parseScope(mutationScope, target.environmentId);
-    checks.cliExact = dependencies.validateCli(cli);
+    const currentRunId = githubRunId ?? "";
+    if (!RUN_ID_PATTERN.test(currentRunId)) throw new Error("run_id_invalid");
+    intendedPatchRegions = scalePatchRegions(target, desiredReplicas!);
+    commitMessage = protectedScaleCommitMessage(
+      args.direction,
+      args.candidateSha,
+      currentRunId,
+    );
+    mutationVariables = railwayEnvironmentPatchCommitVariables({
+      environmentId: target.environmentId,
+      serviceId: SERVICE_ID,
+      regions: intendedPatchRegions,
+      commitMessage,
+    });
+    const expectedMutationVariables = {
+      environmentId: target.environmentId,
+      patch: {
+        services: {
+          [SERVICE_ID]: {
+            deploy: {
+              multiRegionConfig: Object.fromEntries(intendedPatchRegions.map((entry) => [
+                entry.region,
+                entry.numReplicas === 0 ? null : {
+                  numReplicas: entry.numReplicas,
+                },
+              ])),
+            },
+          },
+        },
+      },
+      commitMessage,
+    };
+    checks.directMutationContractExact =
+      RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION.includes(
+        `mutation ${RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME}`,
+      ) && RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION.includes(
+        "environmentPatchCommit(",
+      ) && canonical(mutationVariables) === canonical(expectedMutationVariables);
     checks.boundaryPreflightExact = await dependencies.boundaryCheck() === 0;
-    if (!checks.tokenScopesExact || !checks.cliExact || !checks.boundaryPreflightExact) {
+    if (!checks.tokenScopesExact || !checks.directMutationContractExact ||
+      !checks.boundaryPreflightExact) {
       throw new Error("preflight_invalid");
     }
     before = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
@@ -1321,7 +1944,6 @@ export async function runProtectedPermanentStagingScale(
     if (!checks.runtimePreflightExact) throw new Error("runtime_fence_invalid");
     if ((direction === "converge-one" && beforeReplicas === 1)
       || (direction === "converge-production-two" && beforeReplicas === 2)) {
-      checks.acknowledgementExact = true;
       checks.postflightAttempted = true;
       after = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
       checks.targetPostflightExact = authoritativeSnapshotIdentity(before)
@@ -1343,6 +1965,8 @@ export async function runProtectedPermanentStagingScale(
         === args.expectedDeploymentSha;
       checks.deploymentUnchanged = deploymentIdentity(before)
         === deploymentIdentity(after);
+      checks.providerConfigurationCollateralUnchanged =
+        providerConfigurationCollateralExact(before, after);
       checks.replicaTopologyEvidenceExact = topologyEvidenceExact(
         args.direction,
         desiredReplicas!,
@@ -1351,7 +1975,7 @@ export async function runProtectedPermanentStagingScale(
         before,
         immediatelyBeforeWrite,
         after,
-        commandAssignments,
+        patchRegions,
       );
       checks.repositoryPrewriteReasserted = dependencies.reassertRepositoryState(
         dependencies.cwd,
@@ -1360,18 +1984,20 @@ export async function runProtectedPermanentStagingScale(
       checks.boundaryPostflightExact = await dependencies.boundaryCheck() === 0;
       outcome = checks.targetPostflightExact && checks.runtimePostflightExact
         && checks.candidateUnchanged && checks.deploymentUnchanged
+        && checks.providerConfigurationCollateralUnchanged
         && checks.replicaTopologyEvidenceExact
         && checks.repositoryPrewriteReasserted
         && checks.boundaryPostflightExact
         ? "already_converged"
         : "mutation_uncertain";
     } else {
-      commandAssignments = scaleAssignments(before, desiredReplicas!);
+      patchRegions = intendedPatchRegions;
       const beforeTopology = topologySnapshot(before)!;
       const intent = canonical({
-        schemaVersion: "pintpath-permanent-staging-scale-intent/v2",
+        schemaVersion: "pintpath-permanent-staging-scale-intent/v3",
         direction,
         candidateSha: args.candidateSha,
+        githubRunId: currentRunId,
         expectedDeploymentSha: args.expectedDeploymentSha,
         projectId: PROJECT_ID,
         environmentId: target.environmentId,
@@ -1381,12 +2007,24 @@ export async function runProtectedPermanentStagingScale(
         legacyAggregateBeforeReplicas: before.numReplicas,
         beforeConfiguredRegions: before.configuredRegions,
         beforeConfiguredTopologySha256: beforeTopology.configuredTopologySha256,
-        commandAssignments,
+        patchRegions,
         desiredReplicas,
         productionActivationPrerequisite,
         maximumAttempts: 1,
         retryAllowed: false,
         beforeDeploymentSha256: sha256(deploymentIdentity(before)),
+        stagedPatchEmptyBefore: before.stagedPatchEmpty,
+        mutation: {
+          operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+          operation: "environmentPatchCommit",
+          querySha256: sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION),
+          variablesSha256: sha256(JSON.stringify(mutationVariables)),
+          commitMessageSha256: sha256(commitMessage!),
+          zeroRegionsEncodedAsJsonNull: true,
+          providerCasOrLockVerified: false,
+          externalMutationFreezeEnforcement:
+            EXTERNAL_MUTATION_FREEZE_ENFORCEMENT,
+        },
       });
       intentSha = dependencies.writeDurable(
         args.evidenceDirectory,
@@ -1422,7 +2060,7 @@ export async function runProtectedPermanentStagingScale(
           ? null
           : railwayDeploymentIdentityIdSha256(
               "deployment",
-              immediatelyBeforeWrite.deployment.id,
+              immediatelyBeforeWrite!.deployment.id,
             );
         checks.productionActivationDeploymentContinuityExact =
           checks.productionActivationDeploymentContinuityExact
@@ -1467,15 +2105,101 @@ export async function runProtectedPermanentStagingScale(
         throw new Error("repository_prewrite_drift");
       }
 
+      providerHistoryPrewrite = await dependencies.readPatchHistory(
+        metadataToken,
+        target.environmentId,
+        commitMessage!,
+        mutationVariables!.patch,
+      );
+      checks.providerHistoryPrewriteExact = patchHistoryEvidenceExact(
+        providerHistoryPrewrite,
+        0,
+        commitMessage!,
+        mutationVariables!.patch,
+      );
+      if (!checks.providerHistoryPrewriteExact) {
+        throw new Error("provider_patch_history_prewrite_invalid");
+      }
+
+      try {
+        runtimePrewriteExact = direction === "quiesce-staging-zero"
+          ? await dependencies.probeRuntime(
+              target,
+              args.expectedDeploymentSha,
+              immediatelyBeforeWrite!.deployment.id,
+              { legacyIdentityOnly: true },
+            )
+          : direction === "bootstrap-staging-one"
+            ? await dependencies.probeRuntimeAbsent(target)
+            : await dependencies.probeRuntime(
+                target,
+                args.expectedDeploymentSha,
+                immediatelyBeforeWrite!.deployment.id,
+                { enabled: true, candidateBound: true },
+              );
+      } catch {
+        runtimePrewriteExact = false;
+      }
+      checks.runtimePreflightExact = checks.runtimePreflightExact &&
+        runtimePrewriteExact;
+      checks.repositoryPrewriteReasserted =
+        checks.repositoryPrewriteReasserted &&
+        dependencies.reassertRepositoryState(
+          dependencies.cwd,
+          args.candidateSha,
+        );
+      if (!checks.runtimePreflightExact ||
+        !checks.repositoryPrewriteReasserted) {
+        throw new Error("final_prewrite_reassertion_failed");
+      }
+
+      // This authoritative provider read is intentionally the last awaited
+      // operation before the sole mutation attempt. The provider exposes no
+      // CAS/lock primitive, so any earlier read would leave a wider overwrite
+      // window after the history, runtime, and repository reassertions.
+      const finalPrewrite = await querySnapshot(
+        dependencies.fetchImpl,
+        metadataToken,
+        target,
+      );
+      checks.targetPreflightExact = checks.targetPreflightExact &&
+        authoritativeSnapshotIdentity(finalPrewrite) ===
+          authoritativeSnapshotIdentity(before) &&
+        snapshotExact(
+          finalPrewrite,
+          args.expectedDeploymentSha,
+          beforeReplicas as ReplicaCount,
+          target,
+          direction === "quiesce-staging-zero"
+            ? "any-single-region"
+            : "primary-region",
+        );
+      if (!checks.targetPreflightExact) {
+        throw new Error("provider_final_prewrite_drift");
+      }
+      immediatelyBeforeWrite = finalPrewrite;
+
       attempts = 1;
-      command = await dependencies.runCommand(cli, [
-        "service", "scale", ...commandAssignments,
-        "-p", PROJECT_ID,
-        "-e", target.environmentId,
-        "-s", SERVICE_ID,
-        "--json",
-      ], mutationToken);
-      checks.acknowledgementExact = command.code === 0 && command.timedOut === false;
+      try {
+        mutationAttempt = await dependencies.commitScale(mutationToken, {
+          environmentId: target.environmentId,
+          serviceId: SERVICE_ID,
+          regions: patchRegions,
+          commitMessage: commitMessage!,
+        });
+      } catch {
+        mutationAttempt = null;
+      }
+      checks.mutationResponseClassified = mutationAttempt !== null &&
+        mutationAttemptEvidenceExact(mutationAttempt, mutationVariables!);
+      checks.acknowledgementExact =
+        checks.mutationResponseClassified &&
+        mutationAttempt?.outcome === "acknowledged" &&
+        mutationAttempt.acknowledgementExact;
+      checks.lostAcknowledgementExact =
+        checks.mutationResponseClassified &&
+        mutationAttempt?.outcome === "transport_uncertain" &&
+        !mutationAttempt.acknowledgementExact;
       checks.postflightAttempted = true;
       after = await reconcile(
         dependencies,
@@ -1485,6 +2209,28 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
+      try {
+        providerHistoryPostflight = await dependencies.readPatchHistory(
+          metadataToken,
+          target.environmentId,
+          commitMessage!,
+          mutationVariables!.patch,
+        );
+      } catch {
+        providerHistoryPostflight = null;
+      }
+      checks.providerHistoryPostflightExact = providerHistoryPostflight !== null &&
+        patchHistoryEvidenceExact(
+          providerHistoryPostflight,
+          1,
+          commitMessage!,
+          mutationVariables!.patch,
+        ) &&
+        providerHistoryPrewrite !== null &&
+        providerHistoryPostflight.rowCount ===
+          providerHistoryPrewrite.rowCount + 1 &&
+        providerHistoryPostflight.nonMatchingRowsProjectionSha256 ===
+          providerHistoryPrewrite.rowsProjectionSha256;
       checks.runtimePostflightExact = after !== null && (
         direction === "quiesce-staging-zero"
           ? await dependencies.probeRuntimeAbsent(target)
@@ -1500,6 +2246,8 @@ export async function runProtectedPermanentStagingScale(
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
+      checks.providerConfigurationCollateralUnchanged = after !== null &&
+        providerConfigurationCollateralExact(before, after);
       checks.replicaTopologyEvidenceExact = topologyEvidenceExact(
         args.direction,
         desiredReplicas!,
@@ -1508,20 +2256,26 @@ export async function runProtectedPermanentStagingScale(
         before,
         immediatelyBeforeWrite,
         after,
-        commandAssignments,
+        patchRegions,
       );
       try {
         checks.boundaryPostflightExact = await dependencies.boundaryCheck() === 0;
       } catch {
         checks.boundaryPostflightExact = false;
       }
-      outcome = checks.acknowledgementExact && checks.targetPostflightExact
+      const exactReconciledTransition = checks.targetPostflightExact
         && checks.candidateUnchanged && checks.deploymentUnchanged
+        && checks.providerConfigurationCollateralUnchanged
+        && checks.providerHistoryPrewriteExact
+        && checks.providerHistoryPostflightExact
         && checks.replicaTopologyEvidenceExact
         && checks.runtimePreflightExact && checks.runtimePostflightExact
-        && checks.boundaryPostflightExact && checks.repositoryPrewriteReasserted
+        && checks.boundaryPostflightExact && checks.repositoryPrewriteReasserted;
+      outcome = exactReconciledTransition && checks.acknowledgementExact
         ? "scaled"
-        : "mutation_uncertain";
+        : exactReconciledTransition && checks.lostAcknowledgementExact
+          ? "reconciled_scaled"
+          : "mutation_uncertain";
     }
   } catch {
     outcome = attempts === 1 ? "mutation_uncertain" : "failed_before_attempt";
@@ -1536,6 +2290,28 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
+      try {
+        providerHistoryPostflight = await dependencies.readPatchHistory(
+          metadataToken,
+          target.environmentId,
+          commitMessage!,
+          mutationVariables!.patch,
+        );
+      } catch {
+        providerHistoryPostflight = null;
+      }
+      checks.providerHistoryPostflightExact = providerHistoryPostflight !== null &&
+        patchHistoryEvidenceExact(
+          providerHistoryPostflight,
+          1,
+          commitMessage!,
+          mutationVariables!.patch,
+        ) &&
+        providerHistoryPrewrite !== null &&
+        providerHistoryPostflight.rowCount ===
+          providerHistoryPrewrite.rowCount + 1 &&
+        providerHistoryPostflight.nonMatchingRowsProjectionSha256 ===
+          providerHistoryPrewrite.rowsProjectionSha256;
       checks.runtimePostflightExact = after !== null && (
         direction === "quiesce-staging-zero"
           ? await dependencies.probeRuntimeAbsent(target)
@@ -1551,6 +2327,9 @@ export async function runProtectedPermanentStagingScale(
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = before !== null && after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
+      checks.providerConfigurationCollateralUnchanged =
+        before !== null && after !== null &&
+        providerConfigurationCollateralExact(before, after);
     }
     if (checks.boundaryPreflightExact && !checks.boundaryPostflightExact) {
       try {
@@ -1570,17 +2349,41 @@ export async function runProtectedPermanentStagingScale(
       before,
       immediatelyBeforeWrite,
       after,
-      commandAssignments,
+      patchRegions,
     );
-  if ((outcome === "scaled" || outcome === "already_converged")
+  if ((outcome === "scaled" || outcome === "reconciled_scaled" ||
+    outcome === "already_converged")
     && !checks.replicaTopologyEvidenceExact) {
     outcome = "mutation_uncertain";
   }
+  if (attempts === 0) {
+    mutationVariables = null;
+    commitMessage = null;
+  }
   completedAt = new Date(dependencies.now()).toISOString();
+  if (attempts === 1 && providerHistoryPostflight !== null &&
+    commitMessage !== null && mutationVariables !== null) {
+    checks.providerHistoryPostflightExact =
+      checks.providerHistoryPostflightExact && patchHistoryEvidenceExact(
+        providerHistoryPostflight,
+        1,
+        commitMessage,
+        mutationVariables.patch,
+        {
+          startedAtMs: Date.parse(startedAt),
+          completedAtMs: Date.parse(completedAt),
+        },
+      );
+    if ((outcome === "scaled" || outcome === "reconciled_scaled") &&
+      !checks.providerHistoryPostflightExact) {
+      outcome = "mutation_uncertain";
+    }
+  }
   let provisional = receipt(
     direction,
     outcome,
     candidateSha,
+    githubRunId,
     startedAt,
     completedAt,
     desiredReplicas,
@@ -1594,15 +2397,19 @@ export async function runProtectedPermanentStagingScale(
       before,
       immediatelyBeforeWrite,
       after,
-      commandAssignments,
+      patchRegions,
     ),
-    command,
+    mutationAttempt,
+    mutationVariables,
+    commitMessage,
+    providerHistoryPrewrite,
+    providerHistoryPostflight,
     checks,
   );
   if (args && (checks.durableIntentExact || outcome === "already_converged")) {
     try {
       const terminal = canonical({
-        schemaVersion: "pintpath-permanent-staging-scale-terminal/v2",
+        schemaVersion: "pintpath-permanent-staging-scale-terminal/v3",
         receipt: provisional,
       });
       terminalSha = dependencies.writeDurable(
@@ -1620,6 +2427,7 @@ export async function runProtectedPermanentStagingScale(
     direction,
     outcome,
     candidateSha,
+    githubRunId,
     startedAt,
     completedAt,
     desiredReplicas,
@@ -1633,9 +2441,13 @@ export async function runProtectedPermanentStagingScale(
       before,
       immediatelyBeforeWrite,
       after,
-      commandAssignments,
+      patchRegions,
     ),
-    command,
+    mutationAttempt,
+    mutationVariables,
+    commitMessage,
+    providerHistoryPrewrite,
+    providerHistoryPostflight,
     checks,
   );
   let durableReceipt = finalReceipt;
@@ -1646,6 +2458,7 @@ export async function runProtectedPermanentStagingScale(
         direction,
         outcome,
         candidateSha,
+        githubRunId,
         startedAt,
         completedAt,
         desiredReplicas,
@@ -1659,9 +2472,13 @@ export async function runProtectedPermanentStagingScale(
           before,
           immediatelyBeforeWrite,
           after,
-          commandAssignments,
+          patchRegions,
         ),
-        command,
+        mutationAttempt,
+        mutationVariables,
+        commitMessage,
+        providerHistoryPrewrite,
+        providerHistoryPostflight,
         checks,
       );
       const source = canonical(durableReceipt);
@@ -1681,6 +2498,7 @@ export async function runProtectedPermanentStagingScale(
     direction,
     outcome,
     candidateSha,
+    githubRunId,
     startedAt,
     completedAt,
     desiredReplicas,
@@ -1694,13 +2512,18 @@ export async function runProtectedPermanentStagingScale(
       before,
       immediatelyBeforeWrite,
       after,
-      commandAssignments,
+      patchRegions,
     ),
-    command,
+    mutationAttempt,
+    mutationVariables,
+    commitMessage,
+    providerHistoryPrewrite,
+    providerHistoryPostflight,
     checks,
   );
   dependencies.writeOutput(`${JSON.stringify(durableReceipt)}\n`);
-  return (outcome === "scaled" || outcome === "already_converged")
+  return (outcome === "scaled" || outcome === "reconciled_scaled" ||
+    outcome === "already_converged")
     && checks.runtimePreflightExact && checks.runtimePostflightExact
     && checks.replicaTopologyEvidenceExact
     && checks.terminalEvidenceExact && checks.finalReceiptEvidenceExact ? 0 : 1;
@@ -1712,8 +2535,11 @@ export const protectedPermanentStagingScaleInternals = {
   parseArguments,
   parseDiscovery,
   parseScope,
+  mutationAttemptEvidenceExact,
+  patchHistoryEvidenceExact,
   probeRuntimeAbsent,
-  scaleAssignments,
+  readPatchHistory,
+  scalePatchRegions,
   snapshotExact,
 };
 

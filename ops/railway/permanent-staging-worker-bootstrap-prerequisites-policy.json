@@ -22,7 +22,7 @@
     },
     "scale": {
       "path": "ops/railway/permanent-staging-scale-evidence-policy.json",
-      "sha256": "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608"
+      "sha256": "e960db6dde4c367ae26148d5e4c0e013b8f8cb5e4923bdced9a606d965673cb0"
     },
     "fencedDeployment": {
       "path": "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
@@ -34,7 +34,7 @@
     },
     "coldRecovery": {
       "path": "ops/railway/permanent-staging-cold-recovery-policy.json",
-      "sha256": "83d3c01669719a2e061b120b5337f2b6119782357a1b68f5537352b0e8e15666"
+      "sha256": "02fa6bf7154341a1fbb09ed68169585fe8ce9432e826108f993e6992d9d8e413"
     },
     "venueDirectory": {
       "path": "ops/supabase/permanent-staging-venue-directory-policy.json",
@@ -69,7 +69,7 @@
       "runNameTemplate": "Permanent staging worker bootstrap | quiesce | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-worker-bootstrap-quiesce-<candidate-sha>",
       "receiptFilename": "quiesce-staging-zero-receipt.json",
-      "receiptSchema": "pintpath-permanent-staging-scale-operation/v3",
+      "receiptSchema": "pintpath-permanent-staging-scale-operation/v4",
       "prerequisitesFilename": "prerequisites-verification.json"
     },
     "cold-quiesce": {
@@ -79,7 +79,7 @@
       "alternateReadOnlyRunNameTemplate": "Permanent staging cold recovery | reconcile-quiesce | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-cold-quiesce-<candidate-sha>",
       "receiptFilename": "cold-quiesce-receipt.json",
-      "receiptSchema": "pintpath-permanent-staging-cold-quiesce/v4",
+      "receiptSchema": "pintpath-permanent-staging-cold-quiesce/v6",
       "prerequisitesFilename": "prerequisites-verification.json",
       "replicasBefore": 1,
       "replicasAfter": 0,
@@ -138,7 +138,7 @@
       "alternateReadOnlyRunNameTemplate": "Permanent staging worker bootstrap | reconcile-restore | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-worker-bootstrap-restore-<candidate-sha>",
       "receiptFilename": "bootstrap-staging-one-receipt.json",
-      "receiptSchema": "pintpath-permanent-staging-scale-operation/v3",
+      "receiptSchema": "pintpath-permanent-staging-scale-operation/v4",
       "alternateReadOnlyReceiptSchema": "pintpath-permanent-staging-bootstrap-restore-reconciliation/v2",
       "prerequisitesFilename": "prerequisites-verification.json"
     },
@@ -266,7 +266,7 @@
     "sameMainRefRequired": true
   },
   "evidence": {
-    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v5",
+    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v6",
     "filename": "prerequisites-verification.json",
     "canonicalJsonRequired": true,
     "artifactDigestRequired": true,

@@ -156,7 +156,12 @@ function reviewedAuthority(
 function prerequisites(
   deploymentId = DEPLOYMENT_ID,
 ): StagingWorkerBootstrapPrerequisitesVerification {
-  const kinds = ["prepare", "quiesce", "fenced-deployment"] as const;
+  const kinds = [
+    "prepare",
+    "quiesce",
+    "fenced-deployment",
+    "venue-directory",
+  ] as const;
   return {
     operation: "reconcile-restore",
     bootstrapPath: "healthy-legacy",
@@ -165,10 +170,14 @@ function prerequisites(
     prerequisites: kinds.map((kind, index) => ({
       kind,
       receipt: {
-        sourceSha: kind === "fenced-deployment" ? CANDIDATE : "b".repeat(40),
+        sourceSha: kind === "fenced-deployment" || kind === "venue-directory"
+          ? CANDIDATE
+          : "b".repeat(40),
         deploymentIdSha256: kind === "fenced-deployment"
           ? railwayDeploymentIdentityIdSha256("deployment", deploymentId)!
-          : "c".repeat(64),
+          : kind === "venue-directory"
+            ? "d".repeat(64)
+            : "c".repeat(64),
       },
       runId: String(710 + index),
     })),

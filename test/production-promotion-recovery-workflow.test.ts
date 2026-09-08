@@ -52,6 +52,28 @@ describe("protected production promotion-recovery workflow", () => {
     expect(workflow).toContain("--stage scale");
     expect(workflow).toContain("--stage close");
     expect(workflow).toContain("--production-scale-receipt");
+    const attestation = stepContaining(
+      workflow,
+      "npm run --silent production:promotion-recovery:attest --",
+    );
+    expect(attestation).toContain(
+      "pintpath-production-promotion-recovery-github/required-chain.json",
+    );
+    expect(attestation).toContain(
+      'value.productionChain.filter((entry) => entry?.stage === "scale")',
+    );
+    for (const guard of [
+      'value.schemaVersion !== "pintpath-github-release-candidate-receipt/v5"',
+      "value.candidateSha !== process.argv[2]",
+      "matches.length !== 1",
+      "!Number.isSafeInteger(selected?.runId)",
+      "selected.runId <= 0",
+      'selected?.artifact?.stage !== "scale"',
+      "selected.artifact.runId !== selected.runId",
+    ]) expect(attestation).toContain(guard);
+    expect(attestation).toContain(
+      '--production-scale-run-id "$production_scale_run_id"',
+    );
     expect(workflow).toContain(
       "PINTPATH_PROMOTION_RECOVERY_REVIEWER_ONE_PUBLIC_KEY_BASE64",
     );
@@ -151,6 +173,21 @@ describe("protected production promotion-recovery workflow", () => {
     expect(activation).toContain("production:promotion-recovery:pitr:observe");
     expect(activation).toContain("production-deployment-receipt.json");
     expect(activation).toContain("production-scale-receipt.json");
+    expect(activation).toContain(
+      'value.productionChain.filter((entry) => entry?.stage === "scale")',
+    );
+    for (const guard of [
+      'value.schemaVersion !== "pintpath-github-release-candidate-receipt/v5"',
+      "value.candidateSha !== process.argv[2]",
+      "matches.length !== 1",
+      "!Number.isSafeInteger(selected?.runId)",
+      "selected.runId <= 0",
+      'selected?.artifact?.stage !== "scale"',
+      "selected.artifact.runId !== selected.runId",
+    ]) expect(activation).toContain(guard);
+    expect(activation).toContain(
+      '--production-scale-run-id "$production_scale_run_id"',
+    );
     expect(activation).toContain("closed-route-receipt.json");
     expect(activation).toContain("logical-backup-manifest.json");
     expect(activation).not.toContain("PINTPATH_RAILWAY_PITR_ENABLE_TOKEN");

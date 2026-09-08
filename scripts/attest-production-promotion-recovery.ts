@@ -5,11 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { parseProductionApplicationDeploymentReceipt } from
   "./lib/production-application-deployment-receipt.js";
-import {
-  PROTECTED_STAGING_SCALE_SCHEMA,
-} from "./execute-protected-permanent-staging-scale.js";
-import { protectedScaleReplicaTopologyExact } from
-  "./lib/protected-scale-receipt-topology.js";
+import { parseProtectedProductionScaleReceipt } from
+  "./lib/protected-production-scale-receipt.js";
 import {
   PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA,
   productionRouteReplicaTopologyExact,
@@ -61,6 +58,7 @@ const PICTURE_PITR_SCHEMA = "pintpath-production-post-promotion-pitr-observation
 const STOCK_LOCALHOST_PROFILE = "railway-stock-localhost-ca-v1";
 const SHA256 = /^[a-f0-9]{64}$/;
 const CANDIDATE = /^[a-f0-9]{40}$/;
+const RUN_ID = /^[1-9][0-9]{0,19}$/;
 const MAX_JSON_BYTES = 128 * 1024 * 1024;
 const MAX_KEY_BYTES = 64 * 1024;
 const MAX_APPROVAL_AGE_MS = 21_600_000;
@@ -68,7 +66,7 @@ const MAX_APPROVAL_AGE_MS = 21_600_000;
 const ARGUMENTS = new Set([
   "--authority", "--authority-sha256", "--production-deployment-receipt",
   "--activation-receipt", "--activation-github-authority",
-  "--production-scale-receipt",
+  "--production-scale-receipt", "--production-scale-run-id",
   "--closed-route-receipt", "--closed-route-terminal",
   "--apply-authorization-receipt", "--apply-operation-receipt", "--pitr-receipt",
   "--logical-backup-manifest", "--logical-offsite-result", "--logical-worm-result",
@@ -369,85 +367,21 @@ function verifyScale(
   candidateSha: string,
   deploymentBeforeActivationIdSha256: string,
   deploymentCompletedAt: string,
+  productionScaleRunId: string,
 ): { readonly completedAt: string; readonly deploymentIdSha256: string } {
-  const checks = value.checks;
-  const prerequisite = value.productionActivationPrerequisite;
-  const attempts = value.attempts;
-  const checkKeys = [
-    "policyExact", "githubAuthorityExact", "tokenScopesExact", "cliExact",
-    "boundaryPreflightExact", "targetPreflightExact",
-    "productionActivationPrerequisiteExact",
-    "productionActivationDeploymentContinuityExact", "runtimePreflightExact",
-    "durableIntentExact", "repositoryPrewriteReasserted",
-    "writeAttemptedAtMostOnce", "acknowledgementExact", "postflightAttempted",
-    "targetPostflightExact", "runtimePostflightExact", "candidateUnchanged",
-    "deploymentUnchanged", "replicaTopologyEvidenceExact",
-    "boundaryPostflightExact", "terminalEvidenceExact",
-    "finalReceiptEvidenceExact",
-  ];
-  if (
-    !exactKeys(value, [
-      "schemaVersion", "executorState", "direction", "outcome", "candidateSha",
-      "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256",
-      "attempts", "retryAllowed", "intentSha256", "terminalEvidenceSha256",
-      "commandStdoutSha256", "commandStderrSha256",
-      "productionActivationPrerequisite", "replicaTopology", "checks",
-    ])
-    || value.schemaVersion !== PROTECTED_STAGING_SCALE_SCHEMA
-    || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
-    || value.direction !== "converge-production-two"
-    || !["scaled", "already_converged"].includes(String(value.outcome))
-    || value.candidateSha !== candidateSha
-    || value.desiredReplicas !== 2
-    || typeof value.deploymentIdSha256 !== "string"
-    || !SHA256.test(value.deploymentIdSha256)
-    || value.retryAllowed !== false
-    || (attempts !== 0 && attempts !== 1)
-    || typeof value.terminalEvidenceSha256 !== "string"
-    || !SHA256.test(value.terminalEvidenceSha256)
-    || (attempts === 0
-      ? value.intentSha256 !== null
-        || value.commandStdoutSha256 !== null
-        || value.commandStderrSha256 !== null
-      : typeof value.intentSha256 !== "string" || !SHA256.test(value.intentSha256)
-        || typeof value.commandStdoutSha256 !== "string"
-        || !SHA256.test(value.commandStdoutSha256)
-        || typeof value.commandStderrSha256 !== "string"
-        || !SHA256.test(value.commandStderrSha256))
-    || !isObject(prerequisite)
-    || !exactKeys(prerequisite, [
-      "runId", "verificationSha256", "terminalSha256", "prerequisitesSha256",
-      "deploymentBeforeIdSha256", "deploymentAfterIdSha256",
-    ])
-    || typeof prerequisite.runId !== "string"
-    || !/^[1-9][0-9]*$/.test(prerequisite.runId)
-    || [prerequisite.verificationSha256, prerequisite.terminalSha256,
-      prerequisite.prerequisitesSha256].some(
-      (entry) => typeof entry !== "string" || !SHA256.test(entry),
-    )
-    || prerequisite.deploymentBeforeIdSha256 !== deploymentBeforeActivationIdSha256
-    || prerequisite.deploymentAfterIdSha256 !== value.deploymentIdSha256
-    || prerequisite.deploymentAfterIdSha256 === prerequisite.deploymentBeforeIdSha256
-    || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
-      direction: "converge-production-two",
-      attempts: attempts === 0 ? 0 : 1,
-      desiredReplicas: 2,
-      target: "production",
-    })
-    || !isObject(checks)
-    || !exactKeys(checks, checkKeys)
-    || Object.entries(checks).some(([name, entry]) => (
-      name === "durableIntentExact" ? entry !== (attempts === 1) : entry !== true
-    ))
-    || (value.outcome === "scaled") !== (attempts === 1)
-  ) fail("production_scale_invalid");
-  const startedAt = exactTimestamp(value.startedAt);
-  const completedAt = exactTimestamp(value.completedAt);
+  const parsed = parseProtectedProductionScaleReceipt(value, {
+    candidateSha,
+    deploymentBeforeActivationIdSha256,
+    expectedGithubRunId: productionScaleRunId,
+  });
+  if (parsed === null) fail("production_scale_invalid");
+  const startedAt = exactTimestamp(parsed.startedAt);
+  const completedAt = exactTimestamp(parsed.completedAt);
   if (
     Date.parse(startedAt) < Date.parse(deploymentCompletedAt)
     || Date.parse(completedAt) < Date.parse(startedAt)
   ) fail("production_scale_invalid");
-  return { completedAt, deploymentIdSha256: value.deploymentIdSha256 };
+  return { completedAt, deploymentIdSha256: parsed.deploymentIdSha256 };
 }
 
 function verifyClosedRouteTerminal(
@@ -1039,6 +973,8 @@ export async function attestProductionPromotionRecovery(
     fail("arguments_invalid");
   }
   const candidateSha = exactCandidate(args.get("--candidate-sha"));
+  const productionScaleRunId = args.get("--production-scale-run-id")!;
+  if (!RUN_ID.test(productionScaleRunId)) fail("arguments_invalid");
   verifyPolicy(dependencies.cwd);
   verifyGithubAuthority(dependencies, candidateSha);
 
@@ -1143,6 +1079,7 @@ export async function attestProductionPromotionRecovery(
   const scale = verifyScale(
     producerJson("production-scale-receipt"), candidateSha,
     deployment.deploymentIdSha256, deployment.completedAt,
+    productionScaleRunId,
   );
   if (scale.deploymentIdSha256 !== authority.productionDeploymentIdSha256) {
     fail("production_scale_invalid");

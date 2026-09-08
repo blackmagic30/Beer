@@ -17,7 +17,7 @@ import { canonicalJson as canonicalVenueJson } from
   "../scripts/import-melbourne-venues.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
-import { stagingQuiesceScaleTopologyFixture } from
+import { stagingScaleReceiptFixture } from
   "./fixtures/protected-scale-receipt.js";
 
 const CANDIDATE = "a".repeat(40);
@@ -80,31 +80,6 @@ const WORKER_CHECKS = {
   boundaryPostflightExact: true,
   noOtherProviderChanges: true,
   terminalEvidenceExact: true,
-};
-
-const SCALE_CHECKS = {
-  policyExact: true,
-  githubAuthorityExact: true,
-  tokenScopesExact: true,
-  cliExact: true,
-  boundaryPreflightExact: true,
-  targetPreflightExact: true,
-  productionActivationPrerequisiteExact: true,
-  productionActivationDeploymentContinuityExact: true,
-  runtimePreflightExact: true,
-  durableIntentExact: true,
-  repositoryPrewriteReasserted: true,
-  writeAttemptedAtMostOnce: true,
-  acknowledgementExact: true,
-  postflightAttempted: true,
-  targetPostflightExact: true,
-  runtimePostflightExact: true,
-  candidateUnchanged: true,
-  deploymentUnchanged: true,
-  replicaTopologyEvidenceExact: true,
-  boundaryPostflightExact: true,
-  terminalEvidenceExact: true,
-  finalReceiptEvidenceExact: true,
 };
 
 const DEPLOYMENT_CHECKS = {
@@ -397,26 +372,14 @@ function activateReceipt(): string {
 }
 
 function scaleReceipt(): string {
-  return canonical({
-    schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
-    executorState: "GITHUB_ENVIRONMENT_PROTECTED",
+  return canonical(stagingScaleReceiptFixture({
     direction: "quiesce-staging-zero",
-    outcome: "scaled",
     candidateSha: CANDIDATE,
+    githubRunId: QUIESCE_RUN,
     startedAt: "2026-08-21T01:03:10.000Z",
     completedAt: "2026-08-21T01:03:50.000Z",
-    desiredReplicas: 0,
     deploymentIdSha256: sha("legacy-deployment"),
-    attempts: 1,
-    retryAllowed: false,
-    intentSha256: sha("scale-intent"),
-    terminalEvidenceSha256: sha("scale-terminal"),
-    commandStdoutSha256: sha("scale-stdout"),
-    commandStderrSha256: sha("scale-stderr"),
-    productionActivationPrerequisite: null,
-    replicaTopology: stagingQuiesceScaleTopologyFixture(),
-    checks: SCALE_CHECKS,
-  });
+  }));
 }
 
 function fencedDeploymentReceipt(): string {
@@ -974,7 +937,7 @@ function priorActivationVerification(
         schemaVersion: kind === "prepare"
           ? "pintpath-automatic-maintenance-worker-fence-terminal/v2"
           : scale
-            ? "pintpath-permanent-staging-scale-operation/v3"
+            ? "pintpath-permanent-staging-scale-operation/v4"
             : kind === "venue-directory"
               ? "pintpath-permanent-staging-venue-directory-terminal/v1"
               : "pintpath-railway-application-deployment-executor/v6",
@@ -1568,6 +1531,52 @@ function harness(operation: "quiesce" | "restore" | "reconcile-restore", options
 }
 
 describe("permanent-staging worker bootstrap prerequisites", () => {
+  it("accepts slow in-window Railway scale timestamps and rejects malformed windows", () => {
+    const base = JSON.parse(scaleReceipt()) as Record<string, unknown> & {
+      providerHistoryEvidence: {
+        postflight: { matchingPatch: Record<string, unknown> };
+      };
+    };
+    const matching = base.providerHistoryEvidence.postflight.matchingPatch;
+    matching.createdAt = "2026-08-21T01:03:10.000Z";
+    matching.appliedAt = "2026-08-21T01:03:16.419Z";
+    matching.updatedAt = "2026-08-21T01:03:17.000Z";
+    expect(stagingWorkerBootstrapPrerequisiteInternals.validateScaleReceipt(
+      canonical(base),
+      base,
+      CANDIDATE,
+      "quiesce",
+      OLD_SOURCE,
+      QUIESCE_RUN,
+    )).toMatchObject({ outcome: "scaled", replicasAfter: 0 });
+
+    for (const mutate of [
+      (patch: Record<string, unknown>) => {
+        patch.createdAt = "2026-08-21T11:03:10+10:00";
+      },
+      (patch: Record<string, unknown>) => {
+        patch.appliedAt = "2026-08-21T01:03:09.999Z";
+      },
+      (patch: Record<string, unknown>) => {
+        patch.appliedAt = "2026-08-21T01:03:18.000Z";
+        patch.updatedAt = "2026-08-21T01:03:17.999Z";
+      },
+    ]) {
+      const invalid = structuredClone(base);
+      mutate(invalid.providerHistoryEvidence.postflight.matchingPatch);
+      expect(() =>
+        stagingWorkerBootstrapPrerequisiteInternals.validateScaleReceipt(
+          canonical(invalid),
+          invalid,
+          CANDIDATE,
+          "quiesce",
+          OLD_SOURCE,
+          QUIESCE_RUN,
+        )
+      ).toThrow();
+    }
+  });
+
   it("pins the policy and every producer policy digest", () => {
     const source = fs.readFileSync(
       "ops/railway/permanent-staging-worker-bootstrap-prerequisites-policy.json",

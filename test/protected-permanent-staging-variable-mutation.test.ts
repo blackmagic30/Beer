@@ -262,6 +262,8 @@ function deletionPatchNode(input: {
   commitCandidateSha?: string;
 }): Record<string, unknown> {
   const committed = input.status === "COMMITTED";
+  const pinnedCloseout = committed && input.id === INCIDENT_STAGED_PATCH_ID &&
+    input.commitCandidateSha === CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA;
   return {
     id: input.id,
     environmentId: ENVIRONMENT_ID,
@@ -273,13 +275,21 @@ function deletionPatchNode(input: {
       : null,
     createdAt: input.id === EMPTY_STAGED_PATCH_ID
       ? null
+      : pinnedCloseout
+        ? INCIDENT_STAGED_PATCH_CREATED_AT
       : "2026-08-29T06:29:00.109Z",
     updatedAt: input.id === EMPTY_STAGED_PATCH_ID
       ? null
+      : pinnedCloseout
+        ? "2026-08-29T09:47:00.001Z"
       : committed
         ? "2026-08-29T06:29:06.529Z"
         : "2026-08-29T06:29:00.109Z",
-    appliedAt: committed ? "2026-08-29T06:29:06.528Z" : null,
+    appliedAt: committed
+      ? pinnedCloseout
+        ? "2026-08-29T09:47:00.000Z"
+        : "2026-08-29T06:29:06.528Z"
+      : null,
     lastAppliedError: null,
     patch: input.patch,
   };
@@ -320,6 +330,31 @@ function committedDeletionPatch(
       }),
     },
   });
+}
+
+function committedPatchTimestampAuthority() {
+  return {
+    createdAt: {
+      startedAtMs: Date.parse("2026-08-29T06:28:59.000Z"),
+      completedAtMs: Date.parse("2026-08-29T06:30:00.000Z"),
+    },
+    appliedAt: {
+      startedAtMs: Date.parse("2026-08-29T06:28:59.000Z"),
+      completedAtMs: Date.parse("2026-08-29T06:30:00.000Z"),
+    },
+    observedAtMs: Date.parse("2026-08-29T06:30:00.000Z"),
+  } as const;
+}
+
+function committedPatchClock(): () => number {
+  let first = true;
+  return () => {
+    if (first) {
+      first = false;
+      return Date.parse("2026-08-29T06:28:59.000Z");
+    }
+    return Date.parse("2026-08-29T06:30:00.000Z");
+  };
 }
 
 function stagedDeletionPatchReadback(
@@ -1258,21 +1293,25 @@ describe("protected permanent-staging variable mutation", () => {
       await committedDeletionPatch(patch).json(),
       STAGED_PATCH_ID,
       commitMessage,
+      committedPatchTimestampAuthority(),
     )).toBe(true);
     expect(parse(
       await committedDeletionPatch(patch, EMPTY_STAGED_PATCH_ID).json(),
       STAGED_PATCH_ID,
       commitMessage,
+      committedPatchTimestampAuthority(),
     )).toBe(false);
     expect(parse(
       await committedDeletionPatch(patch, STAGED_PATCH_ID, "STAGED").json(),
       STAGED_PATCH_ID,
       commitMessage,
+      committedPatchTimestampAuthority(),
     )).toBe(false);
     expect(parse(
       await committedDeletionPatch({}, STAGED_PATCH_ID).json(),
       STAGED_PATCH_ID,
       commitMessage,
+      committedPatchTimestampAuthority(),
     )).toBe(false);
 
     const liveEmptyAliasSkew = await committedDeletionPatch(patch).json() as {
@@ -1286,7 +1325,12 @@ describe("protected permanent-staging variable mutation", () => {
       "2026-08-29T06:29:06.026Z";
     liveEmptyAliasSkew.data.activeDecrypted!.updatedAt =
       "2026-08-29T06:29:06.026Z";
-    expect(parse(liveEmptyAliasSkew, STAGED_PATCH_ID, commitMessage)).toBe(true);
+    expect(parse(
+      liveEmptyAliasSkew,
+      STAGED_PATCH_ID,
+      commitMessage,
+      committedPatchTimestampAuthority(),
+    )).toBe(true);
 
     const exact = await committedDeletionPatch(patch).json() as {
       data: Record<string, Record<string, unknown>>;
@@ -1314,7 +1358,52 @@ describe("protected permanent-staging variable mutation", () => {
     for (const corrupt of corruptions) {
       const value = structuredClone(exact);
       corrupt(value);
-      expect(parse(value, STAGED_PATCH_ID, commitMessage)).toBe(false);
+      expect(parse(
+        value,
+        STAGED_PATCH_ID,
+        commitMessage,
+        committedPatchTimestampAuthority(),
+      )).toBe(false);
+    }
+
+    const appliedBeforeCreated = await committedDeletionPatch(patch).json() as {
+      data: Record<string, Record<string, unknown>>;
+    };
+    for (const key of ["selectedMasked", "selectedDecrypted"]) {
+      appliedBeforeCreated.data[key]!.createdAt = "2026-08-29T06:29:07.000Z";
+      appliedBeforeCreated.data[key]!.appliedAt = "2026-08-29T06:29:06.999Z";
+      appliedBeforeCreated.data[key]!.updatedAt = "2026-08-29T06:29:07.001Z";
+    }
+    expect(parse(
+      appliedBeforeCreated,
+      STAGED_PATCH_ID,
+      commitMessage,
+      committedPatchTimestampAuthority(),
+    )).toBe(true);
+
+    for (const mutate of [
+      (node: Record<string, unknown>) => {
+        node.createdAt = "2026-08-29T16:29:00+10:00";
+      },
+      (node: Record<string, unknown>) => {
+        node.appliedAt = "2026-08-29T06:28:58.999Z";
+      },
+      (node: Record<string, unknown>) => {
+        node.appliedAt = "2026-08-29T06:29:06.530Z";
+      },
+    ]) {
+      const invalid = await committedDeletionPatch(patch).json() as {
+        data: Record<string, Record<string, unknown>>;
+      };
+      for (const key of ["selectedMasked", "selectedDecrypted"]) {
+        mutate(invalid.data[key]!);
+      }
+      expect(parse(
+        invalid,
+        STAGED_PATCH_ID,
+        commitMessage,
+        committedPatchTimestampAuthority(),
+      )).toBe(false);
     }
   });
 
@@ -2174,6 +2263,7 @@ describe("protected permanent-staging variable mutation", () => {
       fetchImpl,
       boundaryCheck,
       readSecretFile: vi.fn(),
+      now: committedPatchClock(),
       writeDurable: (_directory, _leaf, source) => {
         writes.push(source);
         return sha256(source);
@@ -2413,6 +2503,7 @@ describe("protected permanent-staging variable mutation", () => {
         verifyReviewedCleanupRecoveryAuthority: vi.fn().mockReturnValue(true),
         verifyPriorCleanupEvidence: vi.fn().mockReturnValue(true),
         readSecretFile: vi.fn(),
+        now: committedPatchClock(),
         writeDurable: (_directory, _leaf, source) => sha256(source),
         writeOutput: (source) => outputs.push(source),
       });
@@ -2490,6 +2581,7 @@ describe("protected permanent-staging variable mutation", () => {
       verifyReviewedCleanupRecoveryAuthority: vi.fn().mockReturnValue(true),
       verifyPriorCleanupEvidence,
       readSecretFile: vi.fn(),
+      now: committedPatchClock(),
       writeDurable: (_directory, _leaf, source) => sha256(source),
       writeOutput: (source) => outputs.push(source),
     });
@@ -2921,6 +3013,7 @@ describe("protected permanent-staging variable mutation", () => {
       verifyReviewedCleanupRecoveryAuthority: vi.fn().mockReturnValue(true),
       verifyPriorCleanupEvidence: vi.fn(),
       readSecretFile: vi.fn(),
+      now: committedPatchClock(),
       writeDurable: (_directory, _leaf, source) => sha256(source),
       writeOutput: (source) => outputs.push(source),
     });
@@ -3020,6 +3113,7 @@ describe("protected permanent-staging variable mutation", () => {
         verifyReviewedCleanupRecoveryAuthority: vi.fn().mockReturnValue(true),
         verifyPriorCleanupEvidence: vi.fn(),
         readSecretFile: vi.fn(),
+        now: committedPatchClock(),
         writeDurable: (_directory, _leaf, source) => sha256(source),
         writeOutput: (source) => outputs.push(source),
       });
@@ -3195,6 +3289,7 @@ describe("protected permanent-staging variable mutation", () => {
       fetchImpl,
       boundaryCheck: vi.fn().mockResolvedValue(0),
       readSecretFile: vi.fn(),
+      now: committedPatchClock(),
       writeDurable: (_directory, _leaf, source) => sha256(source),
       writeOutput: (source) => outputs.push(source),
     });

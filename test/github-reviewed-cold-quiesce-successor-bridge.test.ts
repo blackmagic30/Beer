@@ -17,6 +17,12 @@ const INTERMEDIATE_REVIEWED_HEAD =
   "a8448524162c36da3d220c4b8aa21dd42cb11535";
 const INTERMEDIATE_TREE =
   "06257eba9476e393fe54b70395af8641f8b6d59a";
+const IMMEDIATE_PRIOR_CANDIDATE =
+  "1161e7ecd421556b104bcae059e8764ebf4a545e";
+const IMMEDIATE_PRIOR_REVIEWED_HEAD =
+  "23f6b96154de7a0eb5a0cc90136d3796a1301668";
+const IMMEDIATE_PRIOR_TREE =
+  "8a58c3eb755a68a2c456a5abff34fa7c01a9af3e";
 const CURRENT_CANDIDATE = "a".repeat(40);
 const CURRENT_TREE = "b".repeat(40);
 const PREPARE_RUN_ID = 34152745186;
@@ -24,15 +30,22 @@ const AMBIGUOUS_QUIESCE_RUN_ID = 34153306935;
 const READ_ONLY_RECONCILE_RUN_ID = 34154020478;
 const INTERMEDIATE_AMBIGUOUS_PREPARE_RUN_ID = 34180322982;
 const INTERMEDIATE_READ_ONLY_PREPARE_RECONCILE_RUN_ID = 34181145015;
-const CURRENT_PREPARE_RUN_ID = 34160000001;
-const CURRENT_RUN_ID = 34160000002;
+const IMMEDIATE_PRIOR_PREPARE_RUN_ID = 34186355641;
+const IMMEDIATE_PRIOR_QUIESCE_RUN_ID = 34186930666;
+const CURRENT_PREPARE_RUN_ID = 34190000001;
+const CURRENT_RUN_ID = 34190000002;
 const ARTIFACT_ID = 10030213299;
 const ARTIFACT_NAME =
   `pintpath-permanent-staging-cold-quiesce-${PRIOR_CANDIDATE}`;
 const ARTIFACT_DIGEST =
   "sha256:3f830a7376e604a46e0d8cfe3521fc8eb4e1db444ab73bec4063c22442c42fbe";
-const CURRENT_MERGED_AT = "2026-09-08T03:00:00Z";
-const CURRENT_RUN_STARTED_AT = "2026-09-08T03:10:00Z";
+const IMMEDIATE_PRIOR_ARTIFACT_ID = 10040956324;
+const IMMEDIATE_PRIOR_ARTIFACT_NAME =
+  `pintpath-permanent-staging-cold-quiesce-${IMMEDIATE_PRIOR_CANDIDATE}`;
+const IMMEDIATE_PRIOR_ARTIFACT_DIGEST =
+  "sha256:3db418b86eea098ff4cf8c3a5198ac445d5a51c2f0ac7481dce288027c70166e";
+const CURRENT_MERGED_AT = "2026-09-08T05:00:00Z";
+const CURRENT_RUN_STARTED_AT = "2026-09-08T05:10:00Z";
 
 const CURRENT_QUIESCE_JOB_NAME =
   "Quiesce the configured Europe replica from one to zero";
@@ -132,11 +145,27 @@ const INTERMEDIATE_READ_ONLY_PREPARE_RECONCILE_RUN = coldRun({
   conclusion: "failure",
   headSha: INTERMEDIATE_CANDIDATE,
 });
+const IMMEDIATE_PRIOR_PREPARE_RUN = coldRun({
+  id: IMMEDIATE_PRIOR_PREPARE_RUN_ID,
+  operation: "prepare",
+  createdAt: "2026-09-08T04:15:27Z",
+  completedAt: "2026-09-08T04:20:00Z",
+  conclusion: "success",
+  headSha: IMMEDIATE_PRIOR_CANDIDATE,
+});
+const IMMEDIATE_PRIOR_QUIESCE_RUN = coldRun({
+  id: IMMEDIATE_PRIOR_QUIESCE_RUN_ID,
+  operation: "quiesce",
+  createdAt: "2026-09-08T04:25:21Z",
+  completedAt: "2026-09-08T04:32:27Z",
+  conclusion: "failure",
+  headSha: IMMEDIATE_PRIOR_CANDIDATE,
+});
 const CURRENT_PREPARE_RUN = coldRun({
   id: CURRENT_PREPARE_RUN_ID,
   operation: "prepare",
-  createdAt: "2026-09-08T03:02:00Z",
-  completedAt: "2026-09-08T03:07:00Z",
+  createdAt: "2026-09-08T05:02:00Z",
+  completedAt: "2026-09-08T05:07:00Z",
   conclusion: "success",
   headSha: CURRENT_CANDIDATE,
 });
@@ -172,8 +201,12 @@ function coldJobs(
 
 function bridgeFixture(options: {
   currentParentSha?: string;
+  immediatePriorParentSha?: string;
   intermediateParentSha?: string;
   artifactDigest?: string;
+  immediatePriorArtifactDigest?: string;
+  inputPriorCandidateSha?: string;
+  inputPriorRunId?: string;
   currentRunStartedAt?: string;
   currentMergedAt?: string;
   currentHistoryUpdatedAt?: string;
@@ -183,9 +216,13 @@ function bridgeFixture(options: {
   intermediateReconcileSiblingConclusion?: "skipped" | "success";
   omitIntermediatePrepare?: boolean;
   omitIntermediateReconcile?: boolean;
+  omitImmediatePriorPrepare?: boolean;
+  omitImmediatePriorQuiesce?: boolean;
   extraRuns?: Array<Record<string, unknown>>;
 } = {}) {
-  const currentParentSha = options.currentParentSha ?? INTERMEDIATE_CANDIDATE;
+  const currentParentSha = options.currentParentSha ?? IMMEDIATE_PRIOR_CANDIDATE;
+  const immediatePriorParentSha = options.immediatePriorParentSha ??
+    INTERMEDIATE_CANDIDATE;
   const intermediateParentSha = options.intermediateParentSha ?? PRIOR_CANDIDATE;
   const artifactDigest = options.artifactDigest ?? ARTIFACT_DIGEST;
   const currentRunStartedAt = options.currentRunStartedAt ??
@@ -281,6 +318,46 @@ function bridgeFixture(options: {
         parents: [{ sha: "4".repeat(40) }],
       });
     }
+    if (url.includes(`/commits/${IMMEDIATE_PRIOR_CANDIDATE}/pulls?`)) {
+      return response([{
+        number: 93,
+        state: "closed",
+        merge_commit_sha: IMMEDIATE_PRIOR_CANDIDATE,
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: { repo: { full_name: REPOSITORY } },
+      }]);
+    }
+    if (url.endsWith("/pulls/93")) {
+      return response({
+        number: 93,
+        state: "closed",
+        merged: true,
+        draft: false,
+        merge_commit_sha: IMMEDIATE_PRIOR_CANDIDATE,
+        merged_at: "2026-09-08T04:04:40Z",
+        user: { id: 101 },
+        merged_by: { id: 202 },
+        base: { ref: "main", repo: { full_name: REPOSITORY } },
+        head: {
+          sha: IMMEDIATE_PRIOR_REVIEWED_HEAD,
+          repo: { full_name: REPOSITORY },
+        },
+      });
+    }
+    if (url.endsWith(`/git/commits/${IMMEDIATE_PRIOR_CANDIDATE}`)) {
+      return response({
+        sha: IMMEDIATE_PRIOR_CANDIDATE,
+        tree: { sha: IMMEDIATE_PRIOR_TREE },
+        parents: [{ sha: immediatePriorParentSha }],
+      });
+    }
+    if (url.endsWith(`/git/commits/${IMMEDIATE_PRIOR_REVIEWED_HEAD}`)) {
+      return response({
+        sha: IMMEDIATE_PRIOR_REVIEWED_HEAD,
+        tree: { sha: IMMEDIATE_PRIOR_TREE },
+        parents: [{ sha: "5".repeat(40) }],
+      });
+    }
     if (url.endsWith(`/git/commits/${CURRENT_CANDIDATE}`)) {
       return response({
         sha: CURRENT_CANDIDATE,
@@ -303,6 +380,12 @@ function bridgeFixture(options: {
           ...(options.omitIntermediateReconcile
             ? []
             : [INTERMEDIATE_READ_ONLY_PREPARE_RECONCILE_RUN]),
+          ...(options.omitImmediatePriorPrepare
+            ? []
+            : [IMMEDIATE_PRIOR_PREPARE_RUN]),
+          ...(options.omitImmediatePriorQuiesce
+            ? []
+            : [IMMEDIATE_PRIOR_QUIESCE_RUN]),
           CURRENT_PREPARE_RUN,
           options.currentHistoryUpdatedAt
             ? { ...currentRun, updated_at: options.currentHistoryUpdatedAt }
@@ -353,6 +436,19 @@ function bridgeFixture(options: {
       return response(coldJobs(
         CURRENT_PREPARE_RUN_ID,
         jobNames,
+        "Bind the exact replacement and prepare the dead baseline",
+        "success",
+        [{
+          name: "Prepare the exact dead staging baseline once",
+          status: "completed",
+          conclusion: "success",
+        }],
+      ));
+    }
+    if (url.includes(`/actions/runs/${IMMEDIATE_PRIOR_PREPARE_RUN_ID}/jobs?`)) {
+      return response(coldJobs(
+        IMMEDIATE_PRIOR_PREPARE_RUN_ID,
+        CURRENT_COLD_JOB_NAMES,
         "Bind the exact replacement and prepare the dead baseline",
         "success",
         [{
@@ -418,6 +514,29 @@ function bridgeFixture(options: {
         }],
       });
     }
+    if (
+      url.includes(`/actions/runs/${IMMEDIATE_PRIOR_QUIESCE_RUN_ID}/artifacts?`)
+    ) {
+      return response({
+        total_count: 1,
+        artifacts: [{
+          id: IMMEDIATE_PRIOR_ARTIFACT_ID,
+          name: IMMEDIATE_PRIOR_ARTIFACT_NAME,
+          size_in_bytes: 8155,
+          digest: options.immediatePriorArtifactDigest ??
+            IMMEDIATE_PRIOR_ARTIFACT_DIGEST,
+          expired: false,
+          created_at: "2026-09-08T04:32:24Z",
+          updated_at: "2026-09-08T04:32:24Z",
+          expires_at: "2026-10-08T04:32:22Z",
+          workflow_run: {
+            id: IMMEDIATE_PRIOR_QUIESCE_RUN_ID,
+            head_branch: "main",
+            head_sha: IMMEDIATE_PRIOR_CANDIDATE,
+          },
+        }],
+      });
+    }
     throw new Error(`unexpected GitHub request: ${url}`);
   });
 
@@ -428,8 +547,10 @@ function bridgeFixture(options: {
         fetchImpl,
         token: "github-metadata-token",
         candidateSha: CURRENT_CANDIDATE,
-        priorCandidateSha: PRIOR_CANDIDATE,
-        priorRunId: String(AMBIGUOUS_QUIESCE_RUN_ID),
+        priorCandidateSha: options.inputPriorCandidateSha ??
+          IMMEDIATE_PRIOR_CANDIDATE,
+        priorRunId: options.inputPriorRunId ??
+          String(IMMEDIATE_PRIOR_QUIESCE_RUN_ID),
         prepareRunId: String(CURRENT_PREPARE_RUN_ID),
         currentMergedAtMs: Date.parse(
           options.currentMergedAt ?? CURRENT_MERGED_AT,
@@ -447,20 +568,25 @@ function bridgeFixture(options: {
 }
 
 describe("GitHub-reviewed cold-quiesce successor bridge", () => {
-  it("binds the reviewed two-hop successor to the exact history and artifact", async () => {
+  it("binds the reviewed four-candidate successor to the exact nine-run history", async () => {
     const fixture = bridgeFixture();
 
     await expect(fixture.verify()).resolves.toMatchObject({
-      priorAmbiguousColdQuiesceCandidateSha: PRIOR_CANDIDATE,
-      priorAmbiguousColdQuiesceRunId: String(AMBIGUOUS_QUIESCE_RUN_ID),
+      priorAmbiguousColdQuiesceCandidateSha: IMMEDIATE_PRIOR_CANDIDATE,
+      priorAmbiguousColdQuiesceRunId: String(IMMEDIATE_PRIOR_QUIESCE_RUN_ID),
       priorAmbiguousColdQuiesceRunCompletedAt:
-        "2026-09-07T18:57:20.000Z",
+        "2026-09-08T04:32:27.000Z",
       coldQuiesceSuccessorGraceHours: 24,
       coldQuiesceSuccessorDeadline: "2026-09-08T18:57:20.000Z",
       coldQuiesceSuccessorWithinGraceExact: true,
-      priorColdPrepareRunId: String(PREPARE_RUN_ID),
+      priorColdPrepareRunId: String(IMMEDIATE_PRIOR_PREPARE_RUN_ID),
       selectedColdPrepareRunId: String(CURRENT_PREPARE_RUN_ID),
-      priorFailedReadOnlyColdQuiesceReconcileRunId:
+      selectedColdPrepareRunStartedAt: "2026-09-08T05:02:00.000Z",
+      selectedColdPrepareRunCompletedAt: "2026-09-08T05:07:00.000Z",
+      legacyColdRecoveryCandidateSha: PRIOR_CANDIDATE,
+      legacyColdPrepareRunId: String(PREPARE_RUN_ID),
+      legacyColdQuiesceRunId: String(AMBIGUOUS_QUIESCE_RUN_ID),
+      legacyFailedReadOnlyColdQuiesceReconcileRunId:
         String(READ_ONLY_RECONCILE_RUN_ID),
       intermediateColdRecoveryCandidateSha: INTERMEDIATE_CANDIDATE,
       intermediateColdRecoveryReviewedHeadSha: INTERMEDIATE_REVIEWED_HEAD,
@@ -471,16 +597,24 @@ describe("GitHub-reviewed cold-quiesce successor bridge", () => {
         String(INTERMEDIATE_AMBIGUOUS_PREPARE_RUN_ID),
       intermediateFailedReadOnlyColdPrepareReconcileRunId:
         String(INTERMEDIATE_READ_ONLY_PREPARE_RECONCILE_RUN_ID),
-      priorAmbiguousColdQuiesceArtifactId: String(ARTIFACT_ID),
-      priorAmbiguousColdQuiesceArtifactDigest: ARTIFACT_DIGEST,
+      priorAmbiguousColdQuiesceArtifactId:
+        String(IMMEDIATE_PRIOR_ARTIFACT_ID),
+      priorAmbiguousColdQuiesceArtifactDigest:
+        IMMEDIATE_PRIOR_ARTIFACT_DIGEST,
+      legacyAmbiguousColdQuiesceArtifactId: String(ARTIFACT_ID),
+      legacyAmbiguousColdQuiesceArtifactDigest: ARTIFACT_DIGEST,
       coldQuiesceSuccessorDirectParentExact: true,
-      coldQuiesceSuccessorPriorToIntermediateParentExact: true,
-      coldQuiesceSuccessorTwoHopLineageExact: true,
-      coldQuiesceSuccessorPriorHistoryExact: true,
+      coldQuiesceSuccessorLegacyToIntermediateParentExact: true,
+      coldQuiesceSuccessorIntermediateToPriorParentExact: true,
+      coldQuiesceSuccessorCompleteFourCandidateLineageExact: true,
+      coldQuiesceSuccessorLegacyHistoryExact: true,
       coldQuiesceSuccessorIntermediateHistoryExact: true,
+      coldQuiesceSuccessorPriorHistoryExact: true,
       coldQuiesceSuccessorAllRefsHistoryExact: true,
       coldQuiesceSuccessorCurrentPrepareExact: true,
-      coldQuiesceSuccessorArtifactMetadataExact: true,
+      coldQuiesceSuccessorLegacyArtifactMetadataExact: true,
+      coldQuiesceSuccessorPriorArtifactMetadataExact: true,
+      coldQuiesceSuccessorPriorProviderProofRequired: true,
       coldQuiesceSuccessorBridgeRequired: true,
     });
     const historyUrl = String(fixture.fetchImpl.mock.calls.find(([request]) =>
@@ -488,6 +622,15 @@ describe("GitHub-reviewed cold-quiesce successor bridge", () => {
       String(request).includes("/runs?"))?.[0]);
     expect(historyUrl).not.toContain("branch=");
     expect(historyUrl).not.toContain("created=");
+  });
+
+  it("rejects the legacy candidate and run as public prior inputs", async () => {
+    await expect(bridgeFixture({
+      inputPriorCandidateSha: PRIOR_CANDIDATE,
+      inputPriorRunId: String(AMBIGUOUS_QUIESCE_RUN_ID),
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cold_quiesce_successor_bridge_invalid",
+    );
   });
 
   it("pins legacy quiesce job and write names only to run 34153306935", async () => {
@@ -505,7 +648,7 @@ describe("GitHub-reviewed cold-quiesce successor bridge", () => {
 
   it("accepts an advanced mutable updated_at for the current nonterminal run", async () => {
     await expect(bridgeFixture({
-      currentHistoryUpdatedAt: "2026-09-08T03:10:05Z",
+      currentHistoryUpdatedAt: "2026-09-08T05:10:05Z",
     }).verify()).resolves.toMatchObject({
       coldQuiesceSuccessorAllRefsHistoryExact: true,
     });
@@ -544,6 +687,18 @@ describe("GitHub-reviewed cold-quiesce successor bridge", () => {
     );
   });
 
+  it.each([
+    ["prepare", { omitImmediatePriorPrepare: true }],
+    ["quiesce", { omitImmediatePriorQuiesce: true }],
+  ])("fails closed when the immediate-prior %s run is absent", async (
+    _label,
+    options,
+  ) => {
+    await expect(bridgeFixture(options).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cold_quiesce_successor_bridge_history_invalid",
+    );
+  });
+
   it("fails closed when the current candidate is not the direct child", async () => {
     const fixture = bridgeFixture({ currentParentSha: "3".repeat(40) });
 
@@ -552,7 +707,17 @@ describe("GitHub-reviewed cold-quiesce successor bridge", () => {
     );
   });
 
-  it("fails closed when the intermediate candidate is not the prior direct child", async () => {
+  it("fails closed when the immediate prior is not the intermediate direct child", async () => {
+    const fixture = bridgeFixture({
+      immediatePriorParentSha: "3".repeat(40),
+    });
+
+    await expect(fixture.verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cold_quiesce_successor_bridge_invalid",
+    );
+  });
+
+  it("fails closed when the intermediate candidate is not the legacy direct child", async () => {
     const fixture = bridgeFixture({ intermediateParentSha: "3".repeat(40) });
 
     await expect(fixture.verify()).rejects.toThrow(
@@ -588,17 +753,27 @@ describe("GitHub-reviewed cold-quiesce successor bridge", () => {
     );
   });
 
-  it("fails closed when the current review overlaps the intermediate reconciliation", async () => {
+  it("fails closed when the current review overlaps the immediate-prior quiesce", async () => {
     await expect(bridgeFixture({
-      currentMergedAt: "2026-09-08T02:48:58Z",
+      currentMergedAt: "2026-09-08T04:32:26Z",
     }).verify()).rejects.toThrow(
       "github_reviewed_candidate_authority_cold_quiesce_successor_bridge_history_invalid",
     );
   });
 
-  it("fails closed when the prior artifact digest is substituted", async () => {
+  it("fails closed when the legacy artifact digest is substituted", async () => {
     const fixture = bridgeFixture({
       artifactDigest: `sha256:${"4".repeat(64)}`,
+    });
+
+    await expect(fixture.verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_cold_quiesce_successor_bridge_artifact_invalid",
+    );
+  });
+
+  it("fails closed when the immediate-prior artifact digest is substituted", async () => {
+    const fixture = bridgeFixture({
+      immediatePriorArtifactDigest: `sha256:${"4".repeat(64)}`,
     });
 
     await expect(fixture.verify()).rejects.toThrow(

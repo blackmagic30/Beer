@@ -199,25 +199,43 @@ inside the original run's fixed 24-hour deadline. A reconciled cold-prepare
 receipt is accepted as the selected prepare for the later quiesce chain.
 
 The one authorized cross-candidate cold-quiesce successor is pinned even more
-narrowly. Its predecessor is candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, run `34153306935`. Reviewed
-intermediate candidate `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`
-is the predecessor's exact direct child. Its prepare run `34180322982` may have
-written before losing its acknowledgement, and its reconciliation run
-`34181145015` is an exact failed zero-write read-only attempt. The executable
-successor must be the exact reviewed direct child of
-`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`, perform a
-fresh same-candidate Supabase replacement and normal cold prepare, and complete
-the successor bridge no later than `2026-09-08T18:57:20Z`. At successor
-quiesce, the complete all-ref cold-recovery history is exactly seven pinned
-runs split `3 + 2 + 2` across the predecessor, intermediate, and executable
-successor. Dispatch successor `quiesce` with
-`ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`,
-`ambiguous_quiesce_run_id=34153306935`, and an empty
-`ambiguous_prepare_run_id`. The sealed bridge and reviewed-authority bytes must
-prove the legacy command failed deterministically before the provider commit
-path; they are not evidence that the predecessor wrote, nor authority for any
-other candidate, run, topology, or later deadline.
+narrowly. Its complete lineage is legacy candidate `838e8c877dca…`, reviewed
+intermediate `919cbbc9ed4a…`, immediate prior `1161e7ecd421…`, and the new
+reviewed candidate. The exact history is nine runs split `3 + 2 + 2 + 2`:
+legacy prepare/quiesce/read-only reconciliation `34152745186`, `34153306935`,
+and `34154020478`; intermediate prepare/reconciliation `34180322982` and
+`34181145015`; immediate-prior prepare/quiesce `34186355641` and `34186930666`;
+then the new candidate's successful prepare and nonterminal quiesce. The
+intermediate prepare may have written before losing its acknowledgement. The
+immediate-prior quiesce's `UnauthorizedToken` error does not identify the
+denied resolver; only the complete redacted provider patch ledger, the two
+incident-window checks, and continuous configured-one topology prove no write
+was committed.
+
+The new candidate must be the exact reviewed direct child of `1161e7ecd421…`,
+perform a fresh same-candidate Supabase replacement and cold prepare, and
+complete the bridge no later than `2026-09-08T18:57:20Z`. Dispatch successor
+`quiesce` with
+`ambiguous_quiesce_candidate_sha=1161e7ecd421556b104bcae059e8764ebf4a545e`,
+`ambiguous_quiesce_run_id=34186930666`, and an empty
+`ambiguous_prepare_run_id`. Supply the exact external Railway writer-freeze
+attestation
+`I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN` only after
+dashboard, API, autodeploy, and every other staging writer are frozen; the
+serialized workflow bridge records metadata-only token custody before the
+mutation token is introduced. The sole quiesce write is one direct
+`environmentPatchCommit` request with both allowed regions encoded as JSON
+`null`. A lost acknowledgement can be accepted only after exact-zero
+reconciliation; a provider rejection cannot. No evidence or authority is
+transferable to another candidate, run, topology, or later deadline.
+Immediately before that write, the executor reads the complete unfiltered
+`environmentPatches` ledger and requires zero matches for its candidate/run
+message and exact patch, then performs the authoritative state read as the last
+awaited operation before its single request. Receipt v6 accepts either an exact
+acknowledgement or a lost acknowledgement only when the postflight ledger adds
+one newest committed match, the match cross-fetches exactly, and every prior
+row projection is unchanged. Read-only runner-loss reconciliation carries
+explicit null history evidence and cannot claim this write proof.
 
 The completed `permanent-staging-postgres` runtime-URL repair is closed
 historical evidence bound to `f6bfb81…`; the executable cold-recovery chain
@@ -416,6 +434,13 @@ that bijection before reading the protected secret.
 
 For the permanent-staging account-deletion completion notice, place these six
 exact secrets only in `permanent-staging-provider-mutation`:
+
+> Operational block: the account-deletion rehearsal scale and quarantine
+> executors still use Railway CLI `service scale`, whose project-token path is
+> not authorized in the current provider configuration. Do not dispatch those
+> scale/quarantine workflows until a separate reviewed direct-transport
+> migration lands. They are outside the active cold-recovery chain described
+> above.
 
 - `PINTPATH_STAGING_RESEND_TRANSACTIONAL_API_KEY`
 - `PINTPATH_STAGING_RESEND_WEBHOOK_SIGNING_SECRET`
@@ -691,18 +716,22 @@ route open. The controlling policy is schema v2 at SHA-256
 5. For the current dead/null recovery, prove the exact staging `profiles` Data
    API prerequisite from the protected runner, run cold `prepare` without
    changing the null runtime, then authenticate cold quiesce from null to zero.
-   The sole cross-candidate bridge must use predecessor candidate
-   `838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
-   intermediate candidate `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`,
-   its ambiguous prepare `34180322982`, and its failed zero-write prepare
-   reconciliation `34181145015`. The executable successor must be the exact
-   reviewed direct child of
-   `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`, perform a fresh same-candidate
-   replacement and normal prepare, supply that fresh `prepare_run_id`, and
-   finish before the unchanged `2026-09-08T18:57:20Z` deadline; pass the
-   original predecessor as
-   `ambiguous_quiesce_candidate_sha` and `ambiguous_quiesce_run_id`, while
-   leaving `ambiguous_prepare_run_id` empty.
+   The sole cross-candidate bridge pins legacy candidate
+   `838e8c877dcafc0a822a12e5a26afa81c26924a3` and its failed quiesce
+   `34153306935` as historical evidence, intermediate candidate
+   `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604` with ambiguous prepare
+   `34180322982` and failed zero-write prepare reconciliation `34181145015`,
+   and immediate-prior candidate
+   `1161e7ecd421556b104bcae059e8764ebf4a545e` with successful prepare
+   `34186355641` and failed no-write quiesce `34186930666`. The executable
+   successor must be the exact reviewed direct child of that immediate prior,
+   perform a fresh same-candidate replacement and normal prepare, supply that
+   fresh `prepare_run_id`, and finish before the unchanged
+   `2026-09-08T18:57:20Z` deadline. Pass
+   `ambiguous_quiesce_candidate_sha=1161e7ecd421556b104bcae059e8764ebf4a545e`
+   and `ambiguous_quiesce_run_id=34186930666`, while leaving
+   `ambiguous_prepare_run_id` empty; the legacy candidate and run are sealed
+   evidence only.
    Upload the candidate only at explicit zero, then restore it from zero to one
    with automatic maintenance disabled and candidate-bound. A healthy legacy
    route instead uses the normal prepare and one-to-zero quiesce proof. Never
@@ -756,9 +785,12 @@ route open. The controlling policy is schema v2 at SHA-256
    selects the second closeout run and rejects zero, one, more than two, or
    ambiguous same-candidate successes. Then run `Prove Pint Path
    permanent-staging two-replica scale` with confirmation
-   `SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE`. Do not cancel it. The final
+   `SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE` and
+   `external_mutation_freeze_attestation=I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`
+   after freezing every external Railway writer. Do not cancel it. The final
    protected step converges the service to one replica even after an earlier
-   failure. A workflow rerun cannot scale out again but may perform convergence.
+   failure. Both scale-out and convergence reject a workflow rerun before any
+   provider access; convergence is available only in the original attempt.
 9. Retain the candidate-bound artifacts and bind their hashes into the private
    release evidence register.
 10. Production worker fence, source upload, maintenance LOGIN transition,

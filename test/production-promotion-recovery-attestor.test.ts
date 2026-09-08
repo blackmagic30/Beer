@@ -29,7 +29,7 @@ import { productionApplicationDeploymentReceiptFixture } from
   "./production-application-deployment-receipt.fixtures.js";
 import {
   productionRouteTopologyFixture,
-  productionScaleTopologyFixture,
+  productionScaleReceiptFixture,
 } from
   "./fixtures/protected-scale-receipt.js";
 import { writeLogicalOffsiteFixture } from "./postgres-logical-offsite.fixtures.js";
@@ -164,56 +164,14 @@ describe("production promotion-recovery attestor", () => {
       completedAt: "2026-08-14T00:00:00.000Z",
     });
     put("production-deployment-receipt", deployment);
-    put("production-scale-receipt", {
-      schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
-      executorState: "GITHUB_ENVIRONMENT_PROTECTED",
-      direction: "converge-production-two",
-      outcome: "scaled",
+    put("production-scale-receipt", productionScaleReceiptFixture({
       candidateSha: CANDIDATE,
+      githubRunId: "9000",
       startedAt: "2026-08-14T00:00:30.000Z",
       completedAt: "2026-08-14T00:01:00.000Z",
-      desiredReplicas: 2,
+      deploymentBeforeActivationIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
       deploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
-      attempts: 1,
-      retryAllowed: false,
-      intentSha256: "1".repeat(64),
-      terminalEvidenceSha256: "2".repeat(64),
-      commandStdoutSha256: "3".repeat(64),
-      commandStderrSha256: "4".repeat(64),
-      productionActivationPrerequisite: {
-        runId: "8000",
-        verificationSha256: "5".repeat(64),
-        terminalSha256: "6".repeat(64),
-        prerequisitesSha256: "7".repeat(64),
-        deploymentBeforeIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
-        deploymentAfterIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
-      },
-      replicaTopology: productionScaleTopologyFixture(),
-      checks: {
-        policyExact: true,
-        githubAuthorityExact: true,
-        tokenScopesExact: true,
-        cliExact: true,
-        boundaryPreflightExact: true,
-        targetPreflightExact: true,
-        productionActivationPrerequisiteExact: true,
-        productionActivationDeploymentContinuityExact: true,
-        runtimePreflightExact: true,
-        durableIntentExact: true,
-        repositoryPrewriteReasserted: true,
-        writeAttemptedAtMostOnce: true,
-        acknowledgementExact: true,
-        postflightAttempted: true,
-        targetPostflightExact: true,
-        runtimePostflightExact: true,
-        candidateUnchanged: true,
-        deploymentUnchanged: true,
-        replicaTopologyEvidenceExact: true,
-        boundaryPostflightExact: true,
-        terminalEvidenceExact: true,
-        finalReceiptEvidenceExact: true,
-      },
-    });
+    }));
     const provisionalClose = {
       schemaVersion: "pintpath-protected-production-route-mutation/v2",
       operation: "close",
@@ -1015,6 +973,7 @@ describe("production promotion-recovery attestor", () => {
       "--authority-sha256", authoritySha256,
       "--expected-reviewer-one-public-key-sha256", publicKeys[0]!.sha256,
       "--expected-reviewer-two-public-key-sha256", publicKeys[1]!.sha256,
+      "--production-scale-run-id", "9000",
       "--candidate-sha", CANDIDATE,
       "--output", output,
     );
@@ -1050,6 +1009,23 @@ describe("production promotion-recovery attestor", () => {
       sha256ProductionPromotionRecoveryBytes(canonicalPostgresBackupJson(receipt)),
     );
     expect(fs.statSync(output).mode & 0o7777).toBe(0o600);
+
+    const mismatchedScaleRunArgv = [...argv];
+    mismatchedScaleRunArgv[
+      mismatchedScaleRunArgv.indexOf("--production-scale-run-id") + 1
+    ] = "9001";
+    mismatchedScaleRunArgv[mismatchedScaleRunArgv.indexOf("--output") + 1] =
+      path.join(root, "scale-run-mismatch.json");
+    await expect(attestProductionPromotionRecovery({
+      argv: mismatchedScaleRunArgv,
+      env: {
+        GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer", GITHUB_RUN_ATTEMPT: "1",
+        PINTPATH_PRODUCTION_PROMOTION_RECOVERY_CONFIRMATION:
+          "ATTEST_PRODUCTION_PROMOTION_RECOVERY",
+      },
+      cwd: process.cwd(), now: () => new Date("2026-08-14T00:18:00.000Z"),
+    })).rejects.toMatchObject({ code: "production_scale_invalid" });
 
     const recoveredApplication = JSON.parse(
       fs.readFileSync(files.get("recovered-smoke-receipt")!, "utf8"),

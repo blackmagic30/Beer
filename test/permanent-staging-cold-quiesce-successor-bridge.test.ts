@@ -11,7 +11,10 @@ import {
   runPermanentStagingColdQuiesceSuccessorBridge,
 } from "../scripts/verify-permanent-staging-cold-quiesce-successor-bridge.js";
 import {
+  COLD_QUIESCE_SUCCESSOR_BINDING,
+  COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION,
   COLD_RECOVERY_LOCK,
+  fullStateCanonical,
   parseColdQuiesceSuccessorBinding,
   sha256,
   type ColdRecoveryState,
@@ -19,6 +22,7 @@ import {
 
 const CANDIDATE = "a".repeat(40);
 const CURRENT_PREPARE_RUN = "8999";
+const CURRENT_REPLACEMENT_RUN = "8998";
 const CURRENT_RUN = "9000";
 const FIXTURE_PREFIX = path.resolve(
   "test/fixtures/cold-quiesce-ambiguous-34153306935",
@@ -39,8 +43,8 @@ function currentAuthority(): string {
       ".github/workflows/recover-permanent-staging-cold-zero.yml",
     workflowRunId: CURRENT_RUN,
     workflowRunAttempt: 1,
-    workflowRunCreatedAt: "2026-09-08T03:10:00Z",
-    reviewedPullRequestMergedAt: "2026-09-08T03:00:00Z",
+    workflowRunCreatedAt: "2026-09-08T05:11:00Z",
+    reviewedPullRequestMergedAt: "2026-09-08T05:00:00Z",
     candidateHistoryMaximumAgeHours: 168,
     completeRetainedHistoryExact: true,
     safePriorSkippedWriteRunIds: [],
@@ -66,8 +70,21 @@ function currentAuthority(): string {
     priorColdPrepareRunId:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.priorPrepareRunId,
     selectedColdPrepareRunId: CURRENT_PREPARE_RUN,
-    priorFailedReadOnlyColdQuiesceReconcileRunId:
-      COLD_QUIESCE_SUCCESSOR_BRIDGE.priorReadOnlyReconcileRunId,
+    legacyColdRecoveryCandidateSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyCandidateSha,
+    legacyColdRecoveryReviewedHeadSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyReviewedHeadSha,
+    legacyColdRecoveryTreeSha: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyTreeSha,
+    legacyColdRecoveryPullRequestNumber:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyPullRequestNumber,
+    legacyColdRecoveryCandidateMergedAt:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyMergedAt,
+    legacyColdPrepareRunId: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyPrepareRunId,
+    legacyColdQuiesceRunId: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyQuiesceRunId,
+    legacyColdQuiesceRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyQuiesceRunCompletedAt,
+    legacyFailedReadOnlyColdQuiesceReconcileRunId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyReadOnlyReconcileRunId,
     intermediateColdRecoveryCandidateSha:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateCandidateSha,
     intermediateColdRecoveryReviewedHeadSha:
@@ -84,19 +101,34 @@ function currentAuthority(): string {
       COLD_QUIESCE_SUCCESSOR_BRIDGE
         .intermediateFailedReadOnlyPrepareReconcileRunId,
     priorAmbiguousColdQuiesceArtifactId:
-      COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactId,
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactId,
     priorAmbiguousColdQuiesceArtifactName:
-      COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactName,
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactName,
     priorAmbiguousColdQuiesceArtifactDigest:
-      COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactDigest,
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactDigest,
+    legacyAmbiguousColdQuiesceArtifactId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactId,
+    legacyAmbiguousColdQuiesceArtifactName:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactName,
+    legacyAmbiguousColdQuiesceArtifactDigest:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactDigest,
+    selectedReplacementRunId: CURRENT_REPLACEMENT_RUN,
+    selectedReplacementRunStartedAt: "2026-09-08T04:40:00.000Z",
+    selectedReplacementRunCompletedAt: "2026-09-08T04:50:00.000Z",
+    selectedColdPrepareRunStartedAt: "2026-09-08T05:00:00.000Z",
+    selectedColdPrepareRunCompletedAt: "2026-09-08T05:10:00.000Z",
     coldQuiesceSuccessorDirectParentExact: true,
-    coldQuiesceSuccessorPriorToIntermediateParentExact: true,
-    coldQuiesceSuccessorTwoHopLineageExact: true,
-    coldQuiesceSuccessorPriorHistoryExact: true,
+    coldQuiesceSuccessorLegacyToIntermediateParentExact: true,
+    coldQuiesceSuccessorIntermediateToPriorParentExact: true,
+    coldQuiesceSuccessorCompleteFourCandidateLineageExact: true,
+    coldQuiesceSuccessorLegacyHistoryExact: true,
     coldQuiesceSuccessorIntermediateHistoryExact: true,
+    coldQuiesceSuccessorPriorHistoryExact: true,
     coldQuiesceSuccessorAllRefsHistoryExact: true,
     coldQuiesceSuccessorCurrentPrepareExact: true,
-    coldQuiesceSuccessorArtifactMetadataExact: true,
+    coldQuiesceSuccessorLegacyArtifactMetadataExact: true,
+    coldQuiesceSuccessorPriorArtifactMetadataExact: true,
+    coldQuiesceSuccessorPriorProviderProofRequired: true,
     coldQuiesceSuccessorBridgeRequired: true,
     successfulStagingDeploymentRunIds: [],
     stagingLifecycleSealed: false,
@@ -144,7 +176,14 @@ function liveState(): ColdRecoveryState {
       imageDigest: null,
       patchId: null,
     },
-    rows: [],
+    rows: [{
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      serviceId: COLD_RECOVERY_LOCK.serviceId,
+      isSealed: false,
+      references: [],
+    }],
   };
 }
 
@@ -161,6 +200,8 @@ function testEnvironment(
     PINTPATH_PROTECTED_ENVIRONMENT: "permanent-staging-scale-evidence",
     PINTPATH_COLD_RECOVERY_CONFIRMATION:
       `QUIESCE_PERMANENT_STAGING_COLD_RECOVERY_TO_ZERO_FOR_${CANDIDATE}_FROM_${COLD_RECOVERY_LOCK.sourceSha}`,
+    PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION:
+      COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION,
     PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN:
       "production-metadata-token-long-enough",
     PINTPATH_RAILWAY_STAGING_METADATA_TOKEN:
@@ -169,12 +210,91 @@ function testEnvironment(
   };
 }
 
+function providerProof(state: ColdRecoveryState) {
+  return {
+    schemaVersion: "pintpath-permanent-staging-cold-provider-no-write-proof/v1" as const,
+    observedAt: "2026-09-08T05:11:01.000Z",
+    environmentId: COLD_RECOVERY_LOCK.environmentId,
+    serviceId: COLD_RECOVERY_LOCK.serviceId,
+    querySha256: {
+      history: COLD_QUIESCE_SUCCESSOR_BINDING.providerHistoryQuerySha256,
+      patches: COLD_QUIESCE_SUCCESSOR_BINDING.providerPatchesQuerySha256,
+      patch: COLD_QUIESCE_SUCCESSOR_BINDING.providerPatchQuerySha256,
+    },
+    history: {
+      pages: [{
+        requestAfter: null,
+        count: 8,
+        endCursor: "history-terminal",
+        hasNextPage: false,
+      }],
+      count: 8,
+      rowsSha256: "4".repeat(64),
+      prefixCount: 6,
+      prefixRowsSha256:
+        "f1270eaf4378364f1d91624515f7a0b370f9274254535619704a56d948bf609f",
+      suffixEventIds: [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+      ] as const,
+    },
+    patches: {
+      pages: [{
+        requestAfter: null,
+        count: 100,
+        endCursor: "patch-page-one",
+        hasNextPage: true,
+      }, {
+        requestAfter: "patch-page-one",
+        count: 24,
+        endCursor: "patch-terminal",
+        hasNextPage: false,
+      }],
+      count: 124,
+      rowsSha256: "5".repeat(64),
+      prefixCount: 122,
+      prefixRowsSha256:
+        "a560f185f77fb091da39314eb1f7f9f5ab3a4d2f6593752339649751f6c133db",
+      suffixPatchIds: [
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444",
+      ] as const,
+      crossFetchProjectionSha256: "6".repeat(64),
+    },
+    incidentWindows: [{
+      startedAt: "2026-09-07T18:51:21.000Z",
+      completedAt: "2026-09-07T18:57:20.000Z",
+    }, {
+      startedAt: "2026-09-08T04:30:38.868Z",
+      completedAt: "2026-09-08T04:32:22.210Z",
+    }],
+    liveStateSha256: sha256(fullStateCanonical(state)),
+    checks: {
+      paginationCompleteExact: true,
+      chronologicalOrderExact: true,
+      historicalPrefixesExact: true,
+      historicalScalePositiveControlExact: true,
+      legacyUnauthorizedRunNoWriteExact: true,
+      priorUnauthorizedRunNoWriteExact: true,
+      authorizedSuffixExact: true,
+      targetDeployAbsentFromSuffixExact: true,
+      crossFetchedPatchesExact: true,
+      ledgerRecheckExact: true,
+      liveTopologyContinuityExact: true,
+    },
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  } as const;
+}
+
 function prepareFiles() {
   const root = fs.realpathSync(fs.mkdtempSync(
     path.join(os.tmpdir(), "pintpath-cold-bridge-"),
   ));
+  const legacy = path.join(root, "legacy");
   const prior = path.join(root, "prior");
   const evidence = path.join(root, "evidence");
+  fs.mkdirSync(legacy, { mode: 0o700 });
   fs.mkdirSync(prior, { mode: 0o700 });
   fs.mkdirSync(evidence, { mode: 0o700 });
   const fixtures = [
@@ -184,7 +304,21 @@ function prepareFiles() {
     ["reviewed-authority", "reviewed-authority.json"],
   ] as const;
   for (const [fixture, leaf] of fixtures) {
-    fs.copyFileSync(`${FIXTURE_PREFIX}-${fixture}.json`, path.join(prior, leaf));
+    fs.copyFileSync(`${FIXTURE_PREFIX}-${fixture}.json`, path.join(legacy, leaf));
+    fs.chmodSync(path.join(legacy, leaf), 0o600);
+  }
+  const priorFixtures = [
+    ["receipt", "cold-quiesce-receipt.json"],
+    ["intent", "cold-quiesce-intent.json"],
+    ["successor-bridge", "cold-quiesce-successor-bridge.json"],
+    ["prerequisites", "prerequisites-verification.json"],
+    ["reviewed-authority", "reviewed-authority.json"],
+  ] as const;
+  for (const [fixture, leaf] of priorFixtures) {
+    fs.copyFileSync(
+      path.resolve(`test/fixtures/cold-quiesce-prior-34186930666-${fixture}.json`),
+      path.join(prior, leaf),
+    );
     fs.chmodSync(path.join(prior, leaf), 0o600);
   }
   const authorityFile = path.join(root, "reviewed-authority.json");
@@ -192,6 +326,26 @@ function prepareFiles() {
     encoding: "utf8",
     mode: 0o600,
   });
+  const prepareTerminalFile = path.join(root, "cold-prepare-terminal.json");
+  fs.writeFileSync(prepareTerminalFile, `${JSON.stringify({
+    schemaVersion: "pintpath-permanent-staging-cold-prepare/v2",
+    operation: "cold-prepare",
+    outcome: "prepared_cold",
+    failureCode: null,
+    candidateSha: CANDIDATE,
+    sourceSha: COLD_RECOVERY_LOCK.sourceSha,
+    startedAt: "2026-09-08T05:05:00.000Z",
+    completedAt: "2026-09-08T05:06:00.000Z",
+    attempts: 1,
+    retryAllowed: false,
+    replacementPrerequisite: {
+      runId: CURRENT_REPLACEMENT_RUN,
+      terminalSha256: "c".repeat(64),
+    },
+    checks: { exact: true },
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   const argv = [
     "--candidate-sha",
     CANDIDATE,
@@ -201,14 +355,18 @@ function prepareFiles() {
     COLD_QUIESCE_SUCCESSOR_BRIDGE.priorCandidateSha,
     "--prior-quiesce-run-id",
     COLD_QUIESCE_SUCCESSOR_BRIDGE.priorQuiesceRunId,
+    "--legacy-artifact-dir",
+    legacy,
     "--prior-artifact-dir",
     prior,
+    "--prepare-terminal-file",
+    prepareTerminalFile,
     "--reviewed-authority-file",
     authorityFile,
     "--evidence-dir",
     evidence,
   ];
-  return { root, prior, evidence, authorityFile, argv };
+  return { root, legacy, prior, evidence, authorityFile, argv };
 }
 
 function dependencies(
@@ -226,12 +384,29 @@ function dependencies(
       },
     }),
     readState: vi.fn().mockResolvedValue(state),
-    now: () => new Date("2026-09-08T03:10:01.000Z"),
+    readProviderProof: vi.fn().mockResolvedValue(providerProof(state)),
+    now: () => new Date("2026-09-08T05:11:01.000Z"),
     writeOutput: vi.fn(),
   };
 }
 
 describe("permanent-staging cold-quiesce successor bridge", () => {
+  it("rejects a missing external Railway mutation freeze before provider reads", async () => {
+    const files = prepareFiles();
+    try {
+      const deps = dependencies(liveState(), testEnvironment({
+        PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: undefined,
+      }));
+      expect(await runPermanentStagingColdQuiesceSuccessorBridge(
+        files.argv,
+        deps,
+      )).toBe(1);
+      expect(deps.readScope).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(files.root, { recursive: true, force: true });
+    }
+  });
+
   it("binds the exact predecessor artifact and configured live topology", async () => {
     const files = prepareFiles();
     try {
@@ -271,26 +446,47 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
             COLD_QUIESCE_SUCCESSOR_BRIDGE
               .intermediateFailedReadOnlyPrepareReconcileRunId,
         },
-        priorArtifact: {
-          id: COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactId,
-          digest: COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactDigest,
+        legacyCandidate: {
+          candidateSha: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyCandidateSha,
+          quiesceRunId: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyQuiesceRunId,
+        },
+        legacyArtifact: {
+          id: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactId,
+          digest: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactDigest,
           prerequisitesSha256:
-            COLD_QUIESCE_SUCCESSOR_BRIDGE.evidence.prerequisites.sha256,
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyEvidence.prerequisites.sha256,
+        },
+        priorArtifact: {
+          id: COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactId,
+          digest: COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactDigest,
+          receiptSha256:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.priorEvidence.receipt.sha256,
         },
         priorCliFailure: {
           cliVersion: "5.32.0",
-          normalizedReplicaAssignment:
-            "project=48d8c6cd-1c66-4148-874b-20877f48e1a5",
-          deterministicPrecommitBarrier:
-            "replica-u64-parse-before-commit_scale_patch",
-          scaleMutationPathReachable: false,
-          providerWriteCommitted: false,
+          cliExitCode: 1,
+          clapParseFailure: false,
+          renderedErrorKind: "UnauthorizedToken",
+          graphqlAuthorizationDenied: true,
+          deniedResolver: null,
+          resolverUnknown: true,
+          environmentPatchCommitReached: null,
+        },
+        providerWriteCommitted: false,
+        mutationExclusivity: {
+          externalMutationFreezeAttestation:
+            COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION,
+          enforcement: "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+          concurrencyGroup: "pintpath-permanent-staging-key-rollout",
+          cancelInProgress: false,
+          bridgeTokenCustody: "METADATA_ONLY",
+          mutationTokenPresent: false,
         },
         sourceProof: {
           commandProducer: {
-            gitBlobSha: "beb1eb9ac760101b3b477fe9960dfbe6f7332d7a",
+            gitBlobSha: "e88780b8f83f87ee63f764ec5db7608d529e175f",
             sha256:
-              "3f761dd08c8a08f872fc9e37d626aac64614092aa0de548deeaf1b890952450c",
+              "a7571fc741d3c422f3a7e33b626187ae3c794475adc8c4b2b5998d0405928860",
           },
           railwayCli: {
             tagCommitSha: "5a8c5065b5cb929d7a1cadf7e168c2eed9453999",
@@ -308,14 +504,20 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
         },
         checks: {
           directSuccessorLineageExact: true,
-          priorToIntermediateLineageExact: true,
-          twoHopSuccessorLineageExact: true,
+          legacyToIntermediateLineageExact: true,
+          intermediateToPriorLineageExact: true,
+          completeFourCandidateLineageExact: true,
           intermediateColdHistoryExact: true,
           priorArtifactContentsExact: true,
           sourceAnchorsExact: true,
-          priorCliDeterministicPrecommitBarrierExact: true,
+          priorCliGraphqlAuthorizationFailureExact: true,
+          providerHistoryCompleteExact: true,
+          providerNoWriteExact: true,
+          externalMutationFreezeAttested: true,
+          serializedMutationConcurrencyExact: true,
+          metadataOnlyTokenCustodyExact: true,
           configuredLiveTopologyExact: true,
-          noSecondScaleWritePerformed: true,
+          noProviderMutationPerformed: true,
         },
       });
       expect(receipt.priorCliFailure).toEqual(
@@ -399,7 +601,7 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
         CANDIDATE,
         CURRENT_RUN,
         CURRENT_PREPARE_RUN,
-        Date.parse("2026-09-08T03:10:02.000Z"),
+        Date.parse("2026-09-08T05:11:02.000Z"),
       )).not.toBeNull();
       const substituted = JSON.parse(source) as {
         intermediateCandidate: { candidateSha: string };
@@ -411,7 +613,7 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
         CANDIDATE,
         CURRENT_RUN,
         CURRENT_PREPARE_RUN,
-        Date.parse("2026-09-08T03:10:02.000Z"),
+        Date.parse("2026-09-08T05:11:02.000Z"),
       )).toBeNull();
     } finally {
       fs.rmSync(files.root, { recursive: true, force: true });

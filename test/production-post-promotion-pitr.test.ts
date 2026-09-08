@@ -20,7 +20,7 @@ import { productionApplicationDeploymentReceiptFixture } from
   "./production-application-deployment-receipt.fixtures.js";
 import {
   productionRouteTopologyFixture,
-  productionScaleTopologyFixture,
+  productionScaleReceiptFixture,
 } from
   "./fixtures/protected-scale-receipt.js";
 import { writeLogicalOffsiteFixture } from "./postgres-logical-offsite.fixtures.js";
@@ -90,56 +90,14 @@ describe("production post-promotion PITR observer", () => {
     ), { mode: 0o600 });
     fs.chmodSync(deploymentFile, 0o600);
     const scaleFile = path.join(root, "scale.json");
-    fs.writeFileSync(scaleFile, producerReceiptJson({
-      schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
-      executorState: "GITHUB_ENVIRONMENT_PROTECTED",
-      direction: "converge-production-two",
-      outcome: "scaled",
+    fs.writeFileSync(scaleFile, producerReceiptJson(productionScaleReceiptFixture({
       candidateSha: CANDIDATE,
+      githubRunId: "9000",
       startedAt: "2026-08-14T00:01:30.000Z",
       completedAt: "2026-08-14T00:02:00.000Z",
-      desiredReplicas: 2,
+      deploymentBeforeActivationIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
       deploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
-      attempts: 1,
-      retryAllowed: false,
-      intentSha256: "1".repeat(64),
-      terminalEvidenceSha256: "2".repeat(64),
-      commandStdoutSha256: "3".repeat(64),
-      commandStderrSha256: "4".repeat(64),
-      productionActivationPrerequisite: {
-        runId: "8000",
-        verificationSha256: "5".repeat(64),
-        terminalSha256: "6".repeat(64),
-        prerequisitesSha256: "7".repeat(64),
-        deploymentBeforeIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
-        deploymentAfterIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
-      },
-      replicaTopology: productionScaleTopologyFixture(),
-      checks: {
-        policyExact: true,
-        githubAuthorityExact: true,
-        tokenScopesExact: true,
-        cliExact: true,
-        boundaryPreflightExact: true,
-        targetPreflightExact: true,
-        productionActivationPrerequisiteExact: true,
-        productionActivationDeploymentContinuityExact: true,
-        runtimePreflightExact: true,
-        durableIntentExact: true,
-        repositoryPrewriteReasserted: true,
-        writeAttemptedAtMostOnce: true,
-        acknowledgementExact: true,
-        postflightAttempted: true,
-        targetPostflightExact: true,
-        runtimePostflightExact: true,
-        candidateUnchanged: true,
-        deploymentUnchanged: true,
-        replicaTopologyEvidenceExact: true,
-        boundaryPostflightExact: true,
-        terminalEvidenceExact: true,
-        finalReceiptEvidenceExact: true,
-      },
-    }), { mode: 0o600 });
+    })), { mode: 0o600 });
     fs.chmodSync(scaleFile, 0o600);
     const closeFile = path.join(root, "close.json");
     fs.writeFileSync(closeFile, producerReceiptJson({
@@ -269,6 +227,7 @@ describe("production post-promotion PITR observer", () => {
         "--candidate-sha", CANDIDATE,
         "--production-deployment-receipt", deploymentFile,
         "--production-scale-receipt", scaleFile,
+        "--production-scale-run-id", "9000",
         "--closed-route-receipt", closeFile,
         "--logical-backup-manifest", manifestFile,
         "--output", output,
@@ -302,6 +261,42 @@ describe("production post-promotion PITR observer", () => {
       clusterHealthy: true,
     });
     expect(fs.statSync(output).mode & 0o7777).toBe(0o600);
+
+    fetchImpl.mockClear();
+    let mismatchStdout = "";
+    const mismatchOutput = path.join(root, "pitr-run-mismatch.json");
+    const mismatchExit = await runProductionPostPromotionPitrObservation({
+      argv: [
+        "--candidate-sha", CANDIDATE,
+        "--production-deployment-receipt", deploymentFile,
+        "--production-scale-receipt", scaleFile,
+        "--production-scale-run-id", "9001",
+        "--closed-route-receipt", closeFile,
+        "--logical-backup-manifest", manifestFile,
+        "--output", mismatchOutput,
+      ],
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_RUN_ATTEMPT: "1",
+        PINTPATH_PRODUCTION_PROMOTION_RECOVERY_CONFIRMATION:
+          "ATTEST_PRODUCTION_PROMOTION_RECOVERY",
+        PINTPATH_POSTGRES_HA_PITR_AUTHORITY_TARGET: "production",
+        PINTPATH_POSTGRES_HA_PITR_EXPECTED_ROOT_SERVICE_ID: ROOT_SERVICE,
+        PINTPATH_RAILWAY_PITR_METADATA_TOKEN: "m".repeat(32),
+      },
+      fetchImpl: fetchImpl as typeof fetch,
+      now: () => new Date("2026-08-14T00:05:30.000Z"),
+      writeOutput: (source) => { mismatchStdout += source; },
+    });
+    expect(mismatchExit).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(fs.existsSync(mismatchOutput)).toBe(false);
+    expect(JSON.parse(mismatchStdout)).toMatchObject({
+      ok: false,
+      failureCode: "deployment_invalid",
+    });
   });
 
   it("fails before provider access outside exact protected main authority", async () => {

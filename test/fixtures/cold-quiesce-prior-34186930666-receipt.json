@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-cold-quiesce/v4",
+  "executorState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "operation": "cold-quiesce",
+  "target": "permanent-staging",
+  "outcome": "mutation_uncertain",
+  "failureCode": "reconciliation_failed",
+  "candidateSha": "1161e7ecd421556b104bcae059e8764ebf4a545e",
+  "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+  "startedAt": "2026-09-08T04:30:38.868Z",
+  "completedAt": "2026-09-08T04:32:22.210Z",
+  "configuredReplicasBefore": 1,
+  "configuredReplicasAfter": null,
+  "configuredRegionsBefore": [
+    {
+      "region": "europe-west4-drams3a",
+      "numReplicas": 1
+    }
+  ],
+  "configuredRegionsAfter": null,
+  "legacyReplicasBefore": null,
+  "legacyReplicasAfter": null,
+  "attempts": 1,
+  "retryAllowed": false,
+  "intentSha256": "661406730dcac531cb7fc1c8af2916731b68a88f3e0a55e1f71b67c6eaa0b57c",
+  "preparePrerequisite": {
+    "runId": "34186355641",
+    "verificationSha256": "ba52630022c2c80f5d294716bc9dfffa5b8ae1dd7b6c6dcbe621f81191a83ffb"
+  },
+  "successorBridge": {
+    "bridgeSha256": "72c773b44f376b8368495f8461be4789a6de86c9e05fc18de6c14733ddfc2c03",
+    "reviewedAuthoritySha256": "973faf61ab61cec680ad064a88624c887b516a125b21f6792090b21d5a33fb46",
+    "currentRunId": "34186930666",
+    "currentPrepareRunId": "34186355641",
+    "priorCandidateSha": "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+    "priorQuiesceRunId": "34153306935",
+    "priorArtifactId": "10030213299",
+    "priorArtifactDigest": "sha256:3f830a7376e604a46e0d8cfe3521fc8eb4e1db444ab73bec4063c22442c42fbe",
+    "liveStateSha256": "3007f93e4a822963d98fb127a121b5355a301e154e0d0981a33c33dad5bd639d",
+    "verifiedAt": "2026-09-08T04:30:38.065Z",
+    "deadline": "2026-09-08T18:57:20.000Z"
+  },
+  "runnerLossReconciliation": null,
+  "commandEvidence": {
+    "exitCode": 1,
+    "timedOut": false,
+    "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrSha256": "5df1ca8f5b08f53475635a850aaab5837e482d4096e9f6b319c4f962f4400930"
+  },
+  "providerEvidence": {
+    "deploymentIdSha256": "fbfeb81e05c27cdf222cdccb5fc0707b72d29d73fb87aa817df82333bfc21422",
+    "snapshotIdSha256": "8056d4418109464c4665b1211a8809880a8815da0e44c89aee1571cbdd589e9b",
+    "stateBeforeSha256": "3007f93e4a822963d98fb127a121b5355a301e154e0d0981a33c33dad5bd639d",
+    "stateAfterSha256": null,
+    "topologyBeforeSha256": "0c5ad9ff5befca90b889a73c5ffb2b5e3621856edd955a7c4f972a0e63a95c1c",
+    "topologyAfterSha256": null,
+    "configuredTopologyBeforeSha256": "b1bacd35bb029a82d8c76a18417b310dc13a250b4fb4234fd360050fd1f70fe9",
+    "configuredTopologyAfterSha256": null,
+    "collateralVariablesBeforeSha256": "69349fe84d9e2891ad74af23e83015ac6f5d0a05da11f37334ba1b4fecd7d8e9",
+    "collateralVariablesAfterSha256": null,
+    "sourceDisconnectedBefore": true,
+    "sourceDisconnectedAfter": false,
+    "stagedPatchEmptyBefore": true,
+    "stagedPatchEmptyAfter": false
+  },
+  "mutationBoundaryEvidence": {
+    "preflightReceiptSha256": "827bc8f797062b613038ae5d6f5c24c9489f50d3beb889d55e92c5593b9bc742",
+    "postflightReceiptSha256": "827bc8f797062b613038ae5d6f5c24c9489f50d3beb889d55e92c5593b9bc742"
+  },
+  "checks": {
+    "policyExact": true,
+    "githubAuthorityExact": true,
+    "successorBridgeExact": true,
+    "successorBridgeTopologyExact": true,
+    "successorBridgePrewriteReasserted": true,
+    "preparePrerequisiteExact": true,
+    "tokenScopesExact": true,
+    "cliExact": true,
+    "boundaryPreflightExact": true,
+    "exactDeadStateBefore": true,
+    "maintenanceRowsBeforeExact": true,
+    "runtimeAbsentBefore": true,
+    "durableIntentExact": true,
+    "repositoryPrewriteReasserted": true,
+    "providerPrewriteReasserted": true,
+    "runtimePrewriteReasserted": true,
+    "writeAttemptedAtMostOnce": true,
+    "acknowledgementExact": false,
+    "postflightAttempted": true,
+    "exactZeroStateAfter": false,
+    "configuredTopologyTransitionExact": false,
+    "maintenanceRowsAfterExact": false,
+    "deploymentSourceAndTopologyUnchanged": false,
+    "collateralVariablesUnchanged": false,
+    "runtimeAbsentAfter": true,
+    "boundaryPostflightExact": true,
+    "terminalEvidenceExact": true
+  },
+  "nextRequiredProof": "EXACT_CANDIDATE_UPLOAD_AT_CONFIGURED_ZERO",
+  "configuredOneToZeroReceiptClaimed": true,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

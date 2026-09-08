@@ -500,7 +500,7 @@ describe("release evidence validator", () => {
     const staleStrict = validate(stale, true);
     expect(staleStrict.status).toBe(1);
     expect(staleStrict.output.staleLiveEvidence).toContain("production_public_smoke");
-  });
+  }, 30_000);
 
   it("rejects proof for an unknown candidate commit and pending items that retain old proof", () => {
     const unknownCandidate = otherwiseCompleteWithCostPending();

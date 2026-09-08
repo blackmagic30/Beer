@@ -67,9 +67,9 @@ describe("protected scale receipt topology", () => {
     })).toBe(false);
   });
 
-  it("rejects command-assignment tampering and unapproved regions", () => {
+  it("rejects direct-patch tampering and unapproved regions", () => {
     const assignments = structuredClone(stagingRestoreScaleTopologyFixture());
-    assignments.commandAssignments[0] = "asia-southeast1-eqsg3a=2";
+    (assignments.patchRegions[0] as { numReplicas: number }).numReplicas = 2;
     expect(protectedScaleReplicaTopologyExact(assignments, {
       direction: "bootstrap-staging-one",
       attempts: 1,

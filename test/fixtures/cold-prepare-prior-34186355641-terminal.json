@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-cold-prepare/v2",
+  "executorState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "operation": "cold-prepare",
+  "target": "permanent-staging",
+  "outcome": "prepared_cold",
+  "failureCode": null,
+  "candidateSha": "1161e7ecd421556b104bcae059e8764ebf4a545e",
+  "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+  "startedAt": "2026-09-08T04:19:55.479Z",
+  "completedAt": "2026-09-08T04:19:56.818Z",
+  "replicasBefore": null,
+  "replicasAfter": null,
+  "configuredReplicasBefore": 1,
+  "configuredReplicasAfter": 1,
+  "configuredRegionsBefore": [
+    {
+      "region": "europe-west4-drams3a",
+      "numReplicas": 1
+    }
+  ],
+  "configuredRegionsAfter": [
+    {
+      "region": "europe-west4-drams3a",
+      "numReplicas": 1
+    }
+  ],
+  "attempts": 1,
+  "retryAllowed": false,
+  "intentSha256": "107af2daf4ce7e2d6e38040857f5239ccbed5349639afd1c909369369bdaf489",
+  "replacementPrerequisite": {
+    "runId": "34185836466",
+    "terminalSha256": "ba686ea5d5c8b1e79ae6808c3147643d0ccb659ac3d871d36008f9ad297948de"
+  },
+  "providerEvidence": {
+    "graphqlOperation": "variableCollectionUpsert",
+    "acknowledgementExact": true,
+    "deploymentIdSha256": "fbfeb81e05c27cdf222cdccb5fc0707b72d29d73fb87aa817df82333bfc21422",
+    "snapshotIdSha256": "8056d4418109464c4665b1211a8809880a8815da0e44c89aee1571cbdd589e9b",
+    "stateBeforeSha256": "3007f93e4a822963d98fb127a121b5355a301e154e0d0981a33c33dad5bd639d",
+    "stateAfterSha256": "3007f93e4a822963d98fb127a121b5355a301e154e0d0981a33c33dad5bd639d",
+    "topologyBeforeSha256": "0c5ad9ff5befca90b889a73c5ffb2b5e3621856edd955a7c4f972a0e63a95c1c",
+    "topologyAfterSha256": "0c5ad9ff5befca90b889a73c5ffb2b5e3621856edd955a7c4f972a0e63a95c1c",
+    "configuredTopologyBeforeSha256": "b1bacd35bb029a82d8c76a18417b310dc13a250b4fb4234fd360050fd1f70fe9",
+    "configuredTopologyAfterSha256": "b1bacd35bb029a82d8c76a18417b310dc13a250b4fb4234fd360050fd1f70fe9",
+    "collateralVariablesBeforeSha256": "69349fe84d9e2891ad74af23e83015ac6f5d0a05da11f37334ba1b4fecd7d8e9",
+    "collateralVariablesAfterSha256": "69349fe84d9e2891ad74af23e83015ac6f5d0a05da11f37334ba1b4fecd7d8e9",
+    "sourceDisconnectedBefore": true,
+    "sourceDisconnectedAfter": true,
+    "stagedPatchEmptyBefore": true,
+    "stagedPatchEmptyAfter": true
+  },
+  "mutationBoundaryEvidence": {
+    "preflightReceiptSha256": "827bc8f797062b613038ae5d6f5c24c9489f50d3beb889d55e92c5593b9bc742",
+    "postflightReceiptSha256": "827bc8f797062b613038ae5d6f5c24c9489f50d3beb889d55e92c5593b9bc742"
+  },
+  "checks": {
+    "policyExact": true,
+    "githubAuthorityExact": true,
+    "replacementPrerequisiteExact": true,
+    "tokenScopesExact": true,
+    "boundaryPreflightExact": true,
+    "exactDeadStateBefore": true,
+    "requiredVariablesBeforeExact": true,
+    "serviceRoleSealedBefore": true,
+    "durableIntentExact": true,
+    "repositoryPrewriteReasserted": true,
+    "providerPrewriteReasserted": true,
+    "writeAttemptedAtMostOnce": true,
+    "atomicVariablesExact": true,
+    "acknowledgementExact": true,
+    "postflightAttempted": true,
+    "exactDeadStateAfter": true,
+    "maintenanceRowsAfterExact": true,
+    "deploymentAndTopologyUnchanged": true,
+    "collateralVariablesUnchanged": true,
+    "boundaryPostflightExact": true,
+    "terminalEvidenceExact": true
+  },
+  "nextRequiredProof": "EXACT_CONFIGURED_ONE_TO_ZERO_QUIESCENCE_PROOF",
+  "normalOneToZeroReceiptClaimed": false,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

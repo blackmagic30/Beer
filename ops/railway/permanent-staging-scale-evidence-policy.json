@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-scale-evidence-policy/v2",
+  "schemaVersion": "pintpath-permanent-staging-scale-evidence-policy/v3",
   "policyId": "pintpath-permanent-staging-two-to-one-scale-proof",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -10,11 +10,28 @@
   "region": "asia-southeast1-eqsg3a",
   "githubEnvironment": "permanent-staging-scale-evidence",
   "requiredGitRef": "refs/heads/main",
-  "railwayCli": {
-    "version": "5.32.0",
-    "releaseUrl": "https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
-    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
-    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
+  "directMutation": {
+    "endpoint": "https://backboard.railway.com/graphql/v2",
+    "operationName": "PintPathEnvironmentPatchCommit",
+    "operation": "environmentPatchCommit",
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "stagingFullRegionPatchRequired": true,
+    "stagingRegions": [
+      "asia-southeast1-eqsg3a",
+      "europe-west4-drams3a"
+    ],
+    "productionRegions": [
+      "asia-southeast1-eqsg3a"
+    ],
+    "zeroRegionsEncodedAsJsonNull": true,
+    "emptyStagedPatchRequired": true,
+    "providerHistoryContinuityRequired": true,
+    "providerPatchCrossFetchRequired": true,
+    "lostAcknowledgementReconciliationAllowed": true,
+    "providerCasOrLockVerified": false,
+    "externalMutationFreezeAttestation": "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    "externalMutationFreezeEnforcement": "operational_attestation_only"
   },
   "lifecycle": {
     "permanentReplicaCount": 1,

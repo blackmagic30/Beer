@@ -344,10 +344,27 @@ jobs:
           chmod 600 "$PINTPATH_BACKUP_WORK_ROOT"/*.json
           manifest_sha256="$(sha256sum "$PINTPATH_BACKUP_WORK_ROOT/logical-backup-manifest.json" | cut -d ' ' -f 1)"
           printf 'PINTPATH_LOGICAL_MANIFEST_SHA256=%s\n' "$manifest_sha256" >> "$GITHUB_ENV"
+          chain="$RUNNER_TEMP/pintpath-production-recovery-chain/required-chain.json"
+          production_scale_run_id="$(node --input-type=module -e '
+            import fs from "node:fs";
+            const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const matches = Array.isArray(value.productionChain)
+              ? value.productionChain.filter((entry) => entry?.stage === "scale")
+              : [];
+            const selected = matches[0];
+            if (value.schemaVersion !== "pintpath-github-release-candidate-receipt/v5" ||
+              value.candidateSha !== process.argv[2] || matches.length !== 1 ||
+              !Number.isSafeInteger(selected?.runId) || selected.runId <= 0 ||
+              selected?.artifact?.stage !== "scale" ||
+              selected.artifact.runId !== selected.runId) process.exit(1);
+            process.stdout.write(String(selected.runId));
+          ' "$chain" "$CANDIDATE_SHA")"
+          [[ "$production_scale_run_id" =~ ^[1-9][0-9]{0,19}$ ]]
           npm run --silent production:promotion-recovery:pitr:observe -- \
             --candidate-sha "$CANDIDATE_SHA" \
             --production-deployment-receipt "$RUNNER_TEMP/pintpath-production-recovery-chain/production-deployment-receipt.json" \
             --production-scale-receipt "$RUNNER_TEMP/pintpath-production-recovery-chain/production-scale-receipt.json" \
+            --production-scale-run-id "$production_scale_run_id" \
             --closed-route-receipt "$RUNNER_TEMP/pintpath-production-recovery-chain/closed-route-receipt.json" \
             --logical-backup-manifest "$PINTPATH_BACKUP_WORK_ROOT/logical-backup-manifest.json" \
             --output "$PINTPATH_BACKUP_WORK_ROOT/pitr-receipt.json"

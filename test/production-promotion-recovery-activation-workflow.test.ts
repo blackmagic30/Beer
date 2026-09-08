@@ -290,6 +290,26 @@ describe("protected production promotion-recovery activation workflow", () => {
     expect(capture).toContain("production:promotion-recovery:pitr:observe");
     expect(capture).toContain("production-deployment-receipt.json");
     expect(capture).toContain("production-scale-receipt.json");
+    const pitr = step(
+      capture,
+      "Create candidate-bound logical backup and observe PITR",
+    );
+    expect(pitr).toContain("required-chain.json");
+    expect(pitr).toContain(
+      'value.productionChain.filter((entry) => entry?.stage === "scale")',
+    );
+    for (const guard of [
+      'value.schemaVersion !== "pintpath-github-release-candidate-receipt/v5"',
+      "value.candidateSha !== process.argv[2]",
+      "matches.length !== 1",
+      "!Number.isSafeInteger(selected?.runId)",
+      "selected.runId <= 0",
+      'selected?.artifact?.stage !== "scale"',
+      "selected.artifact.runId !== selected.runId",
+    ]) expect(pitr).toContain(guard);
+    expect(pitr).toContain(
+      '--production-scale-run-id "$production_scale_run_id"',
+    );
     expect(capture).toContain("closed-route-receipt.json");
     expect(capture).toContain("logical-backup-manifest.json");
     expect(capture).toContain("db:postgres:backup:logical:retrieve");

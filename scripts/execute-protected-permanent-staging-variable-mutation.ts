@@ -2423,7 +2423,7 @@ function deletionPatchNodeMetadata(
   if (createdAt === null || updatedAt === null || updatedAt < createdAt
     || (expectedStatus === "STAGED" && appliedAt !== null)
     || (expectedStatus === "COMMITTED" && (appliedAt === null
-      || appliedAt < createdAt || updatedAt < appliedAt))) return null;
+      || updatedAt < appliedAt))) return null;
   return {
     id: value.id,
     environmentId: value.environmentId,
@@ -2434,6 +2434,52 @@ function deletionPatchNodeMetadata(
     appliedAt: value.appliedAt,
     lastAppliedError: value.lastAppliedError,
   };
+}
+
+interface CommittedDeletionPatchTimestampAuthority {
+  readonly createdAt:
+    | {
+        readonly exact: string;
+        readonly startedAtMs?: number;
+        readonly completedAtMs?: number;
+      }
+    | {
+        readonly startedAtMs: number;
+        readonly completedAtMs: number;
+      };
+  readonly appliedAt: {
+    readonly startedAtMs: number;
+    readonly completedAtMs: number;
+  };
+  readonly observedAtMs: number;
+}
+
+function timestampAuthorityExact(
+  metadata: Record<string, unknown>,
+  authority: CommittedDeletionPatchTimestampAuthority,
+): boolean {
+  const createdAt = canonicalTimestamp(metadata.createdAt);
+  const appliedAt = canonicalTimestamp(metadata.appliedAt);
+  const updatedAt = canonicalTimestamp(metadata.updatedAt);
+  if (createdAt === null || appliedAt === null || updatedAt === null ||
+    !Number.isFinite(authority.observedAtMs) || updatedAt > authority.observedAtMs ||
+    appliedAt > updatedAt || createdAt > updatedAt ||
+    authority.appliedAt.startedAtMs > authority.appliedAt.completedAtMs ||
+    appliedAt < authority.appliedAt.startedAtMs ||
+    appliedAt > authority.appliedAt.completedAtMs) return false;
+  return "exact" in authority.createdAt
+    ? metadata.createdAt === authority.createdAt.exact &&
+      canonicalTimestamp(authority.createdAt.exact) !== null &&
+      (authority.createdAt.startedAtMs === undefined ||
+        authority.createdAt.completedAtMs === undefined || (
+          authority.createdAt.startedAtMs <=
+            authority.createdAt.completedAtMs &&
+          createdAt >= authority.createdAt.startedAtMs &&
+          createdAt <= authority.createdAt.completedAtMs
+        ))
+    : authority.createdAt.startedAtMs <= authority.createdAt.completedAtMs &&
+      createdAt >= authority.createdAt.startedAtMs &&
+      createdAt <= authority.createdAt.completedAtMs;
 }
 
 function emptyActiveDeletionPatchNodeExact(value: unknown): boolean {
@@ -2470,13 +2516,13 @@ function deletionPatchReadbackEnvelope(
   return value.data;
 }
 
-function parseStagedDeletionPatchReadback(
+function parseStagedDeletionPatchIdentity(
   value: unknown,
   expectedPatchId: string,
-): boolean {
-  if (!UUID_PATTERN.test(expectedPatchId)) return false;
+): { readonly createdAt: string } | null {
+  if (!UUID_PATTERN.test(expectedPatchId)) return null;
   const data = deletionPatchReadbackEnvelope(value);
-  if (data === null) return false;
+  if (data === null) return null;
   const nodes = [
     data.activeMasked,
     data.activeDecrypted,
@@ -2489,7 +2535,7 @@ function parseStagedDeletionPatchReadback(
     "STAGED",
     null,
   ));
-  return metadata.every((entry) => entry !== null)
+  const exact = metadata.every((entry) => entry !== null)
     && metadata.every((entry) => canonical(entry) === canonical(metadata[0]))
     && incidentMaskedCleanupPatchExact(
       (data.activeMasked as Record<string, unknown>).patch,
@@ -2503,12 +2549,25 @@ function parseStagedDeletionPatchReadback(
     && cleanupDeletionPatchExact(
       (data.selectedDecrypted as Record<string, unknown>).patch,
     );
+  const first = metadata[0];
+  return exact && first !== undefined && first !== null &&
+      typeof first.createdAt === "string"
+    ? { createdAt: first.createdAt }
+    : null;
+}
+
+function parseStagedDeletionPatchReadback(
+  value: unknown,
+  expectedPatchId: string,
+): boolean {
+  return parseStagedDeletionPatchIdentity(value, expectedPatchId) !== null;
 }
 
 function parseCommittedDeletionPatch(
   value: unknown,
   expectedPatchId: string,
   expectedCommitMessage: string,
+  timestampAuthority: CommittedDeletionPatchTimestampAuthority,
 ): boolean {
   if (!UUID_PATTERN.test(expectedPatchId)) return false;
   const data = deletionPatchReadbackEnvelope(value);
@@ -2528,6 +2587,7 @@ function parseCommittedDeletionPatch(
   return selectedMasked !== null
     && selectedDecrypted !== null
     && canonical(selectedMasked) === canonical(selectedDecrypted)
+    && timestampAuthorityExact(selectedMasked, timestampAuthority)
     && emptyActiveDeletionPatchNodeExact(data.activeMasked)
     && emptyActiveDeletionPatchNodeExact(data.activeDecrypted)
     && incidentMaskedCleanupPatchExact(
@@ -2542,8 +2602,27 @@ async function readStagedDeletionPatchExact(
   fetchImpl: typeof fetch,
   metadataToken: string,
   patchId: string,
+  expectedCreatedAt?: string,
 ): Promise<boolean> {
-  return parseStagedDeletionPatchReadback(await graphql(
+  const identity = parseStagedDeletionPatchIdentity(await graphql(
+    fetchImpl,
+    metadataToken,
+    PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
+    {
+      environmentId: STAGING_ENVIRONMENT_ID,
+      patchId,
+    },
+  ), patchId);
+  return identity !== null && (expectedCreatedAt === undefined ||
+    identity.createdAt === expectedCreatedAt);
+}
+
+async function readStagedDeletionPatchIdentity(
+  fetchImpl: typeof fetch,
+  metadataToken: string,
+  patchId: string,
+): Promise<{ readonly createdAt: string } | null> {
+  return parseStagedDeletionPatchIdentity(await graphql(
     fetchImpl,
     metadataToken,
     PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
@@ -2559,9 +2638,13 @@ async function readCommittedDeletionPatchExact(
   metadataToken: string,
   patchId: string,
   commitMessage: string,
+  timestampAuthority: (
+    observedAtMs: number,
+  ) => CommittedDeletionPatchTimestampAuthority,
+  now: () => number,
   graphqlRequest: typeof graphql = graphql,
 ): Promise<boolean> {
-  return parseCommittedDeletionPatch(await graphqlRequest(
+  const value = await graphqlRequest(
     fetchImpl,
     metadataToken,
     PROTECTED_STAGING_VARIABLE_PATCH_QUERY,
@@ -2569,7 +2652,13 @@ async function readCommittedDeletionPatchExact(
       environmentId: STAGING_ENVIRONMENT_ID,
       patchId,
     },
-  ), patchId, commitMessage);
+  );
+  return parseCommittedDeletionPatch(
+    value,
+    patchId,
+    commitMessage,
+    timestampAuthority(now()),
+  );
 }
 
 function secretStrings(
@@ -2926,6 +3015,36 @@ export async function runProtectedPermanentStagingVariableMutation(
     ...overrides,
   };
   const args = parseArguments(dependencies.argv);
+  const operationStartedAtMs = args !== null && (
+    args.operation === CLEANUP_OPERATION || cleanupRecoveryOperation(args.operation)
+  ) ? dependencies.now() : Number.NaN;
+  const currentRunPatchTimestampAuthority = (
+    createdAt: string,
+    creationIsCurrentRun: boolean,
+  ) => (observedAtMs: number): CommittedDeletionPatchTimestampAuthority => ({
+      createdAt: creationIsCurrentRun
+        ? {
+            exact: createdAt,
+            startedAtMs: operationStartedAtMs,
+            completedAtMs: observedAtMs,
+          }
+        : { exact: createdAt },
+      appliedAt: {
+        startedAtMs: operationStartedAtMs,
+        completedAtMs: observedAtMs,
+      },
+      observedAtMs,
+    });
+  const pinnedCleanupCloseoutTimestampAuthority = (
+    _observedAtMs: number,
+  ): CommittedDeletionPatchTimestampAuthority => ({
+    createdAt: { exact: INCIDENT_STAGED_PATCH_CREATED_AT },
+    appliedAt: {
+      startedAtMs: Date.parse(CLEANUP_CLOSEOUT_ORIGINAL_RUN_CREATED_AT),
+      completedAtMs: Date.parse(CLEANUP_CLOSEOUT_ORIGINAL_RUN_COMPLETED_AT),
+    },
+    observedAtMs: Date.parse(CLEANUP_CLOSEOUT_ORIGINAL_RUN_COMPLETED_AT),
+  });
   const checks = emptyChecks();
   let operation: ProtectedStagingVariableOperation | null = args?.operation ?? null;
   let candidateSha: string | null = null;
@@ -2948,6 +3067,7 @@ export async function runProtectedPermanentStagingVariableMutation(
   let stageAcknowledgementExact = false;
   let commitAcknowledgementExact = false;
   let stagedDeletionPatchId: string | null = null;
+  let stagedDeletionPatchCreatedAt: string | null = null;
   let incidentReadOnlyCloseoutAtPreflight = false;
   let incidentMaskedPatchAtPreflight = false;
   try {
@@ -3176,6 +3296,8 @@ export async function runProtectedPermanentStagingVariableMutation(
             `pintpath:staging-offsite-cleanup:${
               CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
             }`,
+            pinnedCleanupCloseoutTimestampAuthority,
+            dependencies.now,
             providerGraphql,
           );
       } catch {
@@ -3484,11 +3606,13 @@ export async function runProtectedPermanentStagingVariableMutation(
       let authoritativeStageReadbackExact = false;
       if (stagedDeletionPatchId !== null) {
         try {
-          authoritativeStageReadbackExact = await readStagedDeletionPatchExact(
+          const identity = await readStagedDeletionPatchIdentity(
             dependencies.fetchImpl,
             metadataToken,
             stagedDeletionPatchId,
           );
+          authoritativeStageReadbackExact = identity !== null;
+          stagedDeletionPatchCreatedAt = identity?.createdAt ?? null;
         } catch {
           authoritativeStageReadbackExact = false;
         }
@@ -3515,16 +3639,19 @@ export async function runProtectedPermanentStagingVariableMutation(
       if (stagedDeletionPatchId === null) {
         stagedDeletionPatchId = staged!.stagedPatchId;
         try {
-          authoritativeStageReadbackExact = await readStagedDeletionPatchExact(
+          const identity = await readStagedDeletionPatchIdentity(
             dependencies.fetchImpl,
             metadataToken,
             stagedDeletionPatchId,
           );
+          authoritativeStageReadbackExact = identity !== null;
+          stagedDeletionPatchCreatedAt = identity?.createdAt ?? null;
         } catch {
           authoritativeStageReadbackExact = false;
         }
       }
-      checks.stagedDeletionPatchExact = authoritativeStageReadbackExact;
+      checks.stagedDeletionPatchExact = authoritativeStageReadbackExact &&
+        stagedDeletionPatchCreatedAt !== null;
       if (!checks.stagedDeletionPatchExact) {
         throw new Error("staged_patch_readback_invalid");
       }
@@ -3536,6 +3663,7 @@ export async function runProtectedPermanentStagingVariableMutation(
         dependencies.fetchImpl,
         metadataToken,
         stagedDeletionPatchId,
+        stagedDeletionPatchCreatedAt!,
       )) throw new Error("final_precommit_patch_invalid");
       attempts = 2;
       try {
@@ -3562,6 +3690,11 @@ export async function runProtectedPermanentStagingVariableMutation(
             metadataToken,
             stagedDeletionPatchId,
             `pintpath:staging-offsite-cleanup:${candidateSha}`,
+            currentRunPatchTimestampAuthority(
+              stagedDeletionPatchCreatedAt!,
+              true,
+            ),
+            dependencies.now,
           );
       } catch {
         checks.committedDeletionPatchExact = false;
@@ -3627,11 +3760,13 @@ export async function runProtectedPermanentStagingVariableMutation(
       if (checks.stagedDeletionPatchExact) {
         stagedDeletionPatchId = prewrite!.stagedPatchId;
         try {
-          checks.stagedDeletionPatchExact = await readStagedDeletionPatchExact(
+          const identity = await readStagedDeletionPatchIdentity(
             dependencies.fetchImpl,
             metadataToken,
             stagedDeletionPatchId,
           );
+          checks.stagedDeletionPatchExact = identity !== null;
+          stagedDeletionPatchCreatedAt = identity?.createdAt ?? null;
         } catch {
           checks.stagedDeletionPatchExact = false;
         }
@@ -3659,12 +3794,13 @@ export async function runProtectedPermanentStagingVariableMutation(
         let authoritativeStageReadbackExact = false;
         if (stagedDeletionPatchId !== null) {
           try {
-            authoritativeStageReadbackExact =
-              await readStagedDeletionPatchExact(
+            const identity = await readStagedDeletionPatchIdentity(
                 dependencies.fetchImpl,
                 metadataToken,
                 stagedDeletionPatchId,
               );
+            authoritativeStageReadbackExact = identity !== null;
+            stagedDeletionPatchCreatedAt = identity?.createdAt ?? null;
           } catch {
             authoritativeStageReadbackExact = false;
           }
@@ -3691,17 +3827,19 @@ export async function runProtectedPermanentStagingVariableMutation(
         if (stagedDeletionPatchId === null) {
           stagedDeletionPatchId = staged!.stagedPatchId;
           try {
-            authoritativeStageReadbackExact =
-              await readStagedDeletionPatchExact(
+            const identity = await readStagedDeletionPatchIdentity(
                 dependencies.fetchImpl,
                 metadataToken,
                 stagedDeletionPatchId,
               );
+            authoritativeStageReadbackExact = identity !== null;
+            stagedDeletionPatchCreatedAt = identity?.createdAt ?? null;
           } catch {
             authoritativeStageReadbackExact = false;
           }
         }
-        checks.stagedDeletionPatchExact = authoritativeStageReadbackExact;
+        checks.stagedDeletionPatchExact = authoritativeStageReadbackExact &&
+          stagedDeletionPatchCreatedAt !== null;
         if (!checks.stagedDeletionPatchExact) {
           throw new Error("staged_patch_readback_invalid");
         }
@@ -3724,6 +3862,7 @@ export async function runProtectedPermanentStagingVariableMutation(
           dependencies.fetchImpl,
           metadataToken,
           stagedDeletionPatchId,
+          stagedDeletionPatchCreatedAt!,
         ))) throw new Error("final_precommit_patch_invalid");
       if (activeOperation === RESUME_CLEANUP_OPERATION
         && !cleanupAlreadyCompletedAtPreflight) {
@@ -3752,6 +3891,11 @@ export async function runProtectedPermanentStagingVariableMutation(
               metadataToken,
               stagedDeletionPatchId,
               `pintpath:staging-offsite-cleanup:${candidateSha}`,
+              currentRunPatchTimestampAuthority(
+                stagedDeletionPatchCreatedAt!,
+                cleanupNoEffectAtPreflight,
+              ),
+              dependencies.now,
             );
         } catch {
           checks.committedDeletionPatchExact = false;
@@ -3837,6 +3981,8 @@ export async function runProtectedPermanentStagingVariableMutation(
             `pintpath:staging-offsite-cleanup:${
               CLEANUP_CLOSEOUT_ORIGINAL_CANDIDATE_SHA
             }`,
+            pinnedCleanupCloseoutTimestampAuthority,
+            dependencies.now,
             providerGraphql,
           );
       } catch {

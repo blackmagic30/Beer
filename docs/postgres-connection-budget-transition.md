@@ -76,7 +76,11 @@ row data is copied into the evidence.
 
 Every run below is a new, original-attempt manual dispatch from the exact
 candidate at protected `main`. Use the documented run IDs; never infer the
-latest run and never retry an uncertain write.
+latest run and never retry an uncertain write. Before each bootstrap quiesce or
+restore, permanent-staging scale-evidence, or production converge-two dispatch,
+freeze every external Railway writer and supply
+`external_mutation_freeze_attestation=I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`.
+Every scale direction rejects a workflow rerun before provider access.
 
 1. In permanent staging, dispatch
    `configure-automatic-maintenance-worker-fence.yml` with `prepare`. It writes
@@ -86,14 +90,16 @@ latest run and never retry an uncertain write.
    consumes the exact prepare artifact and proves the old deployment changes
    from one replica to zero. Dispatch `deploy-permanent-staging.yml` with phase
    `fenced`; it consumes both artifacts and uploads the candidate while the
-   service remains at zero replicas.
+   service remains at zero replicas. Then dispatch the protected venue-directory
+   apply/refresh/validate operation with that exact fenced-deployment run and
+   retain its successful candidate-bound receipt.
 3. Dispatch the bootstrap workflow with `restore`. It consumes the prepare,
-   quiesce, and fenced-deployment artifacts, changes the exact candidate from
-   zero to one replica, and proves `/health`, `/startup`, and `/ready` report
-   automatic maintenance disabled and candidate-bound. Then dispatch the
-   worker workflow with `activate`, followed by the staging deployment workflow
-   with phase `active`. Each consumer verifies the complete artifact chronology
-   before it can receive a provider token.
+   quiesce, fenced-deployment, and venue-directory artifacts, changes the exact
+   candidate from zero to one replica, and proves `/health`, `/startup`, and
+   `/ready` report automatic maintenance disabled and candidate-bound. Then
+   dispatch the worker workflow with `activate`, followed by the staging
+   deployment workflow with phase `active`. Each consumer verifies the complete
+   four-prerequisite chronology before it can receive a provider token.
 4. Dispatch `permanent-staging-scale-evidence.yml` only after the active
    closeout artifact exists. Hold all 8 runtime plus all 8 maintenance slots
    across four process-shaped pool sets, run the expected/2x/60m profiles, and

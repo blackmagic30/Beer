@@ -52,6 +52,10 @@ on:
         description: Exact operation, candidate, and old-source confirmation from the runbook
         required: true
         type: string
+      external_mutation_freeze_attestation:
+        description: I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -87,6 +91,7 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
           DISPATCH_SHA: ${{ github.sha }}
           EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
           OPERATION: ${{ inputs.operation }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
@@ -105,6 +110,8 @@ jobs:
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1
+          test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
+            I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
           case "$BOOTSTRAP_PATH" in healthy-legacy|cold-dead) ;; *) exit 1 ;; esac
           case "$OPERATION" in
             quiesce)
@@ -367,27 +374,6 @@ jobs:
             rmdir "$custody"
           fi
 
-      - name: Install the exact reviewed Railway CLI archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          cli_root="$RUNNER_TEMP/pintpath-railway-cli"
-          cli_archive="$cli_root/railway-5.32.0-x86_64-linux.tar.gz"
-          mkdir -m 700 "$cli_root"
-          curl --fail --silent --show-error --location \
-            'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' \
-            --output "$cli_archive"
-          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$cli_archive" \
-            | sha256sum --check --strict
-          tar --extract --gzip --file "$cli_archive" --directory "$cli_root" \
-            --no-same-owner --no-same-permissions
-          cli_path="$cli_root/railway"
-          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$cli_path" \
-            | sha256sum --check --strict
-          chmod 500 "$cli_path"
-          test "$("$cli_path" --version)" = 'railway 5.32.0'
-          echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path" >> "$GITHUB_ENV"
-
       - name: Reassert exact current main immediately before provider-token custody
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -405,9 +391,11 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
           GITHUB_REF: ${{ github.ref }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           GITHUB_SHA: ${{ github.sha }}
           OPERATION: ${{ inputs.operation }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}

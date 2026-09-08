@@ -129,10 +129,14 @@ function restoreOwnProperty(
   }
 }
 
+interface PoisonPropertyDescriptor extends PropertyDescriptor {
+  readonly calls: { count: number };
+}
+
 interface PropertyPoison {
   readonly target: object;
   readonly key: PropertyKey;
-  readonly descriptor: PropertyDescriptor;
+  readonly descriptor: PoisonPropertyDescriptor;
 }
 
 async function withPoisonedProperties<T>(
@@ -165,14 +169,17 @@ async function withPoisonedProperties<T>(
   }
 }
 
-function throwingValue(label: string): PropertyDescriptor {
+function throwingValue(label: string): PoisonPropertyDescriptor {
+  const calls = { count: 0 };
   return {
+    calls,
     configurable: true,
     enumerable: false,
     writable: true,
-    value: vi.fn(() => {
+    value() {
+      calls.count += 1;
       throw new Error(`poison-called:${label}`);
-    }),
+    },
   };
 }
 
@@ -670,7 +677,8 @@ describe("permanent staging provider-variable durable evidence", () => {
     const hashPrototype = Object.getPrototypeOf(crypto.createHash("sha256"));
     const fsPromises = fs.promises;
     const realpathExact = fs.realpath;
-    const poison = (label: string): PropertyDescriptor => throwingValue(label);
+    const poison = (label: string): PoisonPropertyDescriptor =>
+      throwingValue(label);
     const poisons: PropertyPoison[] = [
       { target: Buffer, key: "alloc", descriptor: poison("Buffer.alloc") },
       { target: Buffer, key: "from", descriptor: poison("Buffer.from") },
@@ -881,8 +889,8 @@ describe("permanent staging provider-variable durable evidence", () => {
     });
     expect(fs.readFileSync(path.join(root, intentLeaf), "utf8")).toBe(intent);
     for (const entry of poisons) {
-      const poisoned = entry.descriptor.value;
-      if (typeof poisoned === "function") expect(poisoned).not.toHaveBeenCalled();
+      expect(entry.descriptor.calls.count).toBe(0);
+      expect(vi.isMockFunction(entry.descriptor.value)).toBe(false);
     }
   });
 
@@ -892,7 +900,8 @@ describe("permanent staging provider-variable durable evidence", () => {
     const fileHandlePrototype = Object.getPrototypeOf(probe);
     await probe.close();
     const store = await openPermanentStagingProviderVariableWriteEvidenceStore(root);
-    const poison = (label: string): PropertyDescriptor => throwingValue(label);
+    const poison = (label: string): PoisonPropertyDescriptor =>
+      throwingValue(label);
     const poisons: PropertyPoison[] = [
       {
         target: fileHandlePrototype,
@@ -948,7 +957,8 @@ describe("permanent staging provider-variable durable evidence", () => {
       readbackExact: true,
     });
     for (const entry of poisons) {
-      expect(entry.descriptor.value).not.toHaveBeenCalled();
+      expect(entry.descriptor.calls.count).toBe(0);
+      expect(vi.isMockFunction(entry.descriptor.value)).toBe(false);
     }
   });
 
