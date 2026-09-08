@@ -316,7 +316,9 @@ export interface ReviewedContainmentAuthorityEvidence {
   readonly reviewedPrHeadSha: string;
   readonly reviewedPullRequestNumber: number;
   readonly reviewedPullRequestMergedAt: string;
-  readonly authorizationDeadline: "2026-09-08T18:57:20.000Z";
+  readonly authorizationDeadline: string;
+  /** Present for v2 so the executor can rederive the bounded deadline at write time. */
+  readonly workflowRunStartedAt?: string;
   readonly workflowRunId: string;
   readonly workflowRunAttempt: 1;
   readonly reviewedAuthorityExact: true;

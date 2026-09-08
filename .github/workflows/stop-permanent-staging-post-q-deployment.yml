@@ -8,6 +8,14 @@ on:
         description: Exact reviewed 40-character SHA currently at main
         required: true
         type: string
+      authorization_id:
+        description: Exact reviewed v2 authorization identifier
+        required: true
+        type: string
+      authorization_source_sha256:
+        description: SHA-256 of the reviewed user-authorization provenance
+        required: true
+        type: string
       q_run_id:
         description: Exact failed Q run (must be 34229745722)
         required: true
@@ -21,7 +29,7 @@ on:
         required: true
         type: string
       confirmation:
-        description: Exact candidate, deployment, and failed-Q confirmation
+        description: Exact v2 candidate, deployment, authorization, and thread confirmation
         required: true
         type: string
       external_mutation_freeze_attestation:
@@ -39,6 +47,10 @@ concurrency:
   group: pintpath-permanent-staging-key-rollout
   queue: max
   cancel-in-progress: false
+
+env:
+  PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID: ${{ inputs.authorization_id }}
+  PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256: ${{ inputs.authorization_source_sha256 }}
 
 jobs:
   prepare:
@@ -83,8 +95,12 @@ jobs:
             6300a324-9407-4b1c-b651-749c47e9537f
           test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
             I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+          test "$PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID" = \
+            pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2
+          test "$PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256" = \
+            4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779
           test "$CONFIRMATION" = \
-            "STOP_POST_Q_PERMANENT_STAGING_DEPLOYMENT_6300A324_9407_4B1C_B651_749C47E9537F_FOR_${CANDIDATE_SHA}_FROM_Q_34229745722"
+            "REAUTHORIZE_ONE_STAGING_DEPLOYMENT_STOP_6300A324_9407_4B1C_B651_749C47E9537F_FOR_${CANDIDATE_SHA}_UNDER_V2_FROM_01A02140_8628_7D30_9374_8D29D4A9F3A3"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
@@ -136,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           node --frozen-intrinsics --disable-proto=throw \
-            scripts/verify-permanent-staging-post-q-authority.mjs \
+            scripts/verify-permanent-staging-post-q-authority-v2.mjs \
             --candidate-sha "$CANDIDATE_SHA" \
             --q-run-id "$Q_RUN_ID" \
             --q-artifact-id "$Q_ARTIFACT_ID" \
@@ -159,7 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           ./node_modules/.bin/tsx \
-            scripts/execute-protected-permanent-staging-post-q-deployment-stop.ts \
+            scripts/execute-protected-permanent-staging-post-q-deployment-stop-v2.ts \
             --phase prepare \
             --candidate-sha '${{ inputs.candidate_sha }}' \
             --q-artifact-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare/sealed" \
@@ -231,8 +247,12 @@ jobs:
             6300a324-9407-4b1c-b651-749c47e9537f
           test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
             I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+          test "$PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID" = \
+            pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2
+          test "$PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256" = \
+            4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779
           test "$CONFIRMATION" = \
-            "STOP_POST_Q_PERMANENT_STAGING_DEPLOYMENT_6300A324_9407_4B1C_B651_749C47E9537F_FOR_${CANDIDATE_SHA}_FROM_Q_34229745722"
+            "REAUTHORIZE_ONE_STAGING_DEPLOYMENT_STOP_6300A324_9407_4B1C_B651_749C47E9537F_FOR_${CANDIDATE_SHA}_UNDER_V2_FROM_01A02140_8628_7D30_9374_8D29D4A9F3A3"
 
       - name: Setup the repository Node runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -285,7 +305,7 @@ jobs:
         run: |
           set -euo pipefail
           node --frozen-intrinsics --disable-proto=throw \
-            scripts/verify-permanent-staging-post-q-authority.mjs \
+            scripts/verify-permanent-staging-post-q-authority-v2.mjs \
             --candidate-sha "$CANDIDATE_SHA" \
             --q-run-id "$Q_RUN_ID" \
             --q-artifact-id "$Q_ARTIFACT_ID" \
@@ -396,7 +416,7 @@ jobs:
           test -z "$(git status --porcelain=v2 --untracked-files=all)"
           test "$(sha256sum "$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent/sealed/stop-intent.json" | awk '{print $1}')" = "$INTENT_SHA256"
           node --frozen-intrinsics --disable-proto=throw \
-            scripts/verify-permanent-staging-post-q-authority.mjs \
+            scripts/verify-permanent-staging-post-q-authority-v2.mjs \
             --candidate-sha "$CANDIDATE_SHA" \
             --q-run-id "$Q_RUN_ID" \
             --q-artifact-id "$Q_ARTIFACT_ID" \
@@ -428,7 +448,7 @@ jobs:
         run: |
           set -euo pipefail
           ./node_modules/.bin/tsx \
-            scripts/execute-protected-permanent-staging-post-q-deployment-stop.ts \
+            scripts/execute-protected-permanent-staging-post-q-deployment-stop-v2.ts \
             --phase apply \
             --candidate-sha '${{ inputs.candidate_sha }}' \
             --q-artifact-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/sealed" \
@@ -467,7 +487,7 @@ jobs:
         run: |
           set -euo pipefail
           ./node_modules/.bin/tsx \
-            scripts/execute-protected-permanent-staging-post-q-deployment-stop.ts \
+            scripts/execute-protected-permanent-staging-post-q-deployment-stop-v2.ts \
             --phase finalize \
             --candidate-sha '${{ inputs.candidate_sha }}' \
             --q-artifact-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/sealed" \

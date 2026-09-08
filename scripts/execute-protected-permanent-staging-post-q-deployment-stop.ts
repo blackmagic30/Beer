@@ -174,6 +174,14 @@ export interface PostQDeploymentStopDependencies {
   readonly cwd: string;
   readonly fetchImpl: typeof fetch;
   readonly repositoryExact: (candidateSha: string) => boolean;
+  readonly confirmationExact: (
+    candidateSha: string,
+    env: Readonly<Record<string, string | undefined>>,
+  ) => boolean;
+  readonly authorizationDeadlineExact: (
+    authority: ReviewedContainmentAuthorityEvidence,
+    nowMs: number,
+  ) => boolean;
   readonly readQArtifact: (directory: string) => Readonly<Record<string, string>>;
   readonly validateQArtifact: typeof validatePostQArtifactSources;
   readonly parseQAuthority: typeof parsePostQAuthority;
@@ -337,7 +345,7 @@ function githubContextExact(
 }
 
 function confirmationExact(
-  args: Arguments,
+  args: Pick<Arguments, "candidateSha">,
   env: Readonly<Record<string, string | undefined>>,
 ): boolean {
   return env.PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION ===
@@ -789,8 +797,10 @@ async function apply(
       throw new Error("prewrite_reassertion_failed");
     }
     const requestStartedMs = dependencies.now();
-    checks.authorizationDeadlineExact = Number.isFinite(requestStartedMs) &&
-      requestStartedMs < Date.parse(reviewedAuthority.authorizationDeadline);
+    checks.authorizationDeadlineExact = dependencies.authorizationDeadlineExact(
+      reviewedAuthority,
+      requestStartedMs,
+    );
     if (!checks.authorizationDeadlineExact) throw new Error("authorization_expired");
     requestStartedAt = new Date(requestStartedMs).toISOString();
     attempts = 1;
@@ -2269,6 +2279,11 @@ export async function runProtectedPermanentStagingPostQDeploymentStop(
         return false;
       }
     }),
+    confirmationExact: overrides.confirmationExact ?? ((candidateSha, inputEnv) =>
+      confirmationExact({ candidateSha }, inputEnv)),
+    authorizationDeadlineExact: overrides.authorizationDeadlineExact ??
+      ((authority, nowMs) => Number.isFinite(nowMs) &&
+        nowMs < Date.parse(authority.authorizationDeadline)),
     readQArtifact: overrides.readQArtifact ?? readQArtifact,
     validateQArtifact: overrides.validateQArtifact ?? validatePostQArtifactSources,
     parseQAuthority: overrides.parseQAuthority ?? parsePostQAuthority,
@@ -2325,7 +2340,10 @@ export async function runProtectedPermanentStagingPostQDeploymentStop(
   }
   checks.githubContextExact = githubContextExact(args, dependencies.env) &&
     dependencies.repositoryExact(args.candidateSha);
-  checks.confirmationExact = confirmationExact(args, dependencies.env);
+  checks.confirmationExact = dependencies.confirmationExact(
+    args.candidateSha,
+    dependencies.env,
+  );
   if (!checks.githubContextExact || !checks.confirmationExact) {
     return writeCommonPhaseFailure(
       dependencies,
@@ -2377,8 +2395,10 @@ export async function runProtectedPermanentStagingPostQDeploymentStop(
   checks.qAuthorityExact = qAuthority !== null;
   checks.reviewedAuthorityExact = reviewedAuthority !== null;
   checks.authorizationDeadlineExact = reviewedAuthority !== null &&
-    (args.phase === "finalize" || dependencies.now() <
-      Date.parse(reviewedAuthority.authorizationDeadline));
+    (args.phase === "finalize" || dependencies.authorizationDeadlineExact(
+      reviewedAuthority,
+      dependencies.now(),
+    ));
   if (qAuthority === null || reviewedAuthority === null ||
     !checks.authorizationDeadlineExact) {
     return writeCommonPhaseFailure(

@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-post-q-deployment-stop-policy/v2",
+  "policyId": "pintpath-permanent-staging-post-q-deployment-stop-post-deadline-successor",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "repository": "blackmagic30/Beer",
+  "requiredRef": "refs/heads/main",
+  "requiredRunAttempt": 1,
+  "githubEnvironment": "permanent-staging-scale-evidence",
+  "concurrencyGroup": "pintpath-permanent-staging-key-rollout",
+  "workflow": {
+    "path": ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+    "workflowId": 353312302,
+    "requiredRunNumber": 2,
+    "requiredTotalHistoryRows": 2,
+    "historyQueryEventFilterAllowed": false,
+    "currentWriterMustNotHaveStarted": true,
+    "rerunAllowed": false,
+    "newDispatchAfterRun2Allowed": false
+  },
+  "archivedV1": {
+    "policyPath": "ops/railway/permanent-staging-post-q-deployment-stop-policy.json",
+    "policyByteSha256": "e8bb67ef71e49f3179f1fe0cb8a6eeceb09f7cae05376b2e74b8b1eae0f7b2e1",
+    "verifierPath": "scripts/verify-permanent-staging-post-q-authority.mjs",
+    "verifierByteSha256": "f5a12c286573226a86445d1bd8960f96be92a75aedc10f705e20ee9e95f8c6a3",
+    "authorityDeadline": "2026-09-08T18:57:20.000Z",
+    "expired": true,
+    "reused": false
+  },
+  "inheritedV1Contracts": {
+    "sourcePolicyPath": "ops/railway/permanent-staging-post-q-deployment-stop-policy.json",
+    "sourcePolicyByteSha256": "e8bb67ef71e49f3179f1fe0cb8a6eeceb09f7cae05376b2e74b8b1eae0f7b2e1",
+    "failedQArtifactAndReceiptExact": true,
+    "postQBaselineExact": true,
+    "providerTargetAndOffTargetBoundaryExact": true,
+    "credentialSeparationExact": true,
+    "singleDeploymentStopAttemptExact": true,
+    "durableIntentAndTerminalContractsExact": true,
+    "postWriteReconciliationAndFinalizationExact": true,
+    "productionMutationForbiddenExact": true,
+    "successorOverridesOnly": [
+      "authority schema and provenance",
+      "candidate lineage",
+      "derived deadline",
+      "canonical workflow run number"
+    ]
+  },
+  "expiredRun": {
+    "runId": 34255228036,
+    "runNumber": 1,
+    "runAttempt": 1,
+    "headSha": "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7",
+    "prepareJobId": 102159216963,
+    "applyJobId": 102160681336,
+    "artifactCount": 0,
+    "prepareFailedBeforeIntent": true,
+    "applySkippedWithoutSteps": true,
+    "writerNeverExistedOrStarted": true,
+    "historicalWorkflow": {
+      "path": ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+      "headSha": "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7",
+      "blobOid": "0d5efadc53101ae6631e25bbff7c804a30faa672",
+      "sizeBytes": 28866,
+      "byteSha256": "6a452880ccbe3d80d9d771b4aae7bd3be2bcf26beac7dee1af91d0c705e7a9a8"
+    }
+  },
+  "authorization": {
+    "authorizationId": "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2",
+    "sourcePath": "ops/railway/permanent-staging-post-q-deployment-stop-authorization-v2.json",
+    "sourceThreadId": "01a02140-8628-7d30-9374-8d29d4a9f3a3",
+    "sourceSchemaVersion": "pintpath-reviewed-user-authorization-provenance/v1",
+    "sourceSizeBytes": 267,
+    "sourceSha256": "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779",
+    "sourceSerialization": "JSON.stringify(value,null,2)+LF",
+    "reviewedProvenanceOnly": true,
+    "cryptographicUserSignatureClaimed": false,
+    "actionConfirmation": "REAUTHORIZE_ONE_STAGING_DEPLOYMENT_STOP_6300A324_9407_4B1C_B651_749C47E9537F_FOR_{candidateSha}_UNDER_V2_FROM_01A02140_8628_7D30_9374_8D29D4A9F3A3"
+  },
+  "candidateLineage": {
+    "candidateMustBeCurrentMainTip": true,
+    "candidateMustBeSoleParentSquash": true,
+    "directParentSha": "d27275f4c101b764c6016e8b378969c14719258e",
+    "directParentTreeSha": "53808bdd995a6ff1d2204e01f7639b103dbd5a76",
+    "directParentSoleParentSha": "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7",
+    "recoveryTreeSha": "9978dca9491f7bf7bee77ce39debe1f713e89c53",
+    "recoverySoleParentSha": "606d33facb515dd10bc94c360e43c20beb999cc1",
+    "predecessorPullRequest": {
+      "number": 98,
+      "reviewedHeadSha": "3ab064f5026a923b42bf67dbd94cb5d16f125c0d",
+      "mergeCommitSha": "d27275f4c101b764c6016e8b378969c14719258e",
+      "baseSha": "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7",
+      "mergedAt": "2026-09-08T18:23:44Z"
+    },
+    "freshReviewedPullRequestRequired": true,
+    "freshBaseChecksRequired": 8,
+    "freshBaseArtifactsRequired": 3
+  },
+  "deadline": {
+    "explicitExpiry": "2026-09-09T08:00:00.000Z",
+    "maximumAfterPullRequestMergeSeconds": 14400,
+    "maximumAfterRunStartSeconds": 5400,
+    "derivation": "min(pull_request_merged_at_plus_4h,current_run_started_at_plus_90m,explicit_expiry)",
+    "persistDerivedDeadline": true,
+    "rederiveImmediatelyBeforeWriter": true,
+    "expirySuppressesPostWriteReconciliation": false,
+    "expirySuppressesFinalization": false
+  },
+  "target": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "forbiddenProductionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "serviceInstanceId": "5a2f3970-2850-44e0-9b6c-f5c7627dde13",
+    "deploymentId": "6300a324-9407-4b1c-b651-749c47e9537f",
+    "snapshotId": "92c2253a-60c4-47fb-8053-a2aee33fc944",
+    "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+    "imageDigest": "sha256:35787ff955a6f2f729ebe7e2220a6146d9429d2ab37e2a88b86225ff0681816e"
+  },
+  "operation": {
+    "mutation": "deploymentStop",
+    "maximumAttempts": 1,
+    "automaticRetryAllowed": false,
+    "durableIntentArtifactPrefix": "pintpath-permanent-staging-post-q-deployment-stop-intent-",
+    "prepareCredentials": [
+      "PINTPATH_RAILWAY_STAGING_METADATA_TOKEN",
+      "PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN"
+    ],
+    "applyCredentials": [
+      "PINTPATH_RAILWAY_STAGING_SCALE_TOKEN"
+    ],
+    "productionWriteCredentialAllowed": false,
+    "productionMutationAllowed": false,
+    "postWriteReconciliationRequired": true,
+    "terminalFinalizationRequired": true
+  },
+  "secretMaterialAllowed": false,
+  "secretDerivedCommitmentsAllowed": false
+}

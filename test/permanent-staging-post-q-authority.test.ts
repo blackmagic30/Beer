@@ -15,6 +15,22 @@ import {
   verifyPostQReviewedCandidate,
   verifyPermanentStagingPostQAuthority,
 } from "../scripts/verify-permanent-staging-post-q-authority.mjs";
+import {
+  POST_Q_AUTHORITY_V2_SCHEMA,
+  POST_Q_REVIEWED_CANDIDATE_V2_SCHEMA,
+  verifyPostQReviewedCandidate as verifyPostQReviewedCandidateV2,
+  verifyPermanentStagingPostQAuthorityV2,
+} from "../scripts/verify-permanent-staging-post-q-authority-v2.mjs";
+import {
+  parsePostQDeploymentStopAuthorityV2,
+  parsePostQDeploymentStopReviewedAuthorityV2,
+} from "../scripts/lib/permanent-staging-post-q-deployment-stop-authority-v2.js";
+import {
+  buildPostQDeploymentStopIntent,
+  canonicalPostQEvidence,
+  parsePostQDeploymentStopIntent,
+  POST_Q_DEPLOYMENT_STOP_LOCK,
+} from "../scripts/lib/permanent-staging-post-q-deployment-stop.js";
 
 const CANDIDATE = "a".repeat(40);
 const CURRENT_RUN_ID = "34240000000";
@@ -321,7 +337,9 @@ function currentJobs() {
   };
 }
 
-function applyPhaseCurrentJobs() {
+function applyPhaseCurrentJobs(
+  writerStatus: "pending" | "queued" = "pending",
+) {
   return {
     total_count: 2,
     jobs: [
@@ -346,7 +364,7 @@ function applyPhaseCurrentJobs() {
         steps: [{
           number: 12,
           name: "Stop the exact accidental staging deployment once",
-          status: "pending",
+          status: writerStatus,
           conclusion: null,
           started_at: null,
           completed_at: null,
@@ -400,6 +418,7 @@ function githubFetch(overrides: {
   bridgeJobs?: unknown;
   bridgeArtifacts?: unknown;
   priorJobs?: unknown;
+  historicalWorkflow?: unknown;
   link?: string;
 } = {}) {
   return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -427,11 +446,17 @@ function githubFetch(overrides: {
       }
       : url.includes(
         "/actions/workflows/stop-permanent-staging-post-q-deployment.yml/runs?",
+      ) || url.includes(
+        `/actions/workflows/${RECOVERY_BRIDGE_WORKFLOW_ID}/runs?`,
       )
       ? overrides.containmentRuns ?? {
         total_count: 2,
         workflow_runs: [containmentRun(), recoveryBridgeRun()],
       }
+      : url.includes(
+        "/contents/.github/workflows/stop-permanent-staging-post-q-deployment.yml?",
+      )
+      ? overrides.historicalWorkflow ?? { type: "invalid" }
       : url.includes(`/actions/runs/${CURRENT_RUN_ID}/attempts/1/jobs?`)
       ? overrides.currentJobs ?? currentJobs()
       : url.includes(
@@ -474,6 +499,11 @@ function reviewedCandidateFetch(
   mainSha = CANDIDATE,
   recoveryBridgeCommitOverrides: Record<string, unknown> = {},
   mergedAt = "2026-09-08T17:20:00Z",
+  timing = {
+    checkStartedAt: "2026-09-08T17:21:00Z",
+    checkCompletedAt: "2026-09-08T17:25:00Z",
+    workflowRunStartedAt: "2026-09-08T14:09:00Z",
+  },
 ) {
   const checkByRun = new Map(requiredChecks.map((row, index) => [
     34241000000 + index,
@@ -544,8 +574,8 @@ function reviewedCandidateFetch(
           details_url:
             `https://github.com/blackmagic30/Beer/actions/runs/${runId}/job/1`,
           check_suite: { id: 9020000000 + index },
-          started_at: "2026-09-08T17:21:00Z",
-          completed_at: "2026-09-08T17:25:00Z",
+          started_at: timing.checkStartedAt,
+          completed_at: timing.checkCompletedAt,
         }],
       };
     } else {
@@ -568,7 +598,7 @@ function reviewedCandidateFetch(
           event: "push",
           workflow_id: 500000000 + index,
           run_attempt: 1,
-          run_started_at: "2026-09-08T14:09:00Z",
+          run_started_at: timing.workflowRunStartedAt,
         };
       } else if (artifactMatch) {
         const runId = Number(artifactMatch[1]);
@@ -592,6 +622,70 @@ function reviewedCandidateFetch(
       }
     }
     return new Response(JSON.stringify(value), { status: 200 });
+  });
+}
+
+function reviewedCandidateFetchV2(
+  predecessorReviewedTree = "53808bdd995a6ff1d2204e01f7639b103dbd5a76",
+) {
+  const fallback = reviewedCandidateFetch(
+    CANDIDATE,
+    {},
+    "2026-09-08T18:24:00Z",
+    {
+      checkStartedAt: "2026-09-08T18:25:00Z",
+      checkCompletedAt: "2026-09-08T18:45:00Z",
+      workflowRunStartedAt: "2026-09-08T18:25:00Z",
+    },
+  );
+  return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith(`/git/commits/${CANDIDATE}`)) {
+      return new Response(JSON.stringify({
+        sha: CANDIDATE,
+        tree: { sha: REVIEWED_TREE },
+        parents: [{ sha: "d27275f4c101b764c6016e8b378969c14719258e" }],
+      }), { status: 200 });
+    }
+    if (url.pathname.endsWith(
+      "/git/commits/d27275f4c101b764c6016e8b378969c14719258e",
+    )) {
+      return new Response(JSON.stringify({
+        sha: "d27275f4c101b764c6016e8b378969c14719258e",
+        tree: { sha: "53808bdd995a6ff1d2204e01f7639b103dbd5a76" },
+        parents: [{ sha: RECOVERY_BRIDGE_SHA }],
+      }), { status: 200 });
+    }
+    if (url.pathname.endsWith(
+      "/git/commits/3ab064f5026a923b42bf67dbd94cb5d16f125c0d",
+    )) {
+      return new Response(JSON.stringify({
+        sha: "3ab064f5026a923b42bf67dbd94cb5d16f125c0d",
+        tree: { sha: predecessorReviewedTree },
+        parents: [{ sha: RECOVERY_BRIDGE_SHA }],
+      }), { status: 200 });
+    }
+    if (url.pathname.endsWith("/pulls/98")) {
+      return new Response(JSON.stringify({
+        number: 98,
+        state: "closed",
+        merged: true,
+        merged_at: "2026-09-08T18:23:44Z",
+        merge_commit_sha: "d27275f4c101b764c6016e8b378969c14719258e",
+        head: {
+          sha: "3ab064f5026a923b42bf67dbd94cb5d16f125c0d",
+          repo: { full_name: "blackmagic30/Beer" },
+        },
+        base: {
+          ref: "main",
+          sha: RECOVERY_BRIDGE_SHA,
+          repo: { full_name: "blackmagic30/Beer" },
+        },
+        user: { id: 29_029_791, login: "blackmagic30" },
+        merged_by: { id: 29_029_791, login: "blackmagic30" },
+      }), { status: 200 });
+    }
+    return fallback(input, init);
   });
 }
 
@@ -1049,5 +1143,420 @@ describe("permanent-staging post-Q GitHub authority", () => {
       linkRoot,
       [],
     )).toThrow("post_q_authority_artifact_files_invalid");
+  });
+
+  it("emits v2 authority that both v2 parsers accept end to end", async () => {
+    const current = containmentRun({
+      created_at: "2026-09-09T06:00:00Z",
+      run_started_at: "2026-09-09T06:00:00Z",
+      updated_at: "2026-09-09T06:01:00Z",
+    });
+    const authorization = {
+      authorizationId:
+        "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2",
+      sourceThreadId: "01a02140-8628-7d30-9374-8d29d4a9f3a3",
+      sourceSchemaVersion:
+        "pintpath-reviewed-user-authorization-provenance/v1",
+      sourceSha256:
+        "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779",
+      sourceSizeBytes: 267,
+      sourceSerialization: "JSON.stringify(value,null,2)+LF",
+      messagesExact: true,
+      reviewedProvenanceOnly: true,
+      cryptographicUserSignatureClaimed: false,
+      secretMaterialIncluded: false,
+      secretDerivedCommitmentsIncluded: false,
+    };
+    const requiredChecksV2 = requiredChecks.map(([name, workflowPath], index) => ({
+      name,
+      runId: 34_300_000_000 + index,
+      checkSuiteId: 93_000_000_000 + index,
+      workflowId: 400_000_000 + index,
+      workflowPath,
+      event: "push",
+      runAttempt: 1,
+      startedAt: "2026-09-09T05:31:00Z",
+      completedAt: "2026-09-09T05:45:00Z",
+    }));
+    const reviewed = {
+      schemaVersion: POST_Q_REVIEWED_CANDIDATE_V2_SCHEMA,
+      repository: "blackmagic30/Beer",
+      branch: "main",
+      candidateSha: CANDIDATE,
+      reviewedPullRequest: {
+        number: 101,
+        reviewedPrHeadSha: REVIEWED_HEAD,
+        mergeCommitSha: CANDIDATE,
+        treeSha: REVIEWED_TREE,
+        mergedAt: "2026-09-09T05:30:00Z",
+        authorId: 29_029_791,
+        mergedById: 29_029_791,
+        githubMergeExact: true,
+        reviewedTreeExact: true,
+        pullRequestApprovalRequirement: "not_required",
+        pullRequestApprovalRequirementExact: true,
+        linearHistoryExact: true,
+      },
+      releasePolicySha256:
+        "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90",
+      successorPolicySha256:
+        "5f4c4bc20c8ef68ed77f51ad92a11cede00122e3274e4408eb8ea858d6a07e4b",
+      directParentSha: "d27275f4c101b764c6016e8b378969c14719258e",
+      predecessorBridge: {
+        candidateSha: "d27275f4c101b764c6016e8b378969c14719258e",
+        treeSha: "53808bdd995a6ff1d2204e01f7639b103dbd5a76",
+        soleParentSha: RECOVERY_BRIDGE_SHA,
+        recoveryCandidateSha: RECOVERY_BRIDGE_SHA,
+        recoveryTreeSha: RECOVERY_BRIDGE_TREE,
+        recoverySoleParentSha: Q_SHA,
+        pullRequestNumber: 98,
+        reviewedPrHeadSha: "3ab064f5026a923b42bf67dbd94cb5d16f125c0d",
+        mergeCommitSha: "d27275f4c101b764c6016e8b378969c14719258e",
+        baseSha: RECOVERY_BRIDGE_SHA,
+        mergedAt: "2026-09-08T18:23:44Z",
+        githubMergeExact: true,
+        reviewedTreeExact: true,
+        linearHistoryExact: true,
+      },
+      authorization,
+      deadlinePolicy: {
+        explicitExpiry: "2026-09-09T08:00:00.000Z",
+        maximumAfterPullRequestMergeSeconds: 14_400,
+        maximumAfterRunStartSeconds: 5_400,
+        derivedDeadline: "2026-09-09T07:30:00.000Z",
+        derivation:
+          "min(pull_request_merged_at_plus_4h,current_run_started_at_plus_90m,explicit_expiry)",
+        rederiveImmediatelyBeforeWriter: true,
+        expirySuppressesPostWriteReconciliation: false,
+        expirySuppressesFinalization: false,
+      },
+      currentContainmentRun: {
+        runId: CURRENT_RUN_ID,
+        workflowId: RECOVERY_BRIDGE_WORKFLOW_ID,
+        workflowPath:
+          ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+        runAttempt: 1,
+        runStartedAt: "2026-09-09T06:00:00Z",
+      },
+      requiredChecks: requiredChecksV2,
+      requiredArtifacts: [
+        ["pintpath-mission-discovery-scale-evidence",
+          "postgres-migration-integration"],
+        ["pintpath-postgres-tool-runtime-closure-v4-observation",
+          "postgres-tool-runtime-closure-observation"],
+        ["pintpath-automated-readiness-evidence", "release-readiness"],
+      ].map(([name, producerCheck], index) => {
+        const producer = requiredChecksV2.find((check) =>
+          check.name === producerCheck)!;
+        return {
+          artifactId: 11_000_000_000 + index,
+          name,
+          digest: `sha256:${"f".repeat(64)}`,
+          sizeBytes: 100,
+          runId: producer.runId,
+          producerCheck,
+        };
+      }),
+      checks: {
+        mergedPullRequestAndTreeExact: true,
+        soleParentSquashShapeExact: true,
+        directParentExact: true,
+        predecessorBridgeExact: true,
+        currentMainTipExact: true,
+        noLaterMainDriftExact: true,
+        baseRequiredCheckLineageExact: true,
+        baseRequiredArtifactsExact: true,
+        chronologyExact: true,
+        deadlineDerivedExact: true,
+        authorizationProvenanceExact: true,
+        expiredAuthorityNotReusedExact: true,
+      },
+      secretMaterialIncluded: false,
+      secretDerivedCommitmentsIncluded: false,
+    };
+    let authoritySource = "";
+    let reviewedSource = "";
+    const verifyCurrentPhase = async (currentJobsOverride: unknown) => {
+      const fetchImpl = githubFetch({
+        currentRun: current,
+        containmentRuns: {
+          total_count: 2,
+          workflow_runs: [current, recoveryBridgeRun()],
+        },
+        currentJobs: currentJobsOverride,
+        historicalWorkflow: { type: "fixture-validated-by-override" },
+      });
+      const result = await verifyPermanentStagingPostQAuthorityV2({
+        argv: argumentsFor(),
+        env: {
+          ...environment(),
+          PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID:
+            "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2",
+          PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256:
+            "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779",
+        },
+        fetchImpl,
+        now: () => Date.parse("2026-09-09T06:01:00.000Z"),
+        historicalWorkflowExact: vi.fn(() => true),
+        sealArtifact: vi.fn(() => ({
+          sealedDirectory: "/tmp/pintpath-post-q-authority/sealed",
+          members: POST_Q_ARTIFACT_MEMBERS.map((member) => ({
+            ...member,
+            sealedPath: member.path,
+          })),
+        })),
+        verifyCandidate: vi.fn(async () => reviewed),
+        writeAuthority: (_filename: string, source: string) => {
+          authoritySource = source;
+        },
+        writeReviewedCandidate: (_filename: string, source: string) => {
+          reviewedSource = source;
+        },
+        writeOutput: vi.fn(),
+      });
+      return { fetchImpl, result };
+    };
+
+    const preparePhase = await verifyCurrentPhase(currentJobs());
+    expect(preparePhase.result.authority.schemaVersion).toBe(
+      POST_Q_AUTHORITY_V2_SCHEMA,
+    );
+    const { fetchImpl, result } = await verifyCurrentPhase(
+      applyPhaseCurrentJobs("queued"),
+    );
+
+    expect(result.authority.schemaVersion).toBe(POST_Q_AUTHORITY_V2_SCHEMA);
+    expect(result.authority.expiredAuthority).toMatchObject({
+      authorizationExpired: true,
+      authorityReused: false,
+      historicalWorkflowBlobOid:
+        "0d5efadc53101ae6631e25bbff7c804a30faa672",
+      historicalWorkflowByteSha256:
+        "6a452880ccbe3d80d9d771b4aae7bd3be2bcf26beac7dee1af91d0c705e7a9a8",
+    });
+    const parsedAuthority = parsePostQDeploymentStopAuthorityV2(authoritySource, {
+      candidateSha: CANDIDATE,
+      runId: CURRENT_RUN_ID,
+    });
+    const parsedReviewed = parsePostQDeploymentStopReviewedAuthorityV2(
+      reviewedSource,
+      {
+      candidateSha: CANDIDATE,
+      runId: CURRENT_RUN_ID,
+      },
+    );
+    expect(parsedAuthority).not.toBeNull();
+    expect(parsedReviewed).toMatchObject({
+      authorizationDeadline: "2026-09-09T07:30:00.000Z",
+      workflowRunStartedAt: "2026-09-09T06:00:00Z",
+    });
+    const intent = buildPostQDeploymentStopIntent({
+      candidateSha: CANDIDATE,
+      runId: CURRENT_RUN_ID,
+      qArtifact: {
+        artifactId: POST_Q_DEPLOYMENT_STOP_LOCK.q.artifactId,
+        artifactName: POST_Q_DEPLOYMENT_STOP_LOCK.q.artifactName,
+        artifactDigest: POST_Q_DEPLOYMENT_STOP_LOCK.q.artifactDigest,
+        receiptSha256: POST_Q_DEPLOYMENT_STOP_LOCK.q.receiptSha256,
+        intentSha256: POST_Q_DEPLOYMENT_STOP_LOCK.q.intentSha256,
+        prerequisiteSha256: POST_Q_DEPLOYMENT_STOP_LOCK.q.prerequisiteSha256,
+        successorBridgeSha256:
+          POST_Q_DEPLOYMENT_STOP_LOCK.q.successorBridgeSha256,
+        reviewedAuthoritySha256:
+          POST_Q_DEPLOYMENT_STOP_LOCK.q.reviewedAuthoritySha256,
+      },
+      qAuthority: parsedAuthority!,
+      reviewedAuthority: parsedReviewed!,
+      boundaryReceiptSha256: "b".repeat(64),
+    });
+    expect(intent).not.toBeNull();
+    expect(parsePostQDeploymentStopIntent(canonicalPostQEvidence(intent), {
+      candidateSha: CANDIDATE,
+      runId: CURRENT_RUN_ID,
+    })).not.toBeNull();
+    const historyUrl = fetchImpl.mock.calls.map(([input]) => String(input)).find(
+      (url) => url.includes("/actions/workflows/353312302/runs?"),
+    );
+    expect(historyUrl).toBeDefined();
+    expect(historyUrl).not.toContain("event=");
+  });
+
+  it("authenticates the fresh reviewed successor and full d272-to-Q chain", async () => {
+    const current = containmentRun({
+      created_at: "2026-09-08T18:58:00Z",
+      run_started_at: "2026-09-08T18:58:00Z",
+      updated_at: "2026-09-08T18:59:00Z",
+    });
+    const authority = await verifyPostQReviewedCandidateV2(
+      reviewedCandidateFetchV2(),
+      TOKEN,
+      CANDIDATE,
+      current,
+      Date.parse("2026-09-08T18:59:00.000Z"),
+    );
+    expect(authority).toMatchObject({
+      schemaVersion: POST_Q_REVIEWED_CANDIDATE_V2_SCHEMA,
+      candidateSha: CANDIDATE,
+      directParentSha: "d27275f4c101b764c6016e8b378969c14719258e",
+      successorPolicySha256:
+        "5f4c4bc20c8ef68ed77f51ad92a11cede00122e3274e4408eb8ea858d6a07e4b",
+      predecessorBridge: {
+        candidateSha: "d27275f4c101b764c6016e8b378969c14719258e",
+        soleParentSha: RECOVERY_BRIDGE_SHA,
+        recoveryCandidateSha: RECOVERY_BRIDGE_SHA,
+        recoveryTreeSha: RECOVERY_BRIDGE_TREE,
+        recoverySoleParentSha: Q_SHA,
+        pullRequestNumber: 98,
+        reviewedTreeExact: true,
+      },
+      authorization: {
+        sourceSizeBytes: 267,
+        sourceSerialization: "JSON.stringify(value,null,2)+LF",
+      },
+      deadlinePolicy: {
+        derivedDeadline: "2026-09-08T20:28:00.000Z",
+        rederiveImmediatelyBeforeWriter: true,
+        expirySuppressesPostWriteReconciliation: false,
+        expirySuppressesFinalization: false,
+      },
+    });
+    const source = `${JSON.stringify(authority, null, 2)}\n`;
+    expect(parsePostQDeploymentStopReviewedAuthorityV2(source, {
+      candidateSha: CANDIDATE,
+      runId: CURRENT_RUN_ID,
+    })).not.toBeNull();
+  });
+
+  it("rejects a PR98 reviewed-head tree substitution", async () => {
+    const current = containmentRun({
+      created_at: "2026-09-08T18:58:00Z",
+      run_started_at: "2026-09-08T18:58:00Z",
+    });
+    await expect(verifyPostQReviewedCandidateV2(
+      reviewedCandidateFetchV2("b".repeat(40)),
+      TOKEN,
+      CANDIDATE,
+      current,
+      Date.parse("2026-09-08T18:59:00.000Z"),
+    )).rejects.toThrow("post_q_authority_reviewed_candidate_invalid");
+  });
+
+  it("fails v2 closed when unfiltered workflow history contains a third row", async () => {
+    const current = containmentRun({
+      created_at: "2026-09-09T06:00:00Z",
+      run_started_at: "2026-09-09T06:00:00Z",
+    });
+    const third = containmentRun({
+      id: 34_239_999_999,
+      run_number: 3,
+      status: "completed",
+      conclusion: "cancelled",
+    });
+    await expect(verifyPermanentStagingPostQAuthorityV2({
+      argv: argumentsFor(),
+      env: {
+        ...environment(),
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID:
+          "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2",
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256:
+          "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779",
+      },
+      fetchImpl: githubFetch({
+        currentRun: current,
+        containmentRuns: {
+          total_count: 3,
+          workflow_runs: [current, third, recoveryBridgeRun()],
+        },
+        historicalWorkflow: { type: "fixture-validated-by-override" },
+      }),
+      historicalWorkflowExact: vi.fn(() => true),
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
+  });
+
+  it("fails v2 before any API call on run attempt two", async () => {
+    const fetchImpl = githubFetch();
+    await expect(verifyPermanentStagingPostQAuthorityV2({
+      argv: argumentsFor(),
+      env: {
+        ...environment(),
+        GITHUB_RUN_ATTEMPT: "2",
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID:
+          "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2",
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256:
+          "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779",
+      },
+      fetchImpl,
+    })).rejects.toThrow("post_q_authority_environment_invalid");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("fails v2 when the current writer has started", async () => {
+    const current = containmentRun({
+      created_at: "2026-09-09T06:00:00Z",
+      run_started_at: "2026-09-09T06:00:00Z",
+    });
+    const jobs = applyPhaseCurrentJobs("queued");
+    const writer = jobs.jobs[1]!;
+    writer.steps[0] = {
+      ...writer.steps[0]!,
+      status: "in_progress",
+      started_at: "2026-09-09T06:01:00Z",
+    };
+    await expect(verifyPermanentStagingPostQAuthorityV2({
+      argv: argumentsFor(),
+      env: {
+        ...environment(),
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID:
+          "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2",
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256:
+          "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779",
+      },
+      fetchImpl: githubFetch({
+        currentRun: current,
+        containmentRuns: {
+          total_count: 2,
+          workflow_runs: [current, recoveryBridgeRun()],
+        },
+        currentJobs: jobs,
+        historicalWorkflow: { type: "fixture-validated-by-override" },
+      }),
+      historicalWorkflowExact: vi.fn(() => true),
+    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+  });
+
+  it("fails v2 when the current writer has completed", async () => {
+    const current = containmentRun({
+      created_at: "2026-09-09T06:00:00Z",
+      run_started_at: "2026-09-09T06:00:00Z",
+    });
+    const jobs = applyPhaseCurrentJobs("queued");
+    const writer = jobs.jobs[1]!;
+    writer.steps[0] = {
+      ...writer.steps[0]!,
+      status: "completed",
+      conclusion: "success",
+      started_at: "2026-09-09T06:01:00Z",
+      completed_at: "2026-09-09T06:01:01Z",
+    };
+    await expect(verifyPermanentStagingPostQAuthorityV2({
+      argv: argumentsFor(),
+      env: {
+        ...environment(),
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_ID:
+          "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v2",
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V2_AUTHORIZATION_SOURCE_SHA256:
+          "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779",
+      },
+      fetchImpl: githubFetch({
+        currentRun: current,
+        containmentRuns: {
+          total_count: 2,
+          workflow_runs: [current, recoveryBridgeRun()],
+        },
+        currentJobs: jobs,
+        historicalWorkflow: { type: "fixture-validated-by-override" },
+      }),
+      historicalWorkflowExact: vi.fn(() => true),
+    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
   });
 });
