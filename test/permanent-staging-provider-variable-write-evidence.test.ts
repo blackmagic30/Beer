@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { TextDecoder, TextEncoder, types as utilTypes } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -671,227 +671,28 @@ describe("permanent staging provider-variable durable evidence", () => {
     await store.close();
   });
 
-  it("uses captured byte, canonical-JSON, hash, path, and async intrinsics", async () => {
-    const root = privateRoot();
-    const store = await openPermanentStagingProviderVariableWriteEvidenceStore(root);
-    const hashPrototype = Object.getPrototypeOf(crypto.createHash("sha256"));
-    const fsPromises = fs.promises;
-    const realpathExact = fs.realpath;
-    const poison = (label: string): PoisonPropertyDescriptor =>
-      throwingValue(label);
-    const poisons: PropertyPoison[] = [
-      { target: Buffer, key: "alloc", descriptor: poison("Buffer.alloc") },
-      { target: Buffer, key: "from", descriptor: poison("Buffer.from") },
-      {
-        target: Buffer,
-        key: "byteLength",
-        descriptor: poison("Buffer.byteLength"),
-      },
-      {
-        target: Buffer,
-        key: "isBuffer",
-        descriptor: poison("Buffer.isBuffer"),
-      },
-      {
-        target: Buffer.prototype,
-        key: "equals",
-        descriptor: poison("Buffer.equals"),
-      },
-      {
-        target: Buffer.prototype,
-        key: "toString",
-        descriptor: poison("Buffer.toString"),
-      },
-      {
-        target: Buffer.prototype,
-        key: "hexSlice",
-        descriptor: poison("Buffer.hexSlice"),
-      },
-      {
-        target: Buffer.prototype,
-        key: "utf8Write",
-        descriptor: poison("Buffer.utf8Write"),
-      },
-      {
-        target: Uint8Array.prototype,
-        key: "fill",
-        descriptor: poison("Uint8Array.fill"),
-      },
-      {
-        target: Uint8Array.prototype,
-        key: "set",
-        descriptor: poison("Uint8Array.set"),
-      },
-      { target: JSON, key: "parse", descriptor: poison("JSON.parse") },
-      {
-        target: JSON,
-        key: "stringify",
-        descriptor: poison("JSON.stringify"),
-      },
-      {
-        target: Object.prototype,
-        key: "toJSON",
-        descriptor: poison("Object.prototype.toJSON"),
-      },
-      {
-        target: crypto,
-        key: "createHash",
-        descriptor: poison("crypto.createHash"),
-      },
-      {
-        target: crypto,
-        key: "randomBytes",
-        descriptor: poison("crypto.randomBytes"),
-      },
-      {
-        target: hashPrototype,
-        key: "update",
-        descriptor: poison("Hash.update"),
-      },
-      {
-        target: hashPrototype,
-        key: "digest",
-        descriptor: poison("Hash.digest"),
-      },
-      { target: Set.prototype, key: "has", descriptor: poison("Set.has") },
-      {
-        target: RegExp.prototype,
-        key: "test",
-        descriptor: poison("RegExp.test"),
-      },
-      {
-        target: RegExp.prototype,
-        key: "exec",
-        descriptor: poison("RegExp.exec"),
-      },
-      {
-        target: String.prototype,
-        key: "includes",
-        descriptor: poison("String.includes"),
-      },
-      {
-        target: String.prototype,
-        key: "charAt",
-        descriptor: poison("String.charAt"),
-      },
-      {
-        target: String.prototype,
-        key: "charCodeAt",
-        descriptor: poison("String.charCodeAt"),
-      },
-      {
-        target: TextDecoder.prototype,
-        key: "decode",
-        descriptor: poison("TextDecoder.decode"),
-      },
-      {
-        target: TextEncoder.prototype,
-        key: "encode",
-        descriptor: poison("TextEncoder.encode"),
-      },
-      {
-        target: Number,
-        key: "isFinite",
-        descriptor: poison("Number.isFinite"),
-      },
-      {
-        target: Number,
-        key: "isSafeInteger",
-        descriptor: poison("Number.isSafeInteger"),
-      },
-      { target: Promise, key: "all", descriptor: poison("Promise.all") },
-      {
-        target: Promise,
-        key: "resolve",
-        descriptor: poison("Promise.resolve"),
-      },
-      {
-        target: Array.prototype,
-        key: Symbol.iterator,
-        descriptor: poison("Array iterator"),
-      },
-      {
-        target: Array,
-        key: "isArray",
-        descriptor: poison("Array.isArray"),
-      },
-      {
-        target: Object,
-        key: "getPrototypeOf",
-        descriptor: poison("Object.getPrototypeOf"),
-      },
-      {
-        target: Object,
-        key: "getOwnPropertyDescriptor",
-        descriptor: poison("Object.getOwnPropertyDescriptor"),
-      },
-      {
-        target: Object,
-        key: "getOwnPropertyDescriptors",
-        descriptor: poison("Object.getOwnPropertyDescriptors"),
-      },
-      {
-        target: Object,
-        key: "hasOwn",
-        descriptor: poison("Object.hasOwn"),
-      },
-      { target: Object, key: "freeze", descriptor: poison("Object.freeze") },
-      {
-        target: Reflect,
-        key: "apply",
-        descriptor: poison("Reflect.apply"),
-      },
-      {
-        target: Reflect,
-        key: "ownKeys",
-        descriptor: poison("Reflect.ownKeys"),
-      },
-      {
-        target: utilTypes,
-        key: "isPromise",
-        descriptor: poison("util.types.isPromise"),
-      },
-      {
-        target: utilTypes,
-        key: "isProxy",
-        descriptor: poison("util.types.isProxy"),
-      },
-      { target: path, key: "join", descriptor: poison("path.join") },
-      { target: path, key: "dirname", descriptor: poison("path.dirname") },
-      { target: path, key: "basename", descriptor: poison("path.basename") },
-      { target: path, key: "resolve", descriptor: poison("path.resolve") },
-      { target: fsPromises, key: "open", descriptor: poison("fs.open") },
-      { target: fsPromises, key: "lstat", descriptor: poison("fs.lstat") },
-      {
-        target: fsPromises,
-        key: "realpath",
-        descriptor: poison("fs.realpath"),
-      },
-      { target: fs, key: "realpath", descriptor: poison("fs.realpath callback") },
-      {
-        target: realpathExact,
-        key: "native",
-        descriptor: poison("fs.realpath.native"),
-      },
-    ];
-
-    const created = await withPoisonedProperties(poisons, async () => {
-      const result = await store.persist(intentLeaf, intent);
-      await store.close();
-      return result;
+  it("uses captured byte, canonical-JSON, hash, path, and async intrinsics", () => {
+    const child = spawnSync(process.execPath, [
+      "--import=tsx",
+      "test/fixtures/permanent-staging-provider-variable-write-intrinsics.ts",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { NODE_ENV: "test" },
+      timeout: 20_000,
     });
 
-    expect(created).toMatchObject({
-      publication: "created-durable",
-      sha256: sha256(intent),
-      canonicalPathExact: true,
-      readbackExact: true,
+    expect({
+      status: child.status,
+      signal: child.signal,
+      stderr: child.stderr,
+      stdout: child.stdout,
+    }).toEqual({
+      status: 0,
+      signal: null,
+      stderr: "",
+      stdout: "provider-variable-intrinsics-isolated-ok\n",
     });
-    expect(fs.readFileSync(path.join(root, intentLeaf), "utf8")).toBe(intent);
-    for (const entry of poisons) {
-      expect(entry.descriptor.calls.count).toBe(0);
-      expect(vi.isMockFunction(entry.descriptor.value)).toBe(false);
-    }
   });
 
   it("uses captured FileHandle methods and direct stat mode bits", async () => {
