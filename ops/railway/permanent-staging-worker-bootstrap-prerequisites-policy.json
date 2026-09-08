@@ -34,7 +34,7 @@
     },
     "coldRecovery": {
       "path": "ops/railway/permanent-staging-cold-recovery-policy.json",
-      "sha256": "83d3c01669719a2e061b120b5337f2b6119782357a1b68f5537352b0e8e15666"
+      "sha256": "59478281f9f68cea6005ee4ad8bbd9d8048c15077456d2aa6430837bfd39cdf6"
     },
     "venueDirectory": {
       "path": "ops/supabase/permanent-staging-venue-directory-policy.json",
@@ -79,7 +79,7 @@
       "alternateReadOnlyRunNameTemplate": "Permanent staging cold recovery | reconcile-quiesce | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-cold-quiesce-<candidate-sha>",
       "receiptFilename": "cold-quiesce-receipt.json",
-      "receiptSchema": "pintpath-permanent-staging-cold-quiesce/v4",
+      "receiptSchema": "pintpath-permanent-staging-cold-quiesce/v5",
       "prerequisitesFilename": "prerequisites-verification.json",
       "replicasBefore": 1,
       "replicasAfter": 0,

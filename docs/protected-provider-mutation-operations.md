@@ -199,25 +199,35 @@ inside the original run's fixed 24-hour deadline. A reconciled cold-prepare
 receipt is accepted as the selected prepare for the later quiesce chain.
 
 The one authorized cross-candidate cold-quiesce successor is pinned even more
-narrowly. Its predecessor is candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, run `34153306935`. Reviewed
-intermediate candidate `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`
-is the predecessor's exact direct child. Its prepare run `34180322982` may have
-written before losing its acknowledgement, and its reconciliation run
-`34181145015` is an exact failed zero-write read-only attempt. The executable
-successor must be the exact reviewed direct child of
-`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`, perform a
-fresh same-candidate Supabase replacement and normal cold prepare, and complete
-the successor bridge no later than `2026-09-08T18:57:20Z`. At successor
-quiesce, the complete all-ref cold-recovery history is exactly seven pinned
-runs split `3 + 2 + 2` across the predecessor, intermediate, and executable
-successor. Dispatch successor `quiesce` with
-`ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`,
-`ambiguous_quiesce_run_id=34153306935`, and an empty
-`ambiguous_prepare_run_id`. The sealed bridge and reviewed-authority bytes must
-prove the legacy command failed deterministically before the provider commit
-path; they are not evidence that the predecessor wrote, nor authority for any
-other candidate, run, topology, or later deadline.
+narrowly. Its complete lineage is legacy candidate `838e8c877dca…`, reviewed
+intermediate `919cbbc9ed4a…`, immediate prior `1161e7ecd421…`, and the new
+reviewed candidate. The exact history is nine runs split `3 + 2 + 2 + 2`:
+legacy prepare/quiesce/read-only reconciliation `34152745186`, `34153306935`,
+and `34154020478`; intermediate prepare/reconciliation `34180322982` and
+`34181145015`; immediate-prior prepare/quiesce `34186355641` and `34186930666`;
+then the new candidate's successful prepare and nonterminal quiesce. The
+intermediate prepare may have written before losing its acknowledgement. The
+immediate-prior quiesce's `UnauthorizedToken` error does not identify the
+denied resolver; only the complete redacted provider patch ledger, the two
+incident-window checks, and continuous configured-one topology prove no write
+was committed.
+
+The new candidate must be the exact reviewed direct child of `1161e7ecd421…`,
+perform a fresh same-candidate Supabase replacement and cold prepare, and
+complete the bridge no later than `2026-09-08T18:57:20Z`. Dispatch successor
+`quiesce` with
+`ambiguous_quiesce_candidate_sha=1161e7ecd421556b104bcae059e8764ebf4a545e`,
+`ambiguous_quiesce_run_id=34186930666`, and an empty
+`ambiguous_prepare_run_id`. Supply the exact external Railway writer-freeze
+attestation
+`I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN` only after
+dashboard, API, autodeploy, and every other staging writer are frozen; the
+serialized workflow bridge records metadata-only token custody before the
+mutation token is introduced. The sole quiesce write is one direct
+`environmentPatchCommit` request with both allowed regions encoded as JSON
+`null`. A lost acknowledgement can be accepted only after exact-zero
+reconciliation; a provider rejection cannot. No evidence or authority is
+transferable to another candidate, run, topology, or later deadline.
 
 The completed `permanent-staging-postgres` runtime-URL repair is closed
 historical evidence bound to `f6bfb81…`; the executable cold-recovery chain

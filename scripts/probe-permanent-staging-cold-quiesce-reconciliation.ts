@@ -33,11 +33,15 @@ import {
   type ColdQuiesceSuccessorBinding,
 } from "./lib/permanent-staging-cold-recovery.js";
 import {
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+} from "./lib/railway-environment-patch-commit.js";
+import {
   parseStagingWorkerBootstrapPrerequisitesVerification,
 } from "./verify-permanent-staging-worker-bootstrap-prerequisites.js";
 
 export const COLD_QUIESCE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce/v4" as const;
+  "pintpath-permanent-staging-cold-quiesce/v5" as const;
 
 interface Checks {
   policyExact: boolean;
@@ -370,11 +374,18 @@ export async function runPermanentStagingColdQuiesceReconciliationProbe(
         scaleCredentialPresent: false,
         providerWriteAttempted: false,
       },
-      commandEvidence: {
-        exitCode: null,
-        timedOut: false,
-        stdoutSha256: null,
-        stderrSha256: null,
+      directMutationEvidence: {
+        operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+        operation: "environmentPatchCommit",
+        transportOutcome: "not_attempted",
+        querySha256: sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION),
+        variablesSha256: null,
+        requestBodySha256: null,
+        responseBodySha256: null,
+        acknowledgementSha256: null,
+        acknowledgementExact: false,
+        commitMessageSha256: null,
+        zeroRegionsEncodedAsJsonNull: false,
       },
       providerEvidence: {
         deploymentIdSha256: railwayDeploymentIdentityIdSha256(

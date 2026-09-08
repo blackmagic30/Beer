@@ -13,6 +13,11 @@ import {
 import { COLD_QUIESCE_SUCCESSOR_BINDING } from
   "./lib/permanent-staging-cold-recovery.js";
 import {
+  railwayEnvironmentPatchCommitVariables,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+} from "./lib/railway-environment-patch-commit.js";
+import {
   PROTECTED_SCALE_RECEIPT_SCHEMA,
   protectedScaleReplicaTopologyExact,
 } from "./lib/protected-scale-receipt-topology.js";
@@ -24,7 +29,7 @@ export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "b329d08110047897743d4acf7d55e2e7c4aac59c4d16b5e632380bde6079416d" as const;
+  "91e15bd48282dbfcd03271edfd26b9e0f94e0b9d72633a82f5b70da6e509ec3c" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -50,7 +55,7 @@ const ACTIVE_DEPLOYMENT_POLICY_SHA256 =
 const COLD_RECOVERY_POLICY_PATH =
   "ops/railway/permanent-staging-cold-recovery-policy.json";
 const COLD_RECOVERY_POLICY_SHA256 =
-  "83d3c01669719a2e061b120b5337f2b6119782357a1b68f5537352b0e8e15666";
+  "59478281f9f68cea6005ee4ad8bbd9d8048c15077456d2aa6430837bfd39cdf6";
 const VENUE_DIRECTORY_POLICY_PATH =
   "ops/supabase/permanent-staging-venue-directory-policy.json";
 const VENUE_DIRECTORY_POLICY_SHA256 =
@@ -88,7 +93,7 @@ const RESTORE_RECONCILIATION_RECEIPT_SCHEMA =
 const ACTIVATE_RECONCILIATION_RECEIPT_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v2";
 const COLD_QUIESCE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce/v4";
+  "pintpath-permanent-staging-cold-quiesce/v5";
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -1529,12 +1534,13 @@ const COLD_PREPARE_RECONCILIATION_CHECK_KEYS = [
 const COLD_QUIESCE_CHECK_KEYS = [
   "policyExact",
   "githubAuthorityExact",
+  "externalMutationFreezeAttested",
   "successorBridgeExact",
   "successorBridgeTopologyExact",
   "successorBridgePrewriteReasserted",
   "preparePrerequisiteExact",
   "tokenScopesExact",
-  "cliExact",
+  "directMutationContractExact",
   "boundaryPreflightExact",
   "exactDeadStateBefore",
   "maintenanceRowsBeforeExact",
@@ -1544,7 +1550,9 @@ const COLD_QUIESCE_CHECK_KEYS = [
   "providerPrewriteReasserted",
   "runtimePrewriteReasserted",
   "writeAttemptedAtMostOnce",
+  "mutationResponseClassified",
   "acknowledgementExact",
+  "lostAcknowledgementExact",
   "postflightAttempted",
   "exactZeroStateAfter",
   "configuredTopologyTransitionExact",
@@ -1908,7 +1916,7 @@ function validateColdQuiesceReceipt(
     "preparePrerequisite",
     "successorBridge",
     "runnerLossReconciliation",
-    "commandEvidence",
+    "directMutationEvidence",
     "providerEvidence",
     "mutationBoundaryEvidence",
     "checks",
@@ -1922,7 +1930,9 @@ function validateColdQuiesceReceipt(
   const prerequisite = record(value.preparePrerequisite)
     ? value.preparePrerequisite
     : null;
-  const command = record(value.commandEvidence) ? value.commandEvidence : null;
+  const directMutation = record(value.directMutationEvidence)
+    ? value.directMutationEvidence
+    : null;
   const successorBridge = record(value.successorBridge)
     ? value.successorBridge
     : null;
@@ -1947,29 +1957,17 @@ function validateColdQuiesceReceipt(
   );
   const checks = record(value.checks) ? value.checks : null;
   const commonChecks = COLD_QUIESCE_CHECK_KEYS.filter(
-    (key) => key !== "acknowledgementExact",
+    (key) =>
+      key !== "acknowledgementExact" && key !== "lostAcknowledgementExact",
   );
   const checkRelationExact = exactKeys(checks, COLD_QUIESCE_CHECK_KEYS) &&
     commonChecks.every((key) => checks[key] === true) &&
-    checks.acknowledgementExact === configuredZero;
+    checks.acknowledgementExact === configuredZero &&
+    checks.lostAcknowledgementExact === reconciled;
   const runnerLossChecksExact = exactTrueChecks(
     checks,
     COLD_RECONCILE_QUIESCE_CHECK_KEYS,
   );
-  const commandHashesExact =
-    (SHA256_PATTERN.test(String(command?.stdoutSha256)) &&
-      SHA256_PATTERN.test(String(command?.stderrSha256))) ||
-    (command?.stdoutSha256 === null && command?.stderrSha256 === null);
-  const commandRelationExact = configuredZero
-    ? command?.exitCode === 0 && command?.timedOut === false && commandHashesExact &&
-      command?.stdoutSha256 !== null && command?.stderrSha256 !== null
-    : reconciled &&
-      (command?.exitCode === null ||
-        (typeof command?.exitCode === "number" &&
-          Number.isSafeInteger(command?.exitCode))) &&
-      typeof command?.timedOut === "boolean" &&
-      !(command?.exitCode === 0 && command?.timedOut === false) &&
-      commandHashesExact;
   const successorVerifiedAt = timestamp(
     successorBridge?.verifiedAt,
     "receipt_invalid",
@@ -2008,6 +2006,72 @@ function validateColdQuiesceReceipt(
     successorVerifiedAt.milliseconds <= started.milliseconds &&
     (runnerLossReconciled || successorBridge.liveStateSha256 ===
       provider.stateBeforeSha256);
+  const commitMessage = successorBridgeRelationExact
+    ? `PintPath cold quiesce ${candidateSha} run ${String(successorBridge.currentRunId)}`
+    : "";
+  const expectedVariables = railwayEnvironmentPatchCommitVariables({
+    environmentId: ENVIRONMENT_ID,
+    serviceId: SERVICE_ID,
+    regions: [
+      { region: COLD_DEPLOYMENT_REGION, numReplicas: 0 },
+      { region: COLD_CONFIGURED_REGION_BEFORE, numReplicas: 0 },
+    ],
+    commitMessage,
+  });
+  const expectedVariablesSource = expectedVariables === null
+    ? null
+    : JSON.stringify(expectedVariables);
+  const expectedRequestSource = expectedVariables === null
+    ? null
+    : JSON.stringify({
+      operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+      query: RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+      variables: expectedVariables,
+    });
+  const directMutationBaseExact = exactKeys(directMutation, [
+    "operationName",
+    "operation",
+    "transportOutcome",
+    "querySha256",
+    "variablesSha256",
+    "requestBodySha256",
+    "responseBodySha256",
+    "acknowledgementSha256",
+    "acknowledgementExact",
+    "commitMessageSha256",
+    "zeroRegionsEncodedAsJsonNull",
+  ]) && directMutation.operationName ===
+      RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME &&
+    directMutation.operation === "environmentPatchCommit" &&
+    directMutation.querySha256 ===
+      sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION);
+  const directMutationRelationExact = runnerLossReconciled
+    ? directMutationBaseExact &&
+      directMutation.transportOutcome === "not_attempted" &&
+      directMutation.variablesSha256 === null &&
+      directMutation.requestBodySha256 === null &&
+      directMutation.responseBodySha256 === null &&
+      directMutation.acknowledgementSha256 === null &&
+      directMutation.acknowledgementExact === false &&
+      directMutation.commitMessageSha256 === null &&
+      directMutation.zeroRegionsEncodedAsJsonNull === false
+    : directMutationBaseExact && expectedVariablesSource !== null &&
+      expectedRequestSource !== null &&
+      directMutation.variablesSha256 === sha256(expectedVariablesSource) &&
+      directMutation.requestBodySha256 === sha256(expectedRequestSource) &&
+      directMutation.commitMessageSha256 === sha256(commitMessage) &&
+      directMutation.zeroRegionsEncodedAsJsonNull === true &&
+      (directMutation.responseBodySha256 === null ||
+        SHA256_PATTERN.test(String(directMutation.responseBodySha256))) &&
+      (configuredZero
+        ? directMutation.transportOutcome === "acknowledged" &&
+          SHA256_PATTERN.test(String(directMutation.responseBodySha256)) &&
+          SHA256_PATTERN.test(String(directMutation.acknowledgementSha256)) &&
+          directMutation.acknowledgementExact === true
+        : reconciled &&
+          directMutation.transportOutcome === "transport_uncertain" &&
+          directMutation.acknowledgementSha256 === null &&
+          directMutation.acknowledgementExact === false);
   const runnerLossRelationExact = runnerLossReconciled &&
     value.configuredReplicasBefore === 0 &&
     value.configuredReplicasAfter === 0 &&
@@ -2026,8 +2090,7 @@ function validateColdQuiesceReceipt(
     SHA256_PATTERN.test(String(runnerLoss.reviewedAuthoritySha256)) &&
     runnerLoss.scaleCredentialPresent === false &&
     runnerLoss.providerWriteAttempted === false &&
-    command?.exitCode === null && command?.timedOut === false &&
-    command?.stdoutSha256 === null && command?.stderrSha256 === null &&
+    directMutationRelationExact &&
     runnerLossChecksExact;
   if (
     value.schemaVersion !== COLD_QUIESCE_RECEIPT_SCHEMA
@@ -2057,11 +2120,11 @@ function validateColdQuiesceReceipt(
     || !RUN_ID_PATTERN.test(String(prerequisite.runId))
     || successorBridge?.currentPrepareRunId !== prerequisite.runId
     || !SHA256_PATTERN.test(String(prerequisite.verificationSha256))
-    || !exactKeys(command, ["exitCode", "timedOut", "stdoutSha256", "stderrSha256"])
+    || !directMutationRelationExact
     || !successorBridgeRelationExact
     || (runnerLossReconciled
       ? !runnerLossRelationExact
-      : runnerLoss !== null || !commandRelationExact || !checkRelationExact)
+      : runnerLoss !== null || !checkRelationExact)
     || !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"])
     || !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256))
     || !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256))

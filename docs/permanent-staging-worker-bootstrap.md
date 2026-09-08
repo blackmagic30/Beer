@@ -49,24 +49,42 @@ Each operator starts the next protected manual workflow only after inspecting
 the prior terminal artifact.
 
 For the current policy-pinned cold/dead successor, replace only the normal
-prepare/quiesce entry with `recover-permanent-staging-cold-zero.yml`. Its one
-cross-candidate bridge pins predecessor candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
-and reviewed intermediate candidate
-`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`. The intermediate's prepare
-`34180322982` may have written before acknowledgement failed; its
-`reconcile-prepare` run `34181145015` is a failed zero-write read-only attempt.
+prepare/quiesce entry with `recover-permanent-staging-cold-zero.yml`. Its bridge
+pins the complete reviewed lineage: legacy candidate
+`838e8c877dcafc0a822a12e5a26afa81c26924a3`, intermediate candidate
+`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`, and immediate prior candidate
+`1161e7ecd421556b104bcae059e8764ebf4a545e`. The legacy runs are prepare
+`34152745186`, failed quiesce `34153306935`, and failed read-only reconciliation
+`34154020478`. The intermediate prepare `34180322982` may have written before
+acknowledgement failed; its `reconcile-prepare` run `34181145015` is a failed
+zero-write read-only attempt. The immediate prior has successful prepare
+`34186355641` and failed quiesce `34186930666`.
+
 The executable successor must be the exact reviewed direct child of the
-intermediate, perform a fresh same-candidate Supabase replacement and normal
+immediate prior, perform a fresh same-candidate Supabase replacement and normal
 cold prepare, supply that fresh `prepare_run_id`, and finish before the
 unchanged `2026-09-08T18:57:20Z` deadline. Successor quiesce accepts exactly
-seven all-ref cold-recovery runs split `3 + 2 + 2` across predecessor,
-intermediate, and executable successor. It must pass the original predecessor
-values as `ambiguous_quiesce_candidate_sha` and
-`ambiguous_quiesce_run_id`, leave `ambiguous_prepare_run_id` empty, and retain
-the sealed successor bridge plus reviewed authority. The remaining fenced
-deployment, venue-directory, restore, activation, active closeout, and scale
-sequence stays candidate-bound and ordered.
+nine all-ref cold-recovery runs split `3 + 2 + 2 + 2` across the legacy,
+intermediate, immediate-prior, and executable candidates. Its public
+`ambiguous_quiesce_candidate_sha` and `ambiguous_quiesce_run_id` inputs must be
+the immediate prior `1161e7ecd421556b104bcae059e8764ebf4a545e` and
+`34186930666`; the legacy values remain sealed historical evidence only.
+
+Before the single write, the bridge reads the complete redacted Railway patch
+ledger and the Beer-service history, verifies both failed-quiesce windows have
+no committed provider write, and binds the exact configured-one dead topology.
+Dispatch requires the exact external Railway writer-freeze attestation after
+dashboard, API, autodeploy, and every other staging writer are frozen: enter
+`I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`. The serialized
+bridge holds metadata-only credentials; the mutation token enters custody only
+in the following one-write step.
+The write uses one direct `environmentPatchCommit` GraphQL request with the two
+allowed regions encoded as JSON `null`; a lost acknowledgement can succeed only
+after exact-zero reconciliation, while a provider rejection cannot. Leave
+`ambiguous_prepare_run_id` empty and retain the sealed successor bridge plus
+reviewed authority. The remaining fenced deployment, venue-directory, restore,
+activation, active closeout, and scale sequence stays candidate-bound and
+ordered.
 
 ## Bootstrap workflow inputs and artifacts
 
@@ -140,7 +158,7 @@ more than 24 hours old.
 ## Immutable policy bindings
 
 The prerequisite policy SHA is
-`b329d08110047897743d4acf7d55e2e7c4aac59c4d16b5e632380bde6079416d`.
+`91e15bd48282dbfcd03271edfd26b9e0f94e0b9d72633a82f5b70da6e509ec3c`.
 Its producer hashes are:
 
 - worker prepare/activate policy:

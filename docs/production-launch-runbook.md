@@ -1943,20 +1943,28 @@ Before worker preparation, select exactly one policy-pinned staging bootstrap
 path with empty staged patches. A sole healthy one-replica legacy deployment
 uses the normal path. The current exact failed/stopped cold/dead topology uses
 only `Recover dead permanent staging to explicit zero`; its one permitted
-cross-candidate bridge pins predecessor candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
-and reviewed intermediate candidate
-`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`. The intermediate's prepare
-`34180322982` may have written before acknowledgement failed, while its
-`reconcile-prepare` run `34181145015` failed without a provider write. The
-executable successor must be the exact reviewed direct child of the
-intermediate, perform a fresh same-candidate Supabase replacement and normal
-cold prepare, and supply that fresh `prepare_run_id`. Its quiesce authority
-requires exactly seven all-ref cold-recovery runs split `3 + 2 + 2`, and keeps
-the original deadline `2026-09-08T18:57:20Z`. For successor quiesce pass
-`ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`
-and `ambiguous_quiesce_run_id=34153306935`, and leave
-`ambiguous_prepare_run_id` empty. No generic failed deployment or ad-hoc Railway
+cross-candidate bridge pins the complete legacy `838e8c877dca…` -> intermediate
+`919cbbc9ed4a…` -> immediate-prior `1161e7ecd421…` -> new-candidate lineage.
+The intermediate prepare `34180322982` may have written before acknowledgement
+failed, while its read-only reconciliation `34181145015` made no provider
+write. The immediate prior's successful prepare is `34186355641`; its failed
+quiesce is `34186930666`. The new candidate must be the exact reviewed direct
+child of the immediate prior, perform a fresh same-candidate Supabase
+replacement and cold prepare, and supply that fresh `prepare_run_id`. Its
+authority requires exactly nine all-ref cold-recovery runs split `3 + 2 + 2 +
+2`, and keeps the original deadline `2026-09-08T18:57:20Z`. Pass
+`ambiguous_quiesce_candidate_sha=1161e7ecd421556b104bcae059e8764ebf4a545e`
+and `ambiguous_quiesce_run_id=34186930666`, and leave
+`ambiguous_prepare_run_id` empty. The bridge must prove both failed-quiesce
+windows contain no provider patch, the complete redacted patch prefix is
+unchanged, and the dead service remains configured at one replica. Supply the
+exact external Railway writer-freeze attestation only after dashboard, API,
+autodeploy, and every other staging writer are frozen:
+`I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`. The serialized
+bridge uses metadata-only token custody before the mutation token is introduced.
+The one quiesce write is a direct `environmentPatchCommit` with both allowed regions
+encoded as JSON `null`; only an uncertain transport acknowledgement may be
+reconciled from exact zero. No generic failed deployment or ad-hoc Railway
 write is eligible. While the selected baseline remains unchanged, execute the
 four candidate-bound Google Maps/Map ID, Google Places, and OpenAI
 provider-variable operations plus the atomic Supabase publishable/secret-key

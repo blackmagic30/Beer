@@ -5,6 +5,7 @@ import {
   argumentsExact,
   authorityExact,
   canonical,
+  COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION,
   COLD_RECOVERY_LOCK,
   COLD_RECOVERY_POLICY_SHA256,
   COLD_QUIESCE_SUCCESSOR_BINDING,
@@ -20,18 +21,22 @@ import {
   readColdRecoveryState,
   readPrivateEvidence,
   reassertRepositoryState,
-  runScaleCommand,
   sha256,
   tokenScopeExact,
   tokensExact,
-  validateCli,
   writeDurable,
   COLD_RECOVERY_SCOPE_QUERY,
   type BoundaryEvidence,
   type ColdRecoveryState,
-  type CommandResult,
   type ColdQuiesceSuccessorBinding,
 } from "./lib/permanent-staging-cold-recovery.js";
+import {
+  commitRailwayReplicaEnvironmentPatch,
+  railwayEnvironmentPatchCommitVariables,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+  type RailwayEnvironmentPatchCommitAttempt,
+} from "./lib/railway-environment-patch-commit.js";
 import {
   parseStagingWorkerBootstrapPrerequisitesVerification,
 } from "./verify-permanent-staging-worker-bootstrap-prerequisites.js";
@@ -39,17 +44,18 @@ import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
 
 export const COLD_QUIESCE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce/v4" as const;
+  "pintpath-permanent-staging-cold-quiesce/v5" as const;
 
 interface Checks {
   policyExact: boolean;
   githubAuthorityExact: boolean;
+  externalMutationFreezeAttested: boolean;
   successorBridgeExact: boolean;
   successorBridgeTopologyExact: boolean;
   successorBridgePrewriteReasserted: boolean;
   preparePrerequisiteExact: boolean;
   tokenScopesExact: boolean;
-  cliExact: boolean;
+  directMutationContractExact: boolean;
   boundaryPreflightExact: boolean;
   exactDeadStateBefore: boolean;
   maintenanceRowsBeforeExact: boolean;
@@ -59,7 +65,9 @@ interface Checks {
   providerPrewriteReasserted: boolean;
   runtimePrewriteReasserted: boolean;
   writeAttemptedAtMostOnce: boolean;
+  mutationResponseClassified: boolean;
   acknowledgementExact: boolean;
+  lostAcknowledgementExact: boolean;
   postflightAttempted: boolean;
   exactZeroStateAfter: boolean;
   configuredTopologyTransitionExact: boolean;
@@ -85,8 +93,11 @@ interface Dependencies {
   readonly readPrivateEvidence: (filename: string) => string;
   readonly reassertRepositoryState: (cwd: string, candidateSha: string) => boolean;
   readonly probeRuntimeAbsent: () => Promise<boolean>;
-  readonly validateCli: (filename: string) => boolean;
-  readonly runScaleCommand: (executable: string, token: string) => Promise<CommandResult>;
+  readonly commitScale: (
+    token: string,
+    candidateSha: string,
+    runId: string,
+  ) => Promise<RailwayEnvironmentPatchCommitAttempt>;
   readonly writeDurable: (directory: string, leaf: string, source: string) => string;
   readonly writeOutput: (source: string) => void;
 }
@@ -95,12 +106,13 @@ function emptyChecks(): Checks {
   return {
     policyExact: false,
     githubAuthorityExact: false,
+    externalMutationFreezeAttested: false,
     successorBridgeExact: false,
     successorBridgeTopologyExact: false,
     successorBridgePrewriteReasserted: false,
     preparePrerequisiteExact: false,
     tokenScopesExact: false,
-    cliExact: false,
+    directMutationContractExact: false,
     boundaryPreflightExact: false,
     exactDeadStateBefore: false,
     maintenanceRowsBeforeExact: false,
@@ -110,7 +122,9 @@ function emptyChecks(): Checks {
     providerPrewriteReasserted: false,
     runtimePrewriteReasserted: false,
     writeAttemptedAtMostOnce: true,
+    mutationResponseClassified: false,
     acknowledgementExact: false,
+    lostAcknowledgementExact: false,
     postflightAttempted: false,
     exactZeroStateAfter: false,
     configuredTopologyTransitionExact: false,
@@ -129,10 +143,19 @@ function successfulChecks(
     "failed_before_attempt" | "mutation_uncertain",
 ): boolean {
   const common = Object.entries(value).filter(
-    ([name]) => name !== "acknowledgementExact",
+    ([name]) =>
+      name !== "acknowledgementExact" && name !== "lostAcknowledgementExact",
   ).every(([, check]) => check === true);
   return common && ((outcome === "configured_zero" && value.acknowledgementExact) ||
-    (outcome === "reconciled_configured_zero" && !value.acknowledgementExact));
+    (outcome === "reconciled_configured_zero" &&
+      !value.acknowledgementExact && value.lostAcknowledgementExact));
+}
+
+export function coldQuiesceCommitMessage(
+  candidateSha: string,
+  runId: string,
+): string {
+  return `PintPath cold quiesce ${candidateSha} run ${runId}`;
 }
 
 async function reconcile(dependencies: Dependencies): Promise<ColdRecoveryState | null> {
@@ -169,8 +192,20 @@ export async function runProtectedPermanentStagingColdQuiesce(
       dependencies.fetchImpl,
       dependencies.sleep,
     ),
-    validateCli,
-    runScaleCommand,
+    commitScale: (token, candidateSha, runId) =>
+      commitRailwayReplicaEnvironmentPatch(
+        dependencies.fetchImpl,
+        token,
+        {
+          environmentId: COLD_RECOVERY_LOCK.environmentId,
+          serviceId: COLD_RECOVERY_LOCK.serviceId,
+          regions: COLD_RECOVERY_LOCK.quiesceRegions.map((region) => ({
+            region,
+            numReplicas: 0,
+          })),
+          commitMessage: coldQuiesceCommitMessage(candidateSha, runId),
+        },
+      ),
     writeDurable,
     writeOutput: (source) => process.stdout.write(source),
     ...overrides,
@@ -191,7 +226,8 @@ export async function runProtectedPermanentStagingColdQuiesce(
     "failed_before_attempt" | "mutation_uncertain" = "failed_before_attempt";
   let boundaryBefore: BoundaryEvidence = { passed: false, receiptSha256: null };
   let boundaryAfter: BoundaryEvidence = { passed: false, receiptSha256: null };
-  let command: CommandResult | null = null;
+  let mutationAttempt: RailwayEnvironmentPatchCommitAttempt | null = null;
+  let mutationVariables: Record<string, unknown> | null = null;
   let tokens: ReturnType<typeof tokensExact> = null;
 
   try {
@@ -204,6 +240,12 @@ export async function runProtectedPermanentStagingColdQuiesce(
       args.expectedDeploymentSha,
     );
     if (!resultChecks.githubAuthorityExact) throw new Error("authority_invalid");
+    resultChecks.externalMutationFreezeAttested =
+      dependencies.env.PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION ===
+        COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION;
+    if (!resultChecks.externalMutationFreezeAttested) {
+      throw new Error("external_mutation_freeze_invalid");
+    }
     const successorBridgeSource = dependencies.readPrivateEvidence(
       args.successorBridgeFile!,
     );
@@ -252,9 +294,43 @@ export async function runProtectedPermanentStagingColdQuiesce(
     resultChecks.tokenScopesExact = tokenScopeExact(metadataScope) &&
       tokenScopeExact(scaleScope);
     if (!resultChecks.tokenScopesExact) throw new Error("token_scope_invalid");
-    const cli = dependencies.env.PINTPATH_RAILWAY_CLI_PATH ?? "";
-    resultChecks.cliExact = path.isAbsolute(cli) && dependencies.validateCli(cli);
-    if (!resultChecks.cliExact) throw new Error("cli_invalid");
+    const currentRunId = dependencies.env.GITHUB_RUN_ID ?? "";
+    mutationVariables = railwayEnvironmentPatchCommitVariables({
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      serviceId: COLD_RECOVERY_LOCK.serviceId,
+      regions: COLD_RECOVERY_LOCK.quiesceRegions.map((region) => ({
+        region,
+        numReplicas: 0,
+      })),
+      commitMessage: coldQuiesceCommitMessage(args.candidateSha, currentRunId),
+    });
+    const expectedMutationVariables = {
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      patch: {
+        services: {
+          [COLD_RECOVERY_LOCK.serviceId]: {
+            deploy: {
+              multiRegionConfig: Object.fromEntries(
+                [...COLD_RECOVERY_LOCK.quiesceRegions].sort().map((region) => [
+                  region,
+                  null,
+                ]),
+              ),
+            },
+          },
+        },
+      },
+      commitMessage: coldQuiesceCommitMessage(args.candidateSha, currentRunId),
+    };
+    resultChecks.directMutationContractExact =
+      RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION.includes(
+        `mutation ${RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME}`,
+      ) && RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION.includes(
+        "environmentPatchCommit(",
+      ) && canonical(mutationVariables) === canonical(expectedMutationVariables);
+    if (!resultChecks.directMutationContractExact) {
+      throw new Error("direct_mutation_contract_invalid");
+    }
     boundaryBefore = await dependencies.boundaryCheck();
     resultChecks.boundaryPreflightExact = boundaryBefore.passed &&
       boundaryBefore.receiptSha256 !== null;
@@ -272,7 +348,7 @@ export async function runProtectedPermanentStagingColdQuiesce(
     resultChecks.runtimeAbsentBefore = await dependencies.probeRuntimeAbsent();
     if (!resultChecks.runtimeAbsentBefore) throw new Error("runtime_present");
     const intent = canonical({
-      schemaVersion: "pintpath-permanent-staging-cold-quiesce-intent/v3",
+      schemaVersion: "pintpath-permanent-staging-cold-quiesce-intent/v4",
       policySha256: COLD_RECOVERY_POLICY_SHA256,
       operation: "cold-quiesce",
       candidateSha: args.candidateSha,
@@ -312,6 +388,16 @@ export async function runProtectedPermanentStagingColdQuiesce(
       boundaryPreflightReceiptSha256: boundaryBefore.receiptSha256,
       maximumAttempts: 1,
       retryAllowed: false,
+      mutation: {
+        operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+        operation: "environmentPatchCommit",
+        querySha256: sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION),
+        variablesSha256: sha256(JSON.stringify(mutationVariables)),
+        commitMessageSha256: sha256(
+          coldQuiesceCommitMessage(args.candidateSha, currentRunId),
+        ),
+        zeroRegionsEncodedAsJsonNull: true,
+      },
       configuredOneToZeroReceiptClaimed: true,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
@@ -360,12 +446,21 @@ export async function runProtectedPermanentStagingColdQuiesce(
 
     attempts = 1;
     try {
-      command = await dependencies.runScaleCommand(cli, tokens.mutation);
+      mutationAttempt = await dependencies.commitScale(
+        tokens.mutation,
+        args.candidateSha,
+        currentRunId,
+      );
     } catch {
-      command = null;
+      mutationAttempt = null;
     }
-    resultChecks.acknowledgementExact = command?.code === 0 &&
-      command?.timedOut === false;
+    resultChecks.mutationResponseClassified = mutationAttempt !== null;
+    resultChecks.acknowledgementExact =
+      mutationAttempt?.outcome === "acknowledged" &&
+      mutationAttempt.acknowledgementExact;
+    resultChecks.lostAcknowledgementExact =
+      mutationAttempt?.outcome === "transport_uncertain" &&
+      !mutationAttempt.acknowledgementExact;
   } catch (error) {
     failureCode = error instanceof Error ? error.message : "unexpected_failure";
   } finally {
@@ -395,13 +490,20 @@ export async function runProtectedPermanentStagingColdQuiesce(
         boundaryAfter.receiptSha256 !== null;
       const successfulWithoutTerminalOrAcknowledgement = Object.entries(resultChecks)
         .filter(([name]) =>
-          name !== "terminalEvidenceExact" && name !== "acknowledgementExact")
+          name !== "terminalEvidenceExact" && name !== "acknowledgementExact" &&
+          name !== "lostAcknowledgementExact")
         .every(([, value]) => value === true);
       if (successfulWithoutTerminalOrAcknowledgement) {
-        failureCode = null;
-        outcome = resultChecks.acknowledgementExact
-          ? "configured_zero"
-          : "reconciled_configured_zero";
+        if (resultChecks.acknowledgementExact) {
+          failureCode = null;
+          outcome = "configured_zero";
+        } else if (resultChecks.lostAcknowledgementExact) {
+          failureCode = null;
+          outcome = "reconciled_configured_zero";
+        } else {
+          failureCode ??= "provider_rejected_without_acknowledgement";
+          outcome = "mutation_uncertain";
+        }
       } else {
         failureCode ??= "reconciliation_failed";
         outcome = "mutation_uncertain";
@@ -450,11 +552,55 @@ export async function runProtectedPermanentStagingColdQuiesce(
           deadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
         },
       runnerLossReconciliation: null,
-      commandEvidence: {
-        exitCode: command?.code ?? null,
-        timedOut: command?.timedOut ?? false,
-        stdoutSha256: command?.stdoutSha256 ?? null,
-        stderrSha256: command?.stderrSha256 ?? null,
+      directMutationEvidence: {
+        operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+        operation: "environmentPatchCommit",
+        transportOutcome: mutationAttempt?.outcome ?? null,
+        querySha256: mutationAttempt?.querySha256 ??
+          sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION),
+        variablesSha256: mutationAttempt?.variablesSha256 ??
+          sha256(JSON.stringify(mutationVariables)),
+        requestBodySha256: mutationAttempt?.requestBodySha256 ?? sha256(
+          JSON.stringify({
+            operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+            query: RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+            variables: mutationVariables,
+          }),
+        ),
+        responseBodySha256: mutationAttempt?.responseBodySha256 ?? null,
+        acknowledgementSha256:
+          mutationAttempt?.acknowledgementSha256 ?? null,
+        acknowledgementExact:
+          mutationAttempt?.acknowledgementExact ?? false,
+        commitMessageSha256: sha256(
+          coldQuiesceCommitMessage(
+            args.candidateSha,
+            dependencies.env.GITHUB_RUN_ID ?? "",
+          ),
+        ),
+        zeroRegionsEncodedAsJsonNull:
+          mutationAttempt?.zeroRegionsEncodedAsJsonNull ??
+          (mutationVariables !== null &&
+            canonical(mutationVariables) === canonical({
+              environmentId: COLD_RECOVERY_LOCK.environmentId,
+              patch: {
+                services: {
+                  [COLD_RECOVERY_LOCK.serviceId]: {
+                    deploy: {
+                      multiRegionConfig: Object.fromEntries(
+                        [...COLD_RECOVERY_LOCK.quiesceRegions].sort().map(
+                          (region) => [region, null],
+                        ),
+                      ),
+                    },
+                  },
+                },
+              },
+              commitMessage: coldQuiesceCommitMessage(
+                args.candidateSha,
+                dependencies.env.GITHUB_RUN_ID ?? "",
+              ),
+            })),
       },
       providerEvidence: {
         deploymentIdSha256: railwayDeploymentIdentityIdSha256(
@@ -485,7 +631,11 @@ export async function runProtectedPermanentStagingColdQuiesce(
       },
       checks: { ...resultChecks, terminalEvidenceExact: true },
       nextRequiredProof: "EXACT_CANDIDATE_UPLOAD_AT_CONFIGURED_ZERO",
-      configuredOneToZeroReceiptClaimed: true,
+      configuredOneToZeroReceiptClaimed:
+        (outcome === "configured_zero" ||
+          outcome === "reconciled_configured_zero") &&
+        resultChecks.exactZeroStateAfter &&
+        resultChecks.configuredTopologyTransitionExact,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
     });
@@ -521,7 +671,11 @@ export async function runProtectedPermanentStagingColdQuiesce(
     prepareVerificationSha256: prerequisiteSha256,
     intentSha256,
     terminalSha256,
-    configuredOneToZeroReceiptClaimed: attempts === 1,
+    configuredOneToZeroReceiptClaimed:
+      (outcome === "configured_zero" ||
+        outcome === "reconciled_configured_zero") &&
+      resultChecks.exactZeroStateAfter &&
+      resultChecks.configuredTopologyTransitionExact,
     checks: resultChecks,
   })}\n`);
   return successfulChecks(resultChecks, outcome) ? 0 : 1;
