@@ -1,0 +1,555 @@
+name: Stop the exact post-Q permanent staging deployment
+run-name: Permanent staging post-Q deployment stop | ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact reviewed 40-character SHA currently at main
+        required: true
+        type: string
+      q_run_id:
+        description: Exact failed Q run (must be 34229745722)
+        required: true
+        type: string
+      q_artifact_id:
+        description: Exact immutable Q artifact (must be 10057495901)
+        required: true
+        type: string
+      expected_deployment_id:
+        description: Exact accidental deployment to stop
+        required: true
+        type: string
+      confirmation:
+        description: Exact candidate, deployment, and failed-Q confirmation
+        required: true
+        type: string
+      external_mutation_freeze_attestation:
+        description: Enter I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN after freezing every other Railway writer
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Authenticate Q and persist the exact stop intent
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: permanent-staging-scale-evidence
+    outputs:
+      intent_artifact_digest: ${{ steps.persist_intent.outputs.artifact-digest }}
+      intent_artifact_id: ${{ steps.persist_intent.outputs.artifact-id }}
+    env:
+      PINTPATH_PROTECTED_ENVIRONMENT: permanent-staging-scale-evidence
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact one-attempt staging-only containment authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_DEPLOYMENT_ID: ${{ inputs.expected_deployment_id }}
+          EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          Q_ARTIFACT_ID: ${{ inputs.q_artifact_id }}
+          Q_RUN_ID: ${{ inputs.q_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          test "$Q_RUN_ID" = 34229745722
+          test "$Q_ARTIFACT_ID" = 10057495901
+          test "$EXPECTED_DEPLOYMENT_ID" = \
+            6300a324-9407-4b1c-b651-749c47e9537f
+          test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
+            I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+          test "$CONFIRMATION" = \
+            "STOP_POST_Q_PERMANENT_STAGING_DEPLOYMENT_6300A324_9407_4B1C_B651_749C47E9537F_FOR_${CANDIDATE_SHA}_FROM_Q_34229745722"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before provider-token custody
+        env:
+          DATABASE_PATH: ./data/ci-post-q-deployment-stop-prepare.sqlite
+          NODE_ENV: test
+          OUTBOUND_CALLS_ENABLED: false
+          PUBLIC_BASE_URL: http://localhost:3000
+        run: npm run check
+
+      - name: Create private Q, intent, and evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare/downloaded" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence"
+
+      - name: Download the exact immutable failed-Q artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.q_run_id }}
+          name: pintpath-permanent-staging-cold-quiesce-606d33facb515dd10bc94c360e43c20beb999cc1
+          path: ${{ runner.temp }}/pintpath-post-q-deployment-stop-q-prepare/downloaded
+
+      - name: Authenticate the exact failed Q run, sole writer, and artifact bytes
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          Q_ARTIFACT_ID: ${{ inputs.q_artifact_id }}
+          Q_RUN_ID: ${{ inputs.q_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --frozen-intrinsics --disable-proto=throw \
+            scripts/verify-permanent-staging-post-q-authority.mjs \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --q-run-id "$Q_RUN_ID" \
+            --q-artifact-id "$Q_ARTIFACT_ID" \
+            --downloaded-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare/downloaded" \
+            --output-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare"
+
+      - name: Prepare the exact post-Q stop intent with metadata credentials only
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          PINTPATH_POST_Q_DEPLOYMENT_STOP_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/execute-protected-permanent-staging-post-q-deployment-stop.ts \
+            --phase prepare \
+            --candidate-sha '${{ inputs.candidate_sha }}' \
+            --q-artifact-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare/sealed" \
+            --q-authority-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare/q-authority.json" \
+            --reviewed-authority-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare/reviewed-containment-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence"
+
+      - name: Persist the exact stop intent before any stop credential exists
+        id: persist_intent
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-post-q-deployment-stop-intent-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/stop-intent.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove prepare Q custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-prepare"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+  apply:
+    name: Stop the one exact accidental staging deployment
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: permanent-staging-scale-evidence
+    env:
+      PINTPATH_PROTECTED_ENVIRONMENT: permanent-staging-scale-evidence
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact apply authority and durable-intent outputs
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_DEPLOYMENT_ID: ${{ inputs.expected_deployment_id }}
+          EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          INTENT_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.intent_artifact_digest }}
+          INTENT_ARTIFACT_ID: ${{ needs.prepare.outputs.intent_artifact_id }}
+          Q_ARTIFACT_ID: ${{ inputs.q_artifact_id }}
+          Q_RUN_ID: ${{ inputs.q_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$INTENT_ARTIFACT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$INTENT_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          test "$Q_RUN_ID" = 34229745722
+          test "$Q_ARTIFACT_ID" = 10057495901
+          test "$EXPECTED_DEPLOYMENT_ID" = \
+            6300a324-9407-4b1c-b651-749c47e9537f
+          test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
+            I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+          test "$CONFIRMATION" = \
+            "STOP_POST_Q_PERMANENT_STAGING_DEPLOYMENT_6300A324_9407_4B1C_B651_749C47E9537F_FOR_${CANDIDATE_SHA}_FROM_Q_34229745722"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate again before the sole writer
+        env:
+          DATABASE_PATH: ./data/ci-post-q-deployment-stop-apply.sqlite
+          NODE_ENV: test
+          OUTBOUND_CALLS_ENABLED: false
+          PUBLIC_BASE_URL: http://localhost:3000
+        run: npm run check
+
+      - name: Create private Q, intent, and terminal evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-apply" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-apply/downloaded" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/downloaded" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent/downloaded" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent/sealed" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence"
+
+      - name: Download the exact immutable failed-Q artifact again
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.q_run_id }}
+          name: pintpath-permanent-staging-cold-quiesce-606d33facb515dd10bc94c360e43c20beb999cc1
+          path: ${{ runner.temp }}/pintpath-post-q-deployment-stop-q-apply/downloaded
+
+      - name: Reauthenticate the exact failed Q run and artifact
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          Q_ARTIFACT_ID: ${{ inputs.q_artifact_id }}
+          Q_RUN_ID: ${{ inputs.q_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --frozen-intrinsics --disable-proto=throw \
+            scripts/verify-permanent-staging-post-q-authority.mjs \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --q-run-id "$Q_RUN_ID" \
+            --q-artifact-id "$Q_ARTIFACT_ID" \
+            --downloaded-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-apply/downloaded" \
+            --output-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-apply"
+
+      - name: Download the exact durable stop intent
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+          name: pintpath-permanent-staging-post-q-deployment-stop-intent-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-post-q-deployment-stop-intent/downloaded
+
+      - name: Bind the exact durable intent artifact before the writer
+        id: bind_intent
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INTENT_ARTIFACT_DIGEST: ${{ needs.prepare.outputs.intent_artifact_digest }}
+          INTENT_ARTIFACT_ID: ${{ needs.prepare.outputs.intent_artifact_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INTENT_ARTIFACT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$INTENT_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          artifact_digest="sha256:$INTENT_ARTIFACT_DIGEST"
+          artifact_name="pintpath-permanent-staging-post-q-deployment-stop-intent-$CANDIDATE_SHA-$GITHUB_RUN_ID"
+          metadata="$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent/metadata.json"
+          curl --fail --silent --show-error \
+            --proto '=https' \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --output "$metadata" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$INTENT_ARTIFACT_ID"
+          jq -e \
+            --arg digest "$artifact_digest" \
+            --arg name "$artifact_name" \
+            --arg sha "$CANDIDATE_SHA" \
+            --argjson artifactId "$INTENT_ARTIFACT_ID" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '.id == $artifactId and .name == $name and .expired == false and .digest == $digest and (.size_in_bytes > 0 and .size_in_bytes <= 65536) and .workflow_run.id == $runId and .workflow_run.repository_id == 1215862300 and .workflow_run.head_repository_id == 1215862300 and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $sha' \
+            "$metadata" >/dev/null
+          jq -S -c . "$metadata" \
+            > "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/intent-artifact-metadata.json"
+          chmod 600 \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/intent-artifact-metadata.json"
+          root="$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent"
+          test -z "$(find "$root/downloaded" -type l -print -quit)"
+          test -z "$(find "$root/downloaded" ! -type d ! -type f -print -quit)"
+          test -z "$(find "$root/downloaded" -type f -links +1 -print -quit)"
+          test "$(find "$root/downloaded" -type f | wc -l | tr -d ' ')" = 1
+          mapfile -d '' intents < <(find "$root/downloaded" -type f -name stop-intent.json -print0)
+          test "${#intents[@]}" = 1
+          test ! -L "${intents[0]}"
+          cp --no-dereference -- "${intents[0]}" "$root/sealed/stop-intent.json"
+          cmp --silent -- "${intents[0]}" "$root/sealed/stop-intent.json"
+          chmod 400 "$root/sealed/stop-intent.json"
+          intent_sha256="$(sha256sum "$root/sealed/stop-intent.json" | awk '{print $1}')"
+          [[ "$intent_sha256" =~ ^[a-f0-9]{64}$ ]]
+          cp --no-dereference -- \
+            "$root/sealed/stop-intent.json" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/stop-intent.json"
+          chmod 600 "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/stop-intent.json"
+          {
+            printf 'artifact_digest=%s\n' "$artifact_digest"
+            printf 'artifact_id=%s\n' "$INTENT_ARTIFACT_ID"
+            printf 'artifact_name=%s\n' "$artifact_name"
+            printf 'intent_file=%s\n' "$root/sealed/stop-intent.json"
+            printf 'intent_sha256=%s\n' "$intent_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download a fresh exact failed-Q artifact for immediate reassertion
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.q_run_id }}
+          name: pintpath-permanent-staging-cold-quiesce-606d33facb515dd10bc94c360e43c20beb999cc1
+          path: ${{ runner.temp }}/pintpath-post-q-deployment-stop-q-reassert/downloaded
+
+      - name: Prove the production-staging boundary in a metadata-only process
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent readiness:railway:mutation-boundary \
+            > "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/boundary-preflight.json"
+
+      - name: Reassert current main, Q authority, and intent immediately before the writer
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INTENT_SHA256: ${{ steps.bind_intent.outputs.intent_sha256 }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          Q_ARTIFACT_ID: ${{ inputs.q_artifact_id }}
+          Q_RUN_ID: ${{ inputs.q_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          test "$(sha256sum "$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent/sealed/stop-intent.json" | awk '{print $1}')" = "$INTENT_SHA256"
+          node --frozen-intrinsics --disable-proto=throw \
+            scripts/verify-permanent-staging-post-q-authority.mjs \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --q-run-id "$Q_RUN_ID" \
+            --q-artifact-id "$Q_ARTIFACT_ID" \
+            --downloaded-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/downloaded" \
+            --output-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert"
+          cp --no-dereference -- \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/q-authority.json" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/q-authority.json"
+          cp --no-dereference -- \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/reviewed-containment-authority.json" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/reviewed-containment-authority.json"
+          chmod 600 \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/q-authority.json" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/reviewed-containment-authority.json"
+
+      - name: Stop the exact accidental staging deployment once
+        id: writer
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          PINTPATH_POST_Q_DEPLOYMENT_STOP_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/execute-protected-permanent-staging-post-q-deployment-stop.ts \
+            --phase apply \
+            --candidate-sha '${{ inputs.candidate_sha }}' \
+            --q-artifact-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/sealed" \
+            --q-authority-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/q-authority.json" \
+            --reviewed-authority-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/reviewed-containment-authority.json" \
+            --intent-file '${{ steps.bind_intent.outputs.intent_file }}' \
+            --intent-artifact-id '${{ steps.bind_intent.outputs.artifact_id }}' \
+            --intent-artifact-digest '${{ steps.bind_intent.outputs.artifact_digest }}' \
+            --intent-artifact-metadata-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/intent-artifact-metadata.json" \
+            --boundary-preflight-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/boundary-preflight.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence"
+
+      - name: Reconcile the Railway production-staging mutation boundary
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent readiness:railway:mutation-boundary \
+            > "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/boundary-postflight.json"
+
+      - name: Finalize the outer durable receipt without any provider credential
+        if: always() && steps.writer.outcome != 'skipped'
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
+          PINTPATH_POST_Q_DEPLOYMENT_STOP_CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/execute-protected-permanent-staging-post-q-deployment-stop.ts \
+            --phase finalize \
+            --candidate-sha '${{ inputs.candidate_sha }}' \
+            --q-artifact-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/sealed" \
+            --q-authority-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/q-authority.json" \
+            --reviewed-authority-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert/reviewed-containment-authority.json" \
+            --intent-file '${{ steps.bind_intent.outputs.intent_file }}' \
+            --intent-artifact-id '${{ steps.bind_intent.outputs.artifact_id }}' \
+            --intent-artifact-digest '${{ steps.bind_intent.outputs.artifact_digest }}' \
+            --intent-artifact-metadata-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/intent-artifact-metadata.json" \
+            --boundary-preflight-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/boundary-preflight.json" \
+            --boundary-postflight-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/boundary-postflight.json" \
+            --apply-terminal-file "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/stop-apply-terminal.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence"
+
+      - name: Require terminal evidence after every writer outcome
+        if: always() && steps.writer.outcome != 'skipped'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal="$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/stop-terminal.json"
+          test -f "$terminal"
+          test ! -L "$terminal"
+          test -s "$terminal"
+          outcome="$(jq -er '.outcome | strings' "$terminal")"
+          case "$outcome" in
+            stopped)
+              completion="$RUNNER_TEMP/pintpath-post-q-deployment-stop-evidence/stop-terminal-completion.json"
+              test -f "$completion"
+              test ! -L "$completion"
+              test -s "$completion"
+              terminal_sha256="$(sha256sum "$terminal" | awk '{print $1}')"
+              terminal_size_bytes="$(stat -c '%s' "$terminal")"
+              [[ "$terminal_sha256" =~ ^[a-f0-9]{64}$ ]]
+              [[ "$terminal_size_bytes" =~ ^[1-9][0-9]*$ ]]
+              jq -S . "$completion" | cmp --silent - "$completion"
+              jq -e \
+                --arg candidateSha "$CANDIDATE_SHA" \
+                --arg operation permanent-staging-post-q-deployment-stop \
+                --arg runId "$GITHUB_RUN_ID" \
+                --arg schemaVersion pintpath-permanent-staging-post-q-deployment-stop-terminal-completion/v1 \
+                --arg terminalSha256 "$terminal_sha256" \
+                --argjson terminalSizeBytes "$terminal_size_bytes" \
+                'keys == ["candidateSha", "operation", "runId", "schemaVersion", "secretDerivedCommitmentsIncluded", "secretMaterialIncluded", "terminalSha256", "terminalSizeBytes"] and .schemaVersion == $schemaVersion and .operation == $operation and .candidateSha == $candidateSha and .runId == $runId and .terminalSha256 == $terminalSha256 and .terminalSizeBytes == $terminalSizeBytes and .secretMaterialIncluded == false and .secretDerivedCommitmentsIncluded == false' \
+                "$completion" >/dev/null
+              ;;
+            failed_before_attempt|mutation_uncertain) ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Remove downloaded Q and intent custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for custody in \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-apply" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-q-reassert" \
+            "$RUNNER_TEMP/pintpath-post-q-deployment-stop-intent"
+          do
+            if [[ -d "$custody" && ! -L "$custody" ]]; then
+              find "$custody" -depth -mindepth 1 -delete
+              rmdir "$custody"
+            fi
+          done
+
+      - name: Upload bounded secret-free stop intent and terminal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-post-q-deployment-stop-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/boundary-postflight.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/boundary-preflight.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/intent-artifact-metadata.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/q-authority.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/reviewed-containment-authority.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/stop-apply-terminal-completion.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/stop-apply-terminal.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/stop-intent.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/stop-terminal-completion.json
+            ${{ runner.temp }}/pintpath-post-q-deployment-stop-evidence/stop-terminal.json
+          if-no-files-found: error
+          retention-days: 30

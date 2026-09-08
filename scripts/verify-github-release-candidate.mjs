@@ -2030,7 +2030,7 @@ async function verifyStagingMutationClosure(input) {
   }
 }
 
-function selectCheckRunCandidates(value, requirement, candidateSha) {
+export function selectCheckRunCandidates(value, requirement, candidateSha) {
   if (
     !exactKeys(value, ["total_count", "check_runs"]) ||
     !Number.isSafeInteger(value.total_count) ||
@@ -2074,7 +2074,7 @@ function selectCheckRunCandidates(value, requirement, candidateSha) {
   return candidates;
 }
 
-function validateWorkflowRun(value, candidate, requirement, policy, candidateSha) {
+export function validateWorkflowRun(value, candidate, requirement, policy, candidateSha) {
   const runStartedAtMs = timestamp(value?.run_started_at);
   if (
     value?.id !== candidate.runId ||
@@ -2137,7 +2137,7 @@ function validateCurrentConsumer(value, expected, policy, candidateSha, runId) {
   });
 }
 
-function selectArtifact(value, requirement, candidateSha, runId, repository) {
+export function selectArtifact(value, requirement, candidateSha, runId, repository) {
   if (
     !exactKeys(value, ["total_count", "artifacts"]) ||
     !Number.isSafeInteger(value.total_count) ||
