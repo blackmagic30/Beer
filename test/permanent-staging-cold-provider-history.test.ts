@@ -60,6 +60,15 @@ function canonical(value: unknown): string {
   return `${JSON.stringify(sortKeys(value), null, 2)}\n`;
 }
 
+function compareLiveRows(
+  left: ColdRecoveryState["rows"][number],
+  right: ColdRecoveryState["rows"][number],
+): number {
+  return `${left.serviceId ?? ""}:${left.name}:${left.id}`.localeCompare(
+    `${right.serviceId ?? ""}:${right.name}:${right.id}`,
+  );
+}
+
 function valueFromKeyShape(shape: unknown): unknown {
   if (shape === "null") return null;
   if (shape === "string") return "redacted";
@@ -174,12 +183,12 @@ function providerRows(): {
     history: [
       suffixHistory(
         PREPARE_EVENT_ID,
-        "2026-09-08T05:26:00.000Z",
+        "2026-09-08T12:26:00.000Z",
         "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
       ),
       suffixHistory(
         REPLACEMENT_EVENT_ID,
-        "2026-09-08T05:21:00.000Z",
+        "2026-09-08T12:21:00.000Z",
         "SUPABASE_SERVICE_ROLE_KEY",
       ),
       ...fixture.history.rows.map(rawHistoryRow),
@@ -187,14 +196,14 @@ function providerRows(): {
     patches: [
       suffixPatch(
         PREPARE_PATCH_ID,
-        "2026-09-08T05:26:00.002Z",
-        "2026-09-08T05:26:00.000Z",
+        "2026-09-08T12:26:00.002Z",
+        "2026-09-08T12:26:00.000Z",
         "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
       ),
       suffixPatch(
         REPLACEMENT_PATCH_ID,
-        "2026-09-08T05:21:00.002Z",
-        "2026-09-08T05:21:00.000Z",
+        "2026-09-08T12:21:00.002Z",
+        "2026-09-08T12:21:00.000Z",
         "SUPABASE_SERVICE_ROLE_KEY",
       ),
       ...fixture.patches.rows.map(rawPatchRow),
@@ -253,6 +262,64 @@ function providerFetch(rows: ReturnType<typeof providerRows>): typeof fetch {
 }
 
 function liveState(): ColdRecoveryState {
+  const applicationRows = [
+    {
+      name: "DATABASE_URL",
+      references: [
+        "c454955f-263b-4599-aee0-dc447a4d3d15.PINTPATH_RUNTIME_DATABASE_URL",
+      ],
+    },
+    {
+      name: "REDIS_URL",
+      references: ["d6351cec-fe04-4a6f-8e05-1cc164ea1e73.REDIS_URL"],
+    },
+    ...[
+      "ALCOHOL_GAMIFICATION_ENABLED",
+      "CONSUMER_PAID_ENROLLMENT_ENABLED",
+      "GOOGLE_MAPS_API_KEY",
+      "GOOGLE_MAPS_MAP_ID",
+      "GOOGLE_PLACES_API_KEY",
+      "OPENAI_API_KEY",
+      "PINT_POINTS_REWARDS_ENABLED",
+      "PUBLIC_BASE_URL",
+      "REPORT_DELIVERY_SCHEDULE_ENABLED",
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_RESULTS_TABLE",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "SUPABASE_URL",
+      "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+      ...Array.from({ length: 60 }, (_, index) =>
+        `TEST_BEER_VARIABLE_${String(index).padStart(2, "0")}`),
+    ].map((name) => ({ name, references: [] as string[] })),
+  ].map(({ name, references }, index) => ({
+    id: `beer-row-${String(index).padStart(2, "0")}`,
+    name,
+    environmentId: COLD_RECOVERY_LOCK.environmentId,
+    serviceId: COLD_RECOVERY_LOCK.serviceId,
+    isSealed: name === "SUPABASE_SERVICE_ROLE_KEY",
+    references,
+  }));
+  const siblingRows = [
+    ...Array.from({ length: 14 }, (_, index) => ({
+      id: `postgres-row-${String(index).padStart(2, "0")}`,
+      name: index === 0 ? "DATABASE_URL" :
+        `TEST_POSTGRES_VARIABLE_${String(index).padStart(2, "0")}`,
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      serviceId: "c454955f-263b-4599-aee0-dc447a4d3d15",
+      isSealed: false,
+      references: [],
+    })),
+    ...Array.from({ length: 7 }, (_, index) => ({
+      id: `redis-row-${String(index).padStart(2, "0")}`,
+      name: index === 0 ? "REDIS_URL" :
+        `TEST_REDIS_VARIABLE_${String(index).padStart(2, "0")}`,
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      serviceId: "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+      isSealed: false,
+      references: [],
+    })),
+  ];
+  const rows = [...applicationRows, ...siblingRows].sort(compareLiveRows);
   return {
     environmentId: COLD_RECOVERY_LOCK.environmentId,
     serviceInstanceId: COLD_RECOVERY_LOCK.serviceInstanceId,
@@ -288,29 +355,22 @@ function liveState(): ColdRecoveryState {
       imageDigest: null,
       patchId: null,
     },
-    rows: [{
-      id: "candidate-row",
-      name: "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
-      environmentId: COLD_RECOVERY_LOCK.environmentId,
-      serviceId: COLD_RECOVERY_LOCK.serviceId,
-      isSealed: false,
-      references: [],
-    }],
+    rows,
   };
 }
 
 const proofInput = {
   replacement: {
     runId: "500",
-    startedAt: "2026-09-08T05:20:00.000Z",
-    completedAt: "2026-09-08T05:22:00.000Z",
+    startedAt: "2026-09-08T12:20:00.000Z",
+    completedAt: "2026-09-08T12:22:00.000Z",
   },
   prepare: {
     runId: "1000",
-    startedAt: "2026-09-08T05:25:00.000Z",
-    completedAt: "2026-09-08T05:27:00.000Z",
+    startedAt: "2026-09-08T12:25:00.000Z",
+    completedAt: "2026-09-08T12:27:00.000Z",
   },
-  observedAt: "2026-09-08T05:28:00.000Z",
+  observedAt: "2026-09-08T12:28:00.000Z",
   liveState: liveState(),
 } as const;
 
@@ -343,19 +403,28 @@ describe("permanent-staging cold provider history proof", () => {
 
   it("accepts only the pinned prefix plus the two authorized variable-only writes", async () => {
     const rows = providerRows();
+    const live = liveState();
+    expect(live.rows).toHaveLength(97);
+    expect(live.rows.filter((row) =>
+      row.serviceId === COLD_RECOVERY_LOCK.serviceId)).toHaveLength(76);
+    expect(live.rows.filter((row) =>
+      row.serviceId === "c454955f-263b-4599-aee0-dc447a4d3d15")).toHaveLength(14);
+    expect(live.rows.filter((row) =>
+      row.serviceId === "d6351cec-fe04-4a6f-8e05-1cc164ea1e73")).toHaveLength(7);
+    const fetchImpl = providerFetch(rows);
     await expect(readPermanentStagingColdProviderNoWriteProof(
-      providerFetch(rows),
+      fetchImpl,
       "metadata-token-long-enough",
-      proofInput,
+      { ...proofInput, liveState: live },
     )).resolves.toMatchObject({
       history: {
-        count: 8,
-        prefixCount: 6,
+        count: 10,
+        prefixCount: 8,
         suffixEventIds: [PREPARE_EVENT_ID, REPLACEMENT_EVENT_ID],
       },
       patches: {
-        count: 124,
-        prefixCount: 122,
+        count: 126,
+        prefixCount: 124,
         suffixPatchIds: [PREPARE_PATCH_ID, REPLACEMENT_PATCH_ID],
       },
       checks: {
@@ -363,6 +432,7 @@ describe("permanent-staging cold provider history proof", () => {
         historicalScalePositiveControlExact: true,
         legacyUnauthorizedRunNoWriteExact: true,
         priorUnauthorizedRunNoWriteExact: true,
+        failedPrewriteUnauthorizedRunNoWriteExact: true,
         authorizedSuffixExact: true,
         targetDeployAbsentFromSuffixExact: true,
         crossFetchedPatchesExact: true,
@@ -370,14 +440,53 @@ describe("permanent-staging cold provider history proof", () => {
         liveTopologyContinuityExact: true,
       },
     });
+    expect(fetchImpl).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an invalid sibling service id", (state: ColdRecoveryState) => {
+      const sibling = state.rows.find((row) =>
+        row.serviceId === "c454955f-263b-4599-aee0-dc447a4d3d15");
+      if (sibling) (sibling as { serviceId: string }).serviceId = "not-a-uuid";
+    }],
+    ["a duplicate sibling identity", (state: ColdRecoveryState) => {
+      const sibling = state.rows.find((row) =>
+        row.serviceId === "d6351cec-fe04-4a6f-8e05-1cc164ea1e73");
+      if (sibling) {
+        (state.rows as ColdRecoveryState["rows"] &
+          { push: (row: typeof sibling) => void }).push(structuredClone(sibling));
+      }
+    }],
+    ["a shared target-variable shadow", (state: ColdRecoveryState) => {
+      const sibling = state.rows.find((row) =>
+        row.serviceId === "c454955f-263b-4599-aee0-dc447a4d3d15");
+      if (sibling) {
+        (sibling as { serviceId: null; name: string }).serviceId = null;
+        (sibling as { name: string }).name = "DATABASE_URL";
+      }
+    }],
+  ])("rejects %s before reading provider history", async (_label, mutate) => {
+    const state = structuredClone(liveState());
+    mutate(state);
+    const sortedState = {
+      ...state,
+      rows: [...state.rows].sort(compareLiveRows),
+    } satisfies ColdRecoveryState;
+    const fetchImpl = providerFetch(providerRows());
+    await expect(readPermanentStagingColdProviderNoWriteProof(
+      fetchImpl,
+      "metadata-token-long-enough",
+      { ...proofInput, liveState: sortedState },
+    )).rejects.toThrow("cold_provider_history_input_invalid");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("accepts an authorized suffix applied 6.419s after creation", async () => {
     const rows = providerRows();
-    rows.patches[0]!.appliedAt = "2026-09-08T05:26:06.421Z";
-    rows.patches[0]!.updatedAt = "2026-09-08T05:26:06.422Z";
-    rows.patches[1]!.appliedAt = "2026-09-08T05:21:06.421Z";
-    rows.patches[1]!.updatedAt = "2026-09-08T05:21:06.422Z";
+    rows.patches[0]!.appliedAt = "2026-09-08T12:26:06.421Z";
+    rows.patches[0]!.updatedAt = "2026-09-08T12:26:06.422Z";
+    rows.patches[1]!.appliedAt = "2026-09-08T12:21:06.421Z";
+    rows.patches[1]!.updatedAt = "2026-09-08T12:21:06.422Z";
     await expect(readPermanentStagingColdProviderNoWriteProof(
       providerFetch(rows),
       "metadata-token-long-enough",
@@ -412,9 +521,9 @@ describe("permanent-staging cold provider history proof", () => {
     ["a third suffix patch", (rows: ReturnType<typeof providerRows>) => {
       rows.patches.unshift(structuredClone(rows.patches[0]!));
       rows.patches[0]!.id = "55555555-5555-4555-8555-555555555555";
-      rows.patches[0]!.createdAt = "2026-09-08T05:26:30.000Z";
-      rows.patches[0]!.updatedAt = "2026-09-08T05:26:30.000Z";
-      rows.patches[0]!.appliedAt = "2026-09-08T05:26:29.998Z";
+      rows.patches[0]!.createdAt = "2026-09-08T12:26:30.000Z";
+      rows.patches[0]!.updatedAt = "2026-09-08T12:26:30.000Z";
+      rows.patches[0]!.appliedAt = "2026-09-08T12:26:29.998Z";
     }],
     ["an uncommitted suffix", (rows: ReturnType<typeof providerRows>) => {
       rows.patches[0]!.status = "PENDING";
@@ -423,18 +532,18 @@ describe("permanent-staging cold provider history proof", () => {
       rows.patches[0]!.message = "Setting variables";
     }],
     ["a suffix applied after its update", (rows: ReturnType<typeof providerRows>) => {
-      rows.patches[0]!.appliedAt = "2026-09-08T05:26:00.004Z";
-      rows.patches[0]!.updatedAt = "2026-09-08T05:26:00.003Z";
+      rows.patches[0]!.appliedAt = "2026-09-08T12:26:00.004Z";
+      rows.patches[0]!.updatedAt = "2026-09-08T12:26:00.003Z";
     }],
     ["an out-of-window applied timestamp", (rows: ReturnType<typeof providerRows>) => {
-      rows.patches[0]!.appliedAt = "2026-09-08T05:27:00.001Z";
-      rows.patches[0]!.updatedAt = "2026-09-08T05:27:00.001Z";
+      rows.patches[0]!.appliedAt = "2026-09-08T12:27:00.001Z";
+      rows.patches[0]!.updatedAt = "2026-09-08T12:27:00.001Z";
     }],
     ["an incident-window event", (rows: ReturnType<typeof providerRows>) => {
       rows.history[1]!.createdAt = "2026-09-08T04:31:00.000Z";
     }],
     ["non-monotone history", (rows: ReturnType<typeof providerRows>) => {
-      rows.history[3]!.createdAt = "2026-09-08T05:22:30.000Z";
+      rows.history[3]!.createdAt = "2026-09-08T12:22:30.000Z";
     }],
   ])("rejects %s", async (_label, mutate) => {
     const rows = providerRows();
@@ -472,7 +581,7 @@ describe("permanent-staging cold provider history proof", () => {
         if (historyReads === 2) {
           rows.history.unshift(suffixHistory(
             "55555555-5555-4555-8555-555555555555",
-            "2026-09-08T05:27:30.000Z",
+            "2026-09-08T12:27:30.000Z",
             "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
           ));
         }

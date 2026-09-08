@@ -4,10 +4,56 @@
   "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
   "canonicalization": "Recursively sort object keys lexicographically; preserve array order; JSON.stringify(value, null, 2); append exactly one LF; SHA-256 UTF-8.",
   "history": {
-    "throughCreatedAtInclusive": "2026-09-08T04:19:56.336Z",
-    "count": 6,
-    "rowsSha256": "f1270eaf4378364f1d91624515f7a0b370f9274254535619704a56d948bf609f",
+    "throughCreatedAtInclusive": "2026-09-08T11:36:35.651Z",
+    "count": 8,
+    "rowsSha256": "478526ce5fb6855911e7130e81d5c78a69edaa67988c85eed8582a9068a7c933",
     "rows": [
+      {
+        "id": "5b4ea8be-40ce-43d9-b310-213d59ef1827",
+        "createdAt": "2026-09-08T11:36:35.651Z",
+        "object": "Variable",
+        "action": "updated",
+        "outcome": "",
+        "operationKind": "",
+        "severity": "INFO",
+        "source": "event",
+        "workflowId": null,
+        "activityPayload": {
+          "keys": [
+            "count",
+            "names",
+            "serviceId"
+          ],
+          "count": 1,
+          "names": [
+            "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"
+          ],
+          "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+        }
+      },
+      {
+        "id": "c979b7a6-94ba-4e0e-887b-a52a2a7868f0",
+        "createdAt": "2026-09-08T11:29:51.095Z",
+        "object": "Variable",
+        "action": "updated",
+        "outcome": "",
+        "operationKind": "",
+        "severity": "INFO",
+        "source": "event",
+        "workflowId": null,
+        "activityPayload": {
+          "keys": [
+            "count",
+            "names",
+            "serviceId"
+          ],
+          "count": 1,
+          "names": [
+            "SUPABASE_SERVICE_ROLE_KEY"
+          ],
+          "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+        }
+      },
       {
         "id": "e27032ae-b9f1-45da-9da4-577637dcee37",
         "createdAt": "2026-09-08T04:19:56.336Z",
@@ -149,12 +195,112 @@
     ]
   },
   "patches": {
-    "throughCreatedAtInclusive": "2026-09-08T04:19:56.526Z",
-    "count": 122,
-    "rowsSha256": "a560f185f77fb091da39314eb1f7f9f5ab3a4d2f6593752339649751f6c133db",
+    "throughCreatedAtInclusive": "2026-09-08T11:36:35.796Z",
+    "count": 124,
+    "rowsSha256": "8b36a81535a509f60fd2938a7bd2c8a2499ae9c9152d048db1ff93d41ac37f8b",
     "envelopeSchemaVersion": "pintpath-railway-environment-patches-key-only-prefix/v1",
-    "envelopeSha256": "883f66b23151d4f2acdbe8f8f8f254b0fa5a2ab5bea533bef82ccb3de673c6bc",
+    "envelopeSha256": "46ec3cf3a233cd1fe06eed21197b84d59ace065974c9bf801b208c58a4ad4567",
     "rows": [
+      {
+        "id": "1d091df7-4548-4907-996f-ea62625e78b0",
+        "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+        "status": "COMMITTED",
+        "createdAt": "2026-09-08T11:36:35.796Z",
+        "updatedAt": "2026-09-08T11:36:35.796Z",
+        "appliedAt": "2026-09-08T11:36:35.793Z",
+        "message": "Setting 2 variables",
+        "patchKeyShape": {
+          "type": "object",
+          "keys": [
+            "services"
+          ],
+          "children": {
+            "services": {
+              "type": "object",
+              "keys": [
+                "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+              ],
+              "children": {
+                "6816c4a2-e392-4ee5-826f-2584cb599ec0": {
+                  "type": "object",
+                  "keys": [
+                    "variables"
+                  ],
+                  "children": {
+                    "variables": {
+                      "type": "object",
+                      "keys": [
+                        "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"
+                      ],
+                      "children": {
+                        "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA": {
+                          "type": "object",
+                          "keys": [
+                            "value"
+                          ],
+                          "children": {
+                            "value": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "9e7911b8-c3c7-4e85-9b09-3f82a1d0f9ef",
+        "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+        "status": "COMMITTED",
+        "createdAt": "2026-09-08T11:29:51.236Z",
+        "updatedAt": "2026-09-08T11:29:51.236Z",
+        "appliedAt": "2026-09-08T11:29:51.233Z",
+        "message": "Setting 2 variables",
+        "patchKeyShape": {
+          "type": "object",
+          "keys": [
+            "services"
+          ],
+          "children": {
+            "services": {
+              "type": "object",
+              "keys": [
+                "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+              ],
+              "children": {
+                "6816c4a2-e392-4ee5-826f-2584cb599ec0": {
+                  "type": "object",
+                  "keys": [
+                    "variables"
+                  ],
+                  "children": {
+                    "variables": {
+                      "type": "object",
+                      "keys": [
+                        "SUPABASE_SERVICE_ROLE_KEY"
+                      ],
+                      "children": {
+                        "SUPABASE_SERVICE_ROLE_KEY": {
+                          "type": "object",
+                          "keys": [
+                            "value"
+                          ],
+                          "children": {
+                            "value": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       {
         "id": "86131703-8546-43bf-b968-2c76aaa399df",
         "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",

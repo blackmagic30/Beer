@@ -58,6 +58,44 @@ export const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
   priorPrepareRunId: "34186355641",
   priorQuiesceRunId: "34186930666",
   priorQuiesceRunCompletedAt: "2026-09-08T04:32:27.000Z",
+  failedPrewriteCandidateSha:
+    "de35797a41640a996971af0b1ad49e3c5372baa8",
+  failedPrewriteReviewedHeadSha:
+    "546b32711971666c9074d6c6bd0d2556f76f4bb6",
+  failedPrewriteTreeSha:
+    "efe8319526c25f28b6bcb8cc44bd559d0eed98e7",
+  failedPrewritePullRequestNumber: 95,
+  failedPrewriteMergedAt: "2026-09-08T11:10:55Z",
+  failedPrewriteReplacementRunId: "34220577080",
+  failedPrewriteReplacementRunStartedAt: "2026-09-08T11:25:07.000Z",
+  failedPrewriteReplacementRunCompletedAt: "2026-09-08T11:29:56.000Z",
+  failedPrewritePrepareRunId: "34221196430",
+  failedPrewritePrepareRunStartedAt: "2026-09-08T11:32:06.000Z",
+  failedPrewritePrepareRunCompletedAt: "2026-09-08T11:36:40.000Z",
+  failedPrewritePrepareArtifactId: "10053950371",
+  failedPrewritePrepareArtifactName:
+    "pintpath-permanent-staging-cold-prepare-de35797a41640a996971af0b1ad49e3c5372baa8",
+  failedPrewritePrepareArtifactDigest:
+    "sha256:68af08699a703dda0246bddba260f838374a8e2bfd04a6fb2870d7f2e1c2955d",
+  failedPrewritePrepareTerminalSha256:
+    "903203bfbe3788d8b9b44a85e4df269a9404052df212c4b3d07518ea6639fd92",
+  failedPrewriteQuiesceRunId: "34221811602",
+  failedPrewriteQuiesceRunCompletedAt: "2026-09-08T11:44:07.000Z",
+  failedPrewriteArtifactId: "10054211585",
+  failedPrewriteArtifactName:
+    "pintpath-permanent-staging-cold-quiesce-de35797a41640a996971af0b1ad49e3c5372baa8",
+  failedPrewriteArtifactDigest:
+    "sha256:bbc8716da1caf68cc39307ac0cb2a07f1066b6cbb5d8159fbf56e0fe552e4ee0",
+  failedPrewriteEvidence: Object.freeze({
+    reviewedAuthority: Object.freeze({
+      filename: "reviewed-authority.json",
+      sha256: "c48cce48db7753537a229f80430e66814720e1b6542811b2a84ca6ec4a3702ae",
+    }),
+    prerequisites: Object.freeze({
+      filename: "prerequisites-verification.json",
+      sha256: "b43eacad64908504f54c8442dfaf9915c9c0d41aca26005a92afd0ff8dd92465",
+    }),
+  }),
   priorEvidence: Object.freeze({
     receipt: Object.freeze({
       filename: "cold-quiesce-receipt.json",
@@ -176,7 +214,7 @@ export const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
 } as const);
 
 export const COLD_QUIESCE_SUCCESSOR_BRIDGE_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce-successor-bridge/v3" as const;
+  "pintpath-permanent-staging-cold-quiesce-successor-bridge/v4" as const;
 
 const SHA = /^[a-f0-9]{40}$/;
 const RUN_ID = /^[1-9][0-9]{0,19}$/;
@@ -188,6 +226,7 @@ interface BridgeArguments {
   readonly priorQuiesceRunId: string;
   readonly legacyArtifactDirectory: string;
   readonly priorArtifactDirectory: string;
+  readonly failedPrewriteArtifactDirectory: string;
   readonly currentPrepareTerminalFile: string;
   readonly reviewedAuthorityFile: string;
   readonly evidenceDirectory: string;
@@ -225,7 +264,7 @@ function fail(code: string): never {
 export function parseColdQuiesceSuccessorBridgeArguments(
   argv: readonly string[],
 ): BridgeArguments | null {
-  if (argv.length !== 18) return null;
+  if (argv.length !== 20) return null;
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -240,6 +279,7 @@ export function parseColdQuiesceSuccessorBridgeArguments(
     "--prior-quiesce-run-id",
     "--legacy-artifact-dir",
     "--prior-artifact-dir",
+    "--failed-prewrite-artifact-dir",
     "--prepare-terminal-file",
     "--reviewed-authority-file",
     "--evidence-dir",
@@ -251,6 +291,8 @@ export function parseColdQuiesceSuccessorBridgeArguments(
   const priorQuiesceRunId = values.get("--prior-quiesce-run-id") ?? "";
   const legacyArtifactDirectory = values.get("--legacy-artifact-dir") ?? "";
   const priorArtifactDirectory = values.get("--prior-artifact-dir") ?? "";
+  const failedPrewriteArtifactDirectory =
+    values.get("--failed-prewrite-artifact-dir") ?? "";
   const currentPrepareTerminalFile = values.get("--prepare-terminal-file") ?? "";
   const reviewedAuthorityFile = values.get("--reviewed-authority-file") ?? "";
   const evidenceDirectory = values.get("--evidence-dir") ?? "";
@@ -265,6 +307,7 @@ export function parseColdQuiesceSuccessorBridgeArguments(
     priorQuiesceRunId !== COLD_QUIESCE_SUCCESSOR_BRIDGE.priorQuiesceRunId ||
     !path.isAbsolute(legacyArtifactDirectory) ||
     !path.isAbsolute(priorArtifactDirectory) ||
+    !path.isAbsolute(failedPrewriteArtifactDirectory) ||
     !path.isAbsolute(currentPrepareTerminalFile) ||
     path.basename(currentPrepareTerminalFile) !== "cold-prepare-terminal.json" ||
     !path.isAbsolute(reviewedAuthorityFile) ||
@@ -278,6 +321,7 @@ export function parseColdQuiesceSuccessorBridgeArguments(
     priorQuiesceRunId,
     legacyArtifactDirectory,
     priorArtifactDirectory,
+    failedPrewriteArtifactDirectory,
     currentPrepareTerminalFile,
     reviewedAuthorityFile,
     evidenceDirectory,
@@ -497,6 +541,121 @@ function priorArtifactExact(
   });
 }
 
+function failedPrewriteArtifactExact(
+  directory: string,
+): Readonly<Record<string, string>> {
+  const expected = COLD_QUIESCE_SUCCESSOR_BRIDGE;
+  const authority = readPinnedEvidence(
+    directory,
+    expected.failedPrewriteEvidence.reviewedAuthority,
+  );
+  const prerequisites = readPinnedEvidence(
+    directory,
+    expected.failedPrewriteEvidence.prerequisites,
+  );
+  const reviewedPullRequest = record(prerequisites.value.reviewedPullRequest)
+    ? prerequisites.value.reviewedPullRequest
+    : null;
+  const consumer = record(prerequisites.value.consumer)
+    ? prerequisites.value.consumer
+    : null;
+  const rows = Array.isArray(prerequisites.value.prerequisites)
+    ? prerequisites.value.prerequisites
+    : [];
+  const prepare = rows.length === 1 && record(rows[0]) ? rows[0] : null;
+  const prepareReceipt = prepare && record(prepare.receipt)
+    ? prepare.receipt
+    : null;
+  const authorityChecks = [
+    "coldQuiesceSuccessorAllRefsHistoryExact",
+    "coldQuiesceSuccessorCurrentPrepareExact",
+    "coldQuiesceSuccessorLegacyArtifactMetadataExact",
+    "coldQuiesceSuccessorLegacyHistoryExact",
+    "coldQuiesceSuccessorPriorArtifactMetadataExact",
+    "coldQuiesceSuccessorPriorHistoryExact",
+    "coldQuiesceSuccessorPriorProviderProofRequired",
+    "coldQuiesceSuccessorBridgeRequired",
+    "completeRetainedHistoryExact",
+    "reviewedAuthorityExact",
+    "freshDispatchWriteGuardExact",
+  ];
+  if (
+    authority.value.command !== "verify-github-reviewed-candidate-authority" ||
+    authority.value.ok !== true ||
+    authority.value.repository !== COLD_RECOVERY_LOCK.repository ||
+    authority.value.candidateSha !== expected.failedPrewriteCandidateSha ||
+    authority.value.reviewedPrHeadSha !==
+      expected.failedPrewriteReviewedHeadSha ||
+    authority.value.reviewedPullRequestNumber !==
+      expected.failedPrewritePullRequestNumber ||
+    authority.value.reviewedPullRequestMergedAt !==
+      expected.failedPrewriteMergedAt ||
+    authority.value.operation !== expected.operation ||
+    authority.value.workflowRunId !== expected.failedPrewriteQuiesceRunId ||
+    authority.value.workflowRunAttempt !== 1 ||
+    authority.value.workflowRunCreatedAt !== "2026-09-08T11:39:07Z" ||
+    authority.value.selectedReplacementRunId !==
+      expected.failedPrewriteReplacementRunId ||
+    authority.value.selectedReplacementRunStartedAt !==
+      expected.failedPrewriteReplacementRunStartedAt ||
+    authority.value.selectedReplacementRunCompletedAt !==
+      expected.failedPrewriteReplacementRunCompletedAt ||
+    authority.value.selectedColdPrepareRunId !==
+      expected.failedPrewritePrepareRunId ||
+    authority.value.selectedColdPrepareRunStartedAt !==
+      expected.failedPrewritePrepareRunStartedAt ||
+    authority.value.selectedColdPrepareRunCompletedAt !==
+      expected.failedPrewritePrepareRunCompletedAt ||
+    authority.value.priorAmbiguousColdQuiesceCandidateSha !==
+      expected.priorCandidateSha ||
+    authority.value.priorAmbiguousColdQuiesceRunId !==
+      expected.priorQuiesceRunId ||
+    authority.value.priorAmbiguousColdQuiesceArtifactId !==
+      expected.priorArtifactId ||
+    authority.value.priorAmbiguousColdQuiesceArtifactDigest !==
+      expected.priorArtifactDigest ||
+    authority.value.coldQuiesceSuccessorDeadline !==
+      expected.successorDeadline ||
+    authorityChecks.some((key) => authority.value[key] !== true) ||
+    !Array.isArray(authority.value.safePriorSkippedWriteRunIds) ||
+    authority.value.safePriorSkippedWriteRunIds.length !== 0 ||
+    !Array.isArray(authority.value.successfulStagingDeploymentRunIds) ||
+    authority.value.successfulStagingDeploymentRunIds.length !== 0 ||
+    authority.value.stagingLifecycleSealed !== false ||
+    prerequisites.value.schemaVersion !==
+      "pintpath-permanent-staging-worker-bootstrap-prerequisites/v6" ||
+    prerequisites.value.operation !== "cold-quiesce" ||
+    prerequisites.value.candidateSha !== expected.failedPrewriteCandidateSha ||
+    prerequisites.value.expectedDeploymentSha !== COLD_RECOVERY_LOCK.sourceSha ||
+    reviewedPullRequest?.number !== expected.failedPrewritePullRequestNumber ||
+    reviewedPullRequest?.reviewedHeadSha !==
+      expected.failedPrewriteReviewedHeadSha ||
+    reviewedPullRequest?.mergeCommitSha !==
+      expected.failedPrewriteCandidateSha ||
+    reviewedPullRequest?.treeSha !== expected.failedPrewriteTreeSha ||
+    consumer?.runId !== expected.failedPrewriteQuiesceRunId ||
+    consumer?.runAttempt !== 1 ||
+    prepare?.kind !== "cold-prepare" ||
+    prepare?.runId !== expected.failedPrewritePrepareRunId ||
+    prepare?.artifactId !== expected.failedPrewritePrepareArtifactId ||
+    prepare?.artifactName !== expected.failedPrewritePrepareArtifactName ||
+    prepare?.artifactDigest !== expected.failedPrewritePrepareArtifactDigest ||
+    prepareReceipt?.sha256 !== expected.failedPrewritePrepareTerminalSha256 ||
+    prepareReceipt?.candidateSha !== expected.failedPrewriteCandidateSha ||
+    prepareReceipt?.sourceSha !== COLD_RECOVERY_LOCK.sourceSha ||
+    !record(prerequisites.value.checks) ||
+    Object.values(prerequisites.value.checks).some((check) => check !== true) ||
+    prerequisites.value.secretMaterialIncluded !== false ||
+    prerequisites.value.secretDerivedCommitmentsIncluded !== false
+  ) fail("failed_prewrite_artifact_invalid");
+  return Object.freeze({
+    reviewedAuthoritySha256:
+      expected.failedPrewriteEvidence.reviewedAuthority.sha256,
+    prerequisitesSha256:
+      expected.failedPrewriteEvidence.prerequisites.sha256,
+  });
+}
+
 function currentPrepareTerminalExact(
   filename: string,
   candidateSha: string,
@@ -632,6 +791,34 @@ function currentAuthorityExact(
       expected.priorArtifactName &&
     value.priorAmbiguousColdQuiesceArtifactDigest ===
       expected.priorArtifactDigest &&
+    value.failedPrewriteColdRecoveryCandidateSha ===
+      expected.failedPrewriteCandidateSha &&
+    value.failedPrewriteColdRecoveryReviewedHeadSha ===
+      expected.failedPrewriteReviewedHeadSha &&
+    value.failedPrewriteColdRecoveryTreeSha ===
+      expected.failedPrewriteTreeSha &&
+    value.failedPrewriteColdRecoveryPullRequestNumber ===
+      expected.failedPrewritePullRequestNumber &&
+    value.failedPrewriteColdRecoveryCandidateMergedAt ===
+      expected.failedPrewriteMergedAt &&
+    value.failedPrewriteReplacementRunId ===
+      expected.failedPrewriteReplacementRunId &&
+    value.failedPrewriteReplacementRunStartedAt ===
+      expected.failedPrewriteReplacementRunStartedAt &&
+    value.failedPrewriteReplacementRunCompletedAt ===
+      expected.failedPrewriteReplacementRunCompletedAt &&
+    value.failedPrewriteColdPrepareRunId ===
+      expected.failedPrewritePrepareRunId &&
+    value.failedPrewriteColdQuiesceRunId ===
+      expected.failedPrewriteQuiesceRunId &&
+    value.failedPrewriteColdQuiesceRunCompletedAt ===
+      expected.failedPrewriteQuiesceRunCompletedAt &&
+    value.failedPrewriteColdQuiesceArtifactId ===
+      expected.failedPrewriteArtifactId &&
+    value.failedPrewriteColdQuiesceArtifactName ===
+      expected.failedPrewriteArtifactName &&
+    value.failedPrewriteColdQuiesceArtifactDigest ===
+      expected.failedPrewriteArtifactDigest &&
     value.legacyAmbiguousColdQuiesceArtifactId === expected.legacyArtifactId &&
     value.legacyAmbiguousColdQuiesceArtifactName === expected.legacyArtifactName &&
     value.legacyAmbiguousColdQuiesceArtifactDigest ===
@@ -639,14 +826,18 @@ function currentAuthorityExact(
     value.coldQuiesceSuccessorDirectParentExact === true &&
     value.coldQuiesceSuccessorLegacyToIntermediateParentExact === true &&
     value.coldQuiesceSuccessorIntermediateToPriorParentExact === true &&
-    value.coldQuiesceSuccessorCompleteFourCandidateLineageExact === true &&
+    value.coldQuiesceSuccessorPriorToFailedPrewriteParentExact === true &&
+    value.coldQuiesceSuccessorCompleteFiveCandidateLineageExact === true &&
     value.coldQuiesceSuccessorLegacyHistoryExact === true &&
     value.coldQuiesceSuccessorIntermediateHistoryExact === true &&
     value.coldQuiesceSuccessorPriorHistoryExact === true &&
+    value.coldQuiesceSuccessorFailedPrewriteHistoryExact === true &&
+    value.coldQuiesceSuccessorFailedPrewriteSkippedExact === true &&
     value.coldQuiesceSuccessorAllRefsHistoryExact === true &&
     value.coldQuiesceSuccessorCurrentPrepareExact === true &&
     value.coldQuiesceSuccessorLegacyArtifactMetadataExact === true &&
     value.coldQuiesceSuccessorPriorArtifactMetadataExact === true &&
+    value.coldQuiesceSuccessorFailedPrewriteArtifactMetadataExact === true &&
     value.coldQuiesceSuccessorPriorProviderProofRequired === true &&
     value.coldQuiesceSuccessorBridgeRequired === true &&
     value.completeRetainedHistoryExact === true &&
@@ -702,6 +893,9 @@ export async function verifyPermanentStagingColdQuiesceSuccessorBridge(
   const legacyEvidence = legacyArtifactExact(args.legacyArtifactDirectory);
   const priorEvidence = priorArtifactExact(
     args.priorArtifactDirectory,
+  );
+  const failedPrewriteEvidence = failedPrewriteArtifactExact(
+    args.failedPrewriteArtifactDirectory,
   );
   const currentPrepare = currentPrepareTerminalExact(
     args.currentPrepareTerminalFile,
@@ -813,6 +1007,32 @@ export async function verifyPermanentStagingColdQuiesceSuccessorBridge(
         COLD_QUIESCE_SUCCESSOR_BRIDGE
           .intermediateFailedReadOnlyPrepareReconcileRunId,
     },
+    failedPrewriteCandidate: {
+      candidateSha: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteCandidateSha,
+      reviewedHeadSha:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReviewedHeadSha,
+      treeSha: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteTreeSha,
+      pullRequestNumber:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewritePullRequestNumber,
+      mergedAt: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteMergedAt,
+      replacementRunId:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReplacementRunId,
+      replacementRunStartedAt:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReplacementRunStartedAt,
+      replacementRunCompletedAt:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReplacementRunCompletedAt,
+      prepareRunId:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewritePrepareRunId,
+      prepareRunStartedAt:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewritePrepareRunStartedAt,
+      prepareRunCompletedAt:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewritePrepareRunCompletedAt,
+      quiesceRunId:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteQuiesceRunId,
+      quiesceRunCompletedAt:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteQuiesceRunCompletedAt,
+      writeStepDisposition: "skipped",
+    },
     legacyArtifact: {
       id: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactId,
       name: COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactName,
@@ -837,6 +1057,12 @@ export async function verifyPermanentStagingColdQuiesceSuccessorBridge(
       digest: COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactDigest,
       ...priorEvidence,
     },
+    failedPrewriteArtifact: {
+      id: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactId,
+      name: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactName,
+      digest: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactDigest,
+      ...failedPrewriteEvidence,
+    },
     currentPrepare: {
       runId: args.currentPrepareRunId,
       terminalSha256: currentPrepare.sha256,
@@ -859,14 +1085,20 @@ export async function verifyPermanentStagingColdQuiesceSuccessorBridge(
       directSuccessorLineageExact: true,
       legacyToIntermediateLineageExact: true,
       intermediateToPriorLineageExact: true,
-      completeFourCandidateLineageExact: true,
+      priorToFailedPrewriteLineageExact: true,
+      completeFiveCandidateLineageExact: true,
       legacyColdHistoryExact: true,
       intermediateColdHistoryExact: true,
       priorColdHistoryExact: true,
+      failedPrewriteColdHistoryExact: true,
+      failedPrewriteWriteStepSkippedExact: true,
       legacyArtifactMetadataExact: true,
       legacyArtifactContentsExact: true,
       priorArtifactMetadataExact: true,
       priorArtifactContentsExact: true,
+      failedPrewriteArtifactMetadataExact: true,
+      failedPrewriteArtifactContentsExact: true,
+      failedPrewriteReplacementAndPrepareBoundExact: true,
       currentPrepareTerminalExact: true,
       sourceAnchorsExact: true,
       priorCliGraphqlAuthorizationFailureExact: true,

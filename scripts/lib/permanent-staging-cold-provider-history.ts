@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import {
+  coldRecoveryRowsExact,
   COLD_RECOVERY_LOCK,
   fullStateCanonical,
   railwayCall,
@@ -86,16 +87,16 @@ export const COLD_PROVIDER_PATCH_QUERY =
 }` as const;
 
 export const COLD_PROVIDER_HISTORY_ANCHOR = Object.freeze({
-  historyPrefixThrough: "2026-09-08T04:19:56.336Z",
-  historyPrefixCount: 6,
+  historyPrefixThrough: "2026-09-08T11:36:35.651Z",
+  historyPrefixCount: 8,
   historyPrefixRowsSha256:
-    "f1270eaf4378364f1d91624515f7a0b370f9274254535619704a56d948bf609f",
-  patchPrefixThrough: "2026-09-08T04:19:56.526Z",
-  patchPrefixCount: 122,
+    "478526ce5fb6855911e7130e81d5c78a69edaa67988c85eed8582a9068a7c933",
+  patchPrefixThrough: "2026-09-08T11:36:35.796Z",
+  patchPrefixCount: 124,
   patchPrefixRowsSha256:
-    "a560f185f77fb091da39314eb1f7f9f5ab3a4d2f6593752339649751f6c133db",
+    "8b36a81535a509f60fd2938a7bd2c8a2499ae9c9152d048db1ff93d41ac37f8b",
   patchPrefixEnvelopeSha256:
-    "883f66b23151d4f2acdbe8f8f8f254b0fa5a2ab5bea533bef82ccb3de673c6bc",
+    "46ec3cf3a233cd1fe06eed21197b84d59ace065974c9bf801b208c58a4ad4567",
   oldestHistoryAt: "2026-09-07T18:38:06.313Z",
   oldestPatchAt: "2026-07-18T06:29:17.109Z",
   historicalScalePatchId: "394651e3-3dff-424c-8c66-942548832b40",
@@ -107,6 +108,10 @@ export const COLD_PROVIDER_HISTORY_ANCHOR = Object.freeze({
   priorQuiesceWindow: Object.freeze({
     startedAt: "2026-09-08T04:30:38.868Z",
     completedAt: "2026-09-08T04:32:22.210Z",
+  }),
+  failedPrewriteQuiesceWindow: Object.freeze({
+    startedAt: "2026-09-08T11:39:07.000Z",
+    completedAt: "2026-09-08T11:44:07.000Z",
   }),
   pinnedVariablePatches: Object.freeze([
     Object.freeze({
@@ -122,6 +127,16 @@ export const COLD_PROVIDER_HISTORY_ANCHOR = Object.freeze({
     Object.freeze({
       id: "86131703-8546-43bf-b968-2c76aaa399df",
       createdAt: "2026-09-08T04:19:56.526Z",
+      variableName: "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+    }),
+    Object.freeze({
+      id: "9e7911b8-c3c7-4e85-9b09-3f82a1d0f9ef",
+      createdAt: "2026-09-08T11:29:51.236Z",
+      variableName: "SUPABASE_SERVICE_ROLE_KEY",
+    }),
+    Object.freeze({
+      id: "1d091df7-4548-4907-996f-ea62625e78b0",
+      createdAt: "2026-09-08T11:36:35.796Z",
       variableName: "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
     }),
   ]),
@@ -178,7 +193,7 @@ interface PatchProjection {
 
 export interface ColdProviderNoWriteProof {
   readonly schemaVersion:
-    "pintpath-permanent-staging-cold-provider-no-write-proof/v1";
+    "pintpath-permanent-staging-cold-provider-no-write-proof/v2";
   readonly observedAt: string;
   readonly environmentId: string;
   readonly serviceId: string;
@@ -207,6 +222,7 @@ export interface ColdProviderNoWriteProof {
   readonly incidentWindows: readonly (
     | typeof COLD_PROVIDER_HISTORY_ANCHOR.legacyQuiesceWindow
     | typeof COLD_PROVIDER_HISTORY_ANCHOR.priorQuiesceWindow
+    | typeof COLD_PROVIDER_HISTORY_ANCHOR.failedPrewriteQuiesceWindow
   )[];
   readonly liveStateSha256: string;
   readonly checks: {
@@ -216,6 +232,7 @@ export interface ColdProviderNoWriteProof {
     readonly historicalScalePositiveControlExact: true;
     readonly legacyUnauthorizedRunNoWriteExact: true;
     readonly priorUnauthorizedRunNoWriteExact: true;
+    readonly failedPrewriteUnauthorizedRunNoWriteExact: true;
     readonly authorizedSuffixExact: true;
     readonly targetDeployAbsentFromSuffixExact: true;
     readonly crossFetchedPatchesExact: true;
@@ -296,10 +313,7 @@ function liveStateExact(state: ColdRecoveryState): boolean {
     state.deployment.snapshotId === COLD_RECOVERY_LOCK.snapshotId &&
     state.deployment.commitHash === COLD_RECOVERY_LOCK.sourceSha &&
     state.deployment.imageDigest === null && state.deployment.patchId === null &&
-    Array.isArray(state.rows) && state.rows.length > 0 &&
-    state.rows.every((row) =>
-      row.environmentId === COLD_RECOVERY_LOCK.environmentId &&
-      (row.serviceId === null || row.serviceId === COLD_RECOVERY_LOCK.serviceId));
+    coldRecoveryRowsExact(state.rows);
 }
 
 export function railwayPatchKeyShape(value: unknown): unknown {
@@ -699,6 +713,7 @@ export async function readPermanentStagingColdProviderNoWriteProof(
   const incidentWindows = [
     COLD_PROVIDER_HISTORY_ANCHOR.legacyQuiesceWindow,
     COLD_PROVIDER_HISTORY_ANCHOR.priorQuiesceWindow,
+    COLD_PROVIDER_HISTORY_ANCHOR.failedPrewriteQuiesceWindow,
   ];
   if ([...historyPrefix, ...historySuffix].some((row) =>
     incidentWindows.some((window) => inWindow(row.createdAt, window))) ||
@@ -749,7 +764,7 @@ export async function readPermanentStagingColdProviderNoWriteProof(
     canonical(recheckedPatches) !== canonical(patches)
   ) fail("ledger_changed_during_proof");
   return Object.freeze({
-    schemaVersion: "pintpath-permanent-staging-cold-provider-no-write-proof/v1",
+    schemaVersion: "pintpath-permanent-staging-cold-provider-no-write-proof/v2",
     observedAt: input.observedAt,
     environmentId: COLD_RECOVERY_LOCK.environmentId,
     serviceId: COLD_RECOVERY_LOCK.serviceId,
@@ -784,6 +799,7 @@ export async function readPermanentStagingColdProviderNoWriteProof(
       historicalScalePositiveControlExact: true,
       legacyUnauthorizedRunNoWriteExact: true,
       priorUnauthorizedRunNoWriteExact: true,
+      failedPrewriteUnauthorizedRunNoWriteExact: true,
       authorizedSuffixExact: true,
       targetDeployAbsentFromSuffixExact: true,
       crossFetchedPatchesExact: true,
