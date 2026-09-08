@@ -34,7 +34,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "dad6b3407e820ad0896e7c28b1c869ef002af280afad1fc0fe4e83f5a97732de" as const;
+  "979d080d49c0c38ea8e552739e4b21fe51a0adfab5930b713846a60228b4d304" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -80,15 +80,15 @@ const PRODUCTION_SCALE_WORKFLOW_ID =
 const PRODUCTION_SCALE_WORKFLOW_NAME =
   "Converge Pint Path production to two replicas" as const;
 const PRODUCTION_SCALE_WORKFLOW_SHA256 =
-  "8bd7083522592ba966f1c73dd3068cff7f5b6de2dd7d629997796409cb0c5402" as const;
+  "4c4019c01e949297225c64d522e9b166d5c164d1d7b1efe018bd67939ad976a6" as const;
 const PRODUCTION_SCALE_POLICY_PATH =
   "ops/railway/permanent-staging-scale-evidence-policy.json" as const;
 const PRODUCTION_SCALE_POLICY_SHA256 =
-  "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608" as const;
+  "e960db6dde4c367ae26148d5e4c0e013b8f8cb5e4923bdced9a606d965673cb0" as const;
 const PRODUCTION_SCALE_PRODUCER_PATH =
   "scripts/execute-protected-permanent-staging-scale.ts" as const;
 const PRODUCTION_SCALE_PRODUCER_SHA256 =
-  "65f20bae009ea61318ae17a908a22e54080e8b9ab7e82a2f16fdda4ac4170bc9" as const;
+  "becc2628287263c14f834206c799e376d1a8fe5f3a454df5646271e7f382049b" as const;
 const DEPLOYMENT_POLICY_PATH =
   "ops/railway/production-app-deployment-policy.json" as const;
 const DEPLOYMENT_POLICY_SHA256 =

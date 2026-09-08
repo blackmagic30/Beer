@@ -20,7 +20,7 @@ import { buildProductionPromotionRecoveryReceipt } from
   "../src/lib/production-promotion-recovery.js";
 import {
   productionRouteTopologyFixture,
-  productionScaleTopologyFixture,
+  productionScaleReceiptFixture,
 } from
   "./fixtures/protected-scale-receipt.js";
 import { productionApplicationDeploymentReceiptFixture } from
@@ -327,56 +327,18 @@ function writePredecessorAuthority(
   });
   const deploymentReceipt = path.join(root, "deployment-receipt.json");
   fs.writeFileSync(deploymentReceipt, canonical(deploymentValue), { mode: 0o600 });
-  const scaleValue = {
-    schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
-    executorState: "GITHUB_ENVIRONMENT_PROTECTED",
-    direction: "converge-production-two",
-    outcome: "scaled",
+  const scaleRunId = String(productionChain.find(
+    (stage) => stage.stage === "scale",
+  )!.runId);
+  const scaleValue = productionScaleReceiptFixture({
     candidateSha: CANDIDATE,
+    githubRunId: scaleRunId,
     startedAt: "1970-01-01T00:13:05.000Z",
     completedAt: "1970-01-01T00:13:20.000Z",
-    desiredReplicas: 2,
+    deploymentBeforeActivationIdSha256,
     deploymentIdSha256,
-    attempts: 1,
-    retryAllowed: false,
-    intentSha256: "a".repeat(64),
-    terminalEvidenceSha256: "b".repeat(64),
-    commandStdoutSha256: "c".repeat(64),
-    commandStderrSha256: "d".repeat(64),
-    productionActivationPrerequisite: {
-      runId: "8888",
-      verificationSha256: "e".repeat(64),
-      terminalSha256: "f".repeat(64),
-      prerequisitesSha256: "0".repeat(64),
-      deploymentBeforeIdSha256: deploymentBeforeActivationIdSha256,
-      deploymentAfterIdSha256: deploymentIdSha256,
-    },
-    replicaTopology: productionScaleTopologyFixture(),
-    checks: {
-      policyExact: true,
-      githubAuthorityExact: true,
-      tokenScopesExact: true,
-      cliExact: true,
-      boundaryPreflightExact: true,
-      targetPreflightExact: true,
-      productionActivationPrerequisiteExact: true,
-      productionActivationDeploymentContinuityExact: true,
-      runtimePreflightExact: true,
-      durableIntentExact: true,
-      repositoryPrewriteReasserted: true,
-      writeAttemptedAtMostOnce: true,
-      acknowledgementExact: true,
-      postflightAttempted: true,
-      targetPostflightExact: true,
-      runtimePostflightExact: true,
-      candidateUnchanged: true,
-      deploymentUnchanged: true,
-      replicaTopologyEvidenceExact: true,
-      boundaryPostflightExact: true,
-      terminalEvidenceExact: true,
-      finalReceiptEvidenceExact: true,
-    },
-  };
+    activationRunId: "8888",
+  });
   const scaleReceipt = path.join(root, "scale-receipt.json");
   fs.writeFileSync(scaleReceipt, canonical(scaleValue), { mode: 0o600 });
   if (operation === "close") {

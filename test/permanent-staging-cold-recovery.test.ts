@@ -12,6 +12,11 @@ import {
   runProtectedPermanentStagingColdQuiesce,
 } from "../scripts/execute-protected-permanent-staging-cold-quiesce.js";
 import {
+  PROTECTED_STAGING_SCALE_PATCH_HISTORY_QUERY,
+  PROTECTED_STAGING_SCALE_PATCH_QUERY,
+  type ScalePatchHistoryEvidence,
+} from "../scripts/execute-protected-permanent-staging-scale.js";
+import {
   runPermanentStagingColdPrepareReconciliationProbe,
 } from "../scripts/probe-permanent-staging-cold-prepare-reconciliation.js";
 import {
@@ -20,6 +25,7 @@ import {
 import {
   argumentsExact,
   COLD_QUIESCE_SUCCESSOR_BINDING,
+  COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION,
   COLD_RECOVERY_LOCK,
   COLD_RECOVERY_CLI_SHA256,
   COLD_RECOVERY_POLICY_SHA256,
@@ -29,10 +35,15 @@ import {
   policyExact,
   readPrivateEvidence,
   requiredRowsExact,
-  runScaleCommand,
   type ColdRecoveryState,
   type ColdRecoveryVariableRow,
 } from "../scripts/lib/permanent-staging-cold-recovery.js";
+import {
+  railwayEnvironmentPatchCommitVariables,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+  type RailwayEnvironmentPatchCommitAttempt,
+} from "../scripts/lib/railway-environment-patch-commit.js";
 import {
   STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA,
   STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
@@ -44,7 +55,7 @@ const OLD_SOURCE = COLD_RECOVERY_LOCK.sourceSha;
 const PREPARE_RUN = "1000";
 const REPLACEMENT_RUN = "500";
 const CURRENT_RUN = "9000";
-const NOW = Date.parse("2026-09-07T19:10:00.000Z");
+const NOW = Date.parse("2026-09-08T05:11:02.000Z");
 
 function sha(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -52,6 +63,20 @@ function sha(value: string): string {
 
 function canonical(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function sortObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortObjectKeys);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(Object.keys(value as Record<string, unknown>)
+    .sort().map((key) => [
+      key,
+      sortObjectKeys((value as Record<string, unknown>)[key]),
+    ]));
+}
+
+function canonicalProviderJson(value: unknown): string {
+  return `${JSON.stringify(sortObjectKeys(value), null, 2)}\n`;
 }
 
 function row(
@@ -127,6 +152,89 @@ function scope(): Response {
       },
     },
   }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+function directMutationAttempt(
+  outcome: "acknowledged" | "provider_rejected" | "transport_uncertain",
+): RailwayEnvironmentPatchCommitAttempt {
+  const variables = railwayEnvironmentPatchCommitVariables({
+    environmentId: COLD_RECOVERY_LOCK.environmentId,
+    serviceId: COLD_RECOVERY_LOCK.serviceId,
+    regions: COLD_RECOVERY_LOCK.quiesceRegions.map((region) => ({
+      region,
+      numReplicas: 0,
+    })),
+    commitMessage: `PintPath cold quiesce ${CANDIDATE} run ${CURRENT_RUN}`,
+  })!;
+  return {
+    outcome,
+    operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+    querySha256: sha(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION),
+    variablesSha256: sha(JSON.stringify(variables)),
+    requestBodySha256: sha(JSON.stringify({
+      operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+      query: RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+      variables,
+    })),
+    responseBodySha256: outcome === "transport_uncertain" ? null : sha("response"),
+    acknowledgementSha256: outcome === "acknowledged" ? sha("wf-1") : null,
+    acknowledgementExact: outcome === "acknowledged",
+    zeroRegionsEncodedAsJsonNull: true,
+  };
+}
+
+function coldPatchHistory(
+  matchingPatchCount: 0 | 1,
+  commitMessage: string,
+  expectedPatch: unknown,
+): ScalePatchHistoryEvidence {
+  const baseProjectionSha256 = "6".repeat(64);
+  return {
+    querySha256: {
+      history: sha(PROTECTED_STAGING_SCALE_PATCH_HISTORY_QUERY),
+      patch: sha(PROTECTED_STAGING_SCALE_PATCH_QUERY),
+    },
+    pages: [
+      { requestAfter: null, count: 100, endCursor: "cursor-1", hasNextPage: true },
+      {
+        requestAfter: "cursor-1",
+        count: 23 + matchingPatchCount,
+        endCursor: "cursor-2",
+        hasNextPage: false,
+      },
+    ],
+    pageCount: 2,
+    rowCount: 123 + matchingPatchCount,
+    rowsProjectionSha256: matchingPatchCount === 0
+      ? baseProjectionSha256
+      : "a".repeat(64),
+    nonMatchingRowsProjectionSha256: baseProjectionSha256,
+    paginationCompleteExact: true,
+    matchingPatchCount,
+    matchingPatch: matchingPatchCount === 1 ? {
+      rowIndex: 0,
+      idSha256: "7".repeat(64),
+      status: "COMMITTED",
+      createdAt: new Date(NOW).toISOString(),
+      updatedAt: new Date(NOW).toISOString(),
+      appliedAt: new Date(NOW).toISOString(),
+      messageSha256: sha(commitMessage),
+      patchSha256: sha(canonicalProviderJson(expectedPatch)),
+      crossFetchExact: true,
+    } : null,
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  };
+}
+
+function successfulColdPatchHistory() {
+  let call = 0;
+  return vi.fn(async (
+    _token: string,
+    _environmentId: string,
+    commitMessage: string,
+    expectedPatch: unknown,
+  ) => coldPatchHistory(call++ === 0 ? 0 : 1, commitMessage, expectedPatch));
 }
 
 function replacementReceipt(candidateSha = CANDIDATE): string {
@@ -212,7 +320,7 @@ function coldPrepareVerification(
       reviewedHeadSha: "b".repeat(40),
       mergeCommitSha: CANDIDATE,
       treeSha: "c".repeat(40),
-      mergedAt: "2026-09-07T19:00:00.000Z",
+      mergedAt: "2026-09-08T04:35:00.000Z",
       authorId: 1,
       mergedById: 2,
     },
@@ -221,15 +329,15 @@ function coldPrepareVerification(
       githubEnvironment: "permanent-staging-scale-evidence",
       runId: CURRENT_RUN,
       runAttempt: 1,
-      startedAt: "2026-09-07T19:09:00.000Z",
+      startedAt: "2026-09-08T05:10:30.000Z",
     },
     prerequisites: [{
       kind: "cold-prepare",
       workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
       runId: PREPARE_RUN,
       runAttempt: 1,
-      startedAt: "2026-09-07T19:01:00.000Z",
-      completedAt: "2026-09-07T19:02:00.000Z",
+      startedAt: "2026-09-08T05:00:00.000Z",
+      completedAt: "2026-09-08T05:10:00.000Z",
       artifactName: `pintpath-permanent-staging-cold-prepare-${CANDIDATE}`,
       artifactId: "7000",
       artifactDigest: `sha256:${"d".repeat(64)}`,
@@ -247,8 +355,8 @@ function coldPrepareVerification(
       },
       prerequisiteVerificationSha256: null,
     }],
-    verifiedAt: "2026-09-07T19:09:05.000Z",
-    expiresAt: "2026-09-07T19:24:05.000Z",
+    verifiedAt: "2026-09-08T05:10:45.000Z",
+    expiresAt: "2026-09-08T05:25:45.000Z",
     checks: {
       policiesExact: true,
       currentMainExact: true,
@@ -332,6 +440,8 @@ function environment(operation: "prepare" | "quiesce") {
     PINTPATH_COLD_RECOVERY_CONFIRMATION: operation === "prepare"
       ? `PREPARE_PERMANENT_STAGING_COLD_RECOVERY_FOR_${CANDIDATE}_FROM_${OLD_SOURCE}`
       : `QUIESCE_PERMANENT_STAGING_COLD_RECOVERY_TO_ZERO_FOR_${CANDIDATE}_FROM_${OLD_SOURCE}`,
+    PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION:
+      COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION,
     PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: "production-metadata-token-long-enough",
     PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: "staging-metadata-token-long-enough",
     PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN: "staging-variable-token-long-enough",
@@ -353,6 +463,11 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
     workflowRunId: currentRunId,
     workflowRunAttempt: 1,
     selectedColdPrepareRunId: PREPARE_RUN,
+    selectedColdPrepareRunStartedAt: "2026-09-08T05:00:00.000Z",
+    selectedColdPrepareRunCompletedAt: "2026-09-08T05:10:00.000Z",
+    selectedReplacementRunId: REPLACEMENT_RUN,
+    selectedReplacementRunStartedAt: "2026-09-08T04:40:00.000Z",
+    selectedReplacementRunCompletedAt: "2026-09-08T04:50:00.000Z",
     priorAmbiguousColdQuiesceCandidateSha:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorCandidateSha,
     priorAmbiguousColdQuiesceReviewedHeadSha:
@@ -367,14 +482,33 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
       COLD_QUIESCE_SUCCESSOR_BINDING.priorPrepareRunId,
     priorAmbiguousColdQuiesceRunId:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorQuiesceRunId,
-    priorFailedReadOnlyColdQuiesceReconcileRunId:
-      COLD_QUIESCE_SUCCESSOR_BINDING.priorReadOnlyReconcileRunId,
     priorAmbiguousColdQuiesceArtifactId:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactId,
     priorAmbiguousColdQuiesceArtifactName:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactName,
     priorAmbiguousColdQuiesceArtifactDigest:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactDigest,
+    legacyColdRecoveryCandidateSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyCandidateSha,
+    legacyColdRecoveryReviewedHeadSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyReviewedHeadSha,
+    legacyColdRecoveryTreeSha: COLD_QUIESCE_SUCCESSOR_BINDING.legacyTreeSha,
+    legacyColdRecoveryPullRequestNumber:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyPullRequestNumber,
+    legacyColdRecoveryCandidateMergedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyMergedAt,
+    legacyColdPrepareRunId: COLD_QUIESCE_SUCCESSOR_BINDING.legacyPrepareRunId,
+    legacyColdQuiesceRunId: COLD_QUIESCE_SUCCESSOR_BINDING.legacyQuiesceRunId,
+    legacyColdQuiesceRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyQuiesceRunCompletedAt,
+    legacyFailedReadOnlyColdQuiesceReconcileRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyReadOnlyReconcileRunId,
+    legacyAmbiguousColdQuiesceArtifactId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactId,
+    legacyAmbiguousColdQuiesceArtifactName:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactName,
+    legacyAmbiguousColdQuiesceArtifactDigest:
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactDigest,
     priorAmbiguousColdQuiesceRunCompletedAt:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorCompletedAt,
     intermediateColdRecoveryCandidateSha:
@@ -396,12 +530,16 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
     coldQuiesceSuccessorDeadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
     coldQuiesceSuccessorWithinGraceExact: true,
     coldQuiesceSuccessorDirectParentExact: true,
+    coldQuiesceSuccessorLegacyHistoryExact: true,
     coldQuiesceSuccessorPriorHistoryExact: true,
     coldQuiesceSuccessorAllRefsHistoryExact: true,
     coldQuiesceSuccessorCurrentPrepareExact: true,
-    coldQuiesceSuccessorArtifactMetadataExact: true,
-    coldQuiesceSuccessorPriorToIntermediateParentExact: true,
-    coldQuiesceSuccessorTwoHopLineageExact: true,
+    coldQuiesceSuccessorLegacyArtifactMetadataExact: true,
+    coldQuiesceSuccessorPriorArtifactMetadataExact: true,
+    coldQuiesceSuccessorPriorProviderProofRequired: true,
+    coldQuiesceSuccessorLegacyToIntermediateParentExact: true,
+    coldQuiesceSuccessorIntermediateToPriorParentExact: true,
+    coldQuiesceSuccessorCompleteFourCandidateLineageExact: true,
     coldQuiesceSuccessorIntermediateHistoryExact: true,
     coldQuiesceSuccessorBridgeRequired: true,
     completeRetainedHistoryExact: true,
@@ -422,8 +560,19 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
     sourceSha: OLD_SOURCE,
     priorCandidateSha: COLD_QUIESCE_SUCCESSOR_BINDING.priorCandidateSha,
     priorQuiesceRunId: COLD_QUIESCE_SUCCESSOR_BINDING.priorQuiesceRunId,
-    priorReadOnlyReconcileRunId:
-      COLD_QUIESCE_SUCCESSOR_BINDING.priorReadOnlyReconcileRunId,
+    legacyCandidate: {
+      candidateSha: COLD_QUIESCE_SUCCESSOR_BINDING.legacyCandidateSha,
+      reviewedHeadSha: COLD_QUIESCE_SUCCESSOR_BINDING.legacyReviewedHeadSha,
+      treeSha: COLD_QUIESCE_SUCCESSOR_BINDING.legacyTreeSha,
+      pullRequestNumber: COLD_QUIESCE_SUCCESSOR_BINDING.legacyPullRequestNumber,
+      mergedAt: COLD_QUIESCE_SUCCESSOR_BINDING.legacyMergedAt,
+      prepareRunId: COLD_QUIESCE_SUCCESSOR_BINDING.legacyPrepareRunId,
+      quiesceRunId: COLD_QUIESCE_SUCCESSOR_BINDING.legacyQuiesceRunId,
+      quiesceRunCompletedAt:
+        COLD_QUIESCE_SUCCESSOR_BINDING.legacyQuiesceRunCompletedAt,
+      failedReadOnlyReconcileRunId:
+        COLD_QUIESCE_SUCCESSOR_BINDING.legacyReadOnlyReconcileRunId,
+    },
     intermediateCandidate: {
       candidateSha: COLD_QUIESCE_SUCCESSOR_BINDING.intermediateCandidateSha,
       reviewedHeadSha:
@@ -438,26 +587,136 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
         COLD_QUIESCE_SUCCESSOR_BINDING
           .intermediateFailedReadOnlyPrepareReconcileRunId,
     },
+    legacyArtifact: {
+      id: COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactId,
+      name: COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactName,
+      digest: COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactDigest,
+      receiptSha256: COLD_QUIESCE_SUCCESSOR_BINDING.legacyReceiptSha256,
+      intentSha256: COLD_QUIESCE_SUCCESSOR_BINDING.legacyIntentSha256,
+      prerequisitesSha256:
+        COLD_QUIESCE_SUCCESSOR_BINDING.legacyPrerequisitesSha256,
+      priorReviewedAuthoritySha256:
+        COLD_QUIESCE_SUCCESSOR_BINDING.legacyReviewedAuthoritySha256,
+    },
     priorArtifact: {
       id: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactId,
       name: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactName,
       digest: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactDigest,
       receiptSha256: COLD_QUIESCE_SUCCESSOR_BINDING.priorReceiptSha256,
       intentSha256: COLD_QUIESCE_SUCCESSOR_BINDING.priorIntentSha256,
+      successorBridgeSha256: COLD_QUIESCE_SUCCESSOR_BINDING.priorBridgeSha256,
       prerequisitesSha256:
         COLD_QUIESCE_SUCCESSOR_BINDING.priorPrerequisitesSha256,
-      priorReviewedAuthoritySha256:
+      reviewedAuthoritySha256:
         COLD_QUIESCE_SUCCESSOR_BINDING.priorReviewedAuthoritySha256,
     },
     priorCliFailure: {
       cliVersion: "5.32.0",
       cliSha256: COLD_RECOVERY_CLI_SHA256,
+      cliExitCode: 1,
+      timedOut: false,
+      stdoutSha256: sha(""),
       stderrSha256: COLD_QUIESCE_SUCCESSOR_BINDING.priorCliStderrSha256,
-      normalizedReplicaAssignment: `project=${COLD_RECOVERY_LOCK.projectId}`,
-      deterministicPrecommitBarrier:
-        "replica-u64-parse-before-commit_scale_patch",
-      scaleMutationPathReachable: false,
-      providerWriteCommitted: false,
+      normalizedErrorSha256:
+        COLD_QUIESCE_SUCCESSOR_BINDING.priorCliStderrSha256,
+      clapParseFailure: false,
+      renderedErrorKind: "UnauthorizedToken",
+      graphqlAuthorizationDenied: true,
+      deniedResolver: null,
+      resolverUnknown: true,
+      environmentPatchCommitReached: null,
+    },
+    providerWriteCommitted: false,
+    mutationExclusivity: {
+      externalMutationFreezeAttestation:
+        COLD_RECOVERY_EXTERNAL_MUTATION_FREEZE_ATTESTATION,
+      enforcement: "OPERATIONAL_NOT_PROVIDER_VERIFIED",
+      concurrencyGroup: "pintpath-permanent-staging-key-rollout",
+      cancelInProgress: false,
+      bridgeTokenCustody: "METADATA_ONLY",
+      mutationTokenPresent: false,
+    },
+    currentPrepare: {
+      runId: PREPARE_RUN,
+      terminalSha256: "c".repeat(64),
+      replacementRunId: REPLACEMENT_RUN,
+      startedAt: "2026-09-08T05:00:00.000Z",
+      completedAt: "2026-09-08T05:10:00.000Z",
+    },
+    providerNoWriteProof: {
+      schemaVersion:
+        "pintpath-permanent-staging-cold-provider-no-write-proof/v1",
+      observedAt: "2026-09-08T05:11:01.000Z",
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      serviceId: COLD_RECOVERY_LOCK.serviceId,
+      querySha256: {
+        history: COLD_QUIESCE_SUCCESSOR_BINDING.providerHistoryQuerySha256,
+        patches: COLD_QUIESCE_SUCCESSOR_BINDING.providerPatchesQuerySha256,
+        patch: COLD_QUIESCE_SUCCESSOR_BINDING.providerPatchQuerySha256,
+      },
+      history: {
+        pages: [{
+          requestAfter: null,
+          count: 8,
+          endCursor: "history-terminal-cursor",
+          hasNextPage: false,
+        }],
+        count: 8,
+        rowsSha256: "4".repeat(64),
+        prefixCount: 6,
+        prefixRowsSha256:
+          "f1270eaf4378364f1d91624515f7a0b370f9274254535619704a56d948bf609f",
+        suffixEventIds: [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222",
+        ],
+      },
+      patches: {
+        pages: [{
+          requestAfter: null,
+          count: 100,
+          endCursor: "patch-page-one-cursor",
+          hasNextPage: true,
+        }, {
+          requestAfter: "patch-page-one-cursor",
+          count: 24,
+          endCursor: "patch-terminal-cursor",
+          hasNextPage: false,
+        }],
+        count: 124,
+        rowsSha256: "5".repeat(64),
+        prefixCount: 122,
+        prefixRowsSha256:
+          "a560f185f77fb091da39314eb1f7f9f5ab3a4d2f6593752339649751f6c133db",
+        suffixPatchIds: [
+          "33333333-3333-4333-8333-333333333333",
+          "44444444-4444-4444-8444-444444444444",
+        ],
+        crossFetchProjectionSha256: "6".repeat(64),
+      },
+      incidentWindows: [{
+        startedAt: "2026-09-07T18:51:21.000Z",
+        completedAt: "2026-09-07T18:57:20.000Z",
+      }, {
+        startedAt: "2026-09-08T04:30:38.868Z",
+        completedAt: "2026-09-08T04:32:22.210Z",
+      }],
+      liveStateSha256: sha(fullStateCanonical(state(null, true))),
+      checks: {
+        paginationCompleteExact: true,
+        chronologicalOrderExact: true,
+        historicalPrefixesExact: true,
+        historicalScalePositiveControlExact: true,
+        legacyUnauthorizedRunNoWriteExact: true,
+        priorUnauthorizedRunNoWriteExact: true,
+        authorizedSuffixExact: true,
+        targetDeployAbsentFromSuffixExact: true,
+        crossFetchedPatchesExact: true,
+        ledgerRecheckExact: true,
+        liveTopologyContinuityExact: true,
+      },
+      secretMaterialIncluded: false,
+      secretDerivedCommitmentsIncluded: false,
     },
     sourceProof: {
       commandProducer: {
@@ -482,6 +741,31 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
           gitBlobSha: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliScaleGitBlobSha,
           sha256: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliScaleSha256,
         },
+        regions: {
+          path: "src/controllers/regions.rs",
+          gitBlobSha:
+            COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliRegionsGitBlobSha,
+          sha256: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliRegionsSha256,
+        },
+        client: {
+          path: "src/client.rs",
+          gitBlobSha: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliClientGitBlobSha,
+          sha256: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliClientSha256,
+        },
+        errors: {
+          path: "src/errors.rs",
+          gitBlobSha: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliErrorsGitBlobSha,
+          sha256: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliErrorsSha256,
+        },
+        environmentPatchCommit: {
+          path: "src/gql/mutations/strings/EnvironmentPatchCommit.graphql",
+          gitBlobSha:
+            COLD_QUIESCE_SUCCESSOR_BINDING
+              .railwayCliEnvironmentPatchCommitGitBlobSha,
+          sha256:
+            COLD_QUIESCE_SUCCESSOR_BINDING
+              .railwayCliEnvironmentPatchCommitSha256,
+        },
       },
     },
     liveTopology: {
@@ -503,22 +787,32 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
     coldQuiesceSuccessorGraceHours: 24,
     coldQuiesceSuccessorDeadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
     coldQuiesceSuccessorWithinGraceExact: true,
-    verifiedAt: "2026-09-07T19:09:30.000Z",
+    verifiedAt: "2026-09-08T05:11:01.000Z",
     checks: {
       reviewedSuccessorAuthorityExact: true,
       directSuccessorLineageExact: true,
+      legacyToIntermediateLineageExact: true,
+      intermediateToPriorLineageExact: true,
+      completeFourCandidateLineageExact: true,
+      legacyColdHistoryExact: true,
+      intermediateColdHistoryExact: true,
       priorColdHistoryExact: true,
+      legacyArtifactMetadataExact: true,
+      legacyArtifactContentsExact: true,
       priorArtifactMetadataExact: true,
       priorArtifactContentsExact: true,
+      currentPrepareTerminalExact: true,
       sourceAnchorsExact: true,
-      priorCliDeterministicPrecommitBarrierExact: true,
+      priorCliGraphqlAuthorizationFailureExact: true,
+      providerHistoryCompleteExact: true,
+      providerNoWriteExact: true,
+      externalMutationFreezeAttested: true,
+      serializedMutationConcurrencyExact: true,
+      metadataOnlyTokenCustodyExact: true,
       readOnlyTokenScopeExact: true,
       configuredLiveTopologyExact: true,
       deploymentManifestIdentityExact: true,
-      noSecondScaleWritePerformed: true,
-      priorToIntermediateLineageExact: true,
-      twoHopSuccessorLineageExact: true,
-      intermediateColdHistoryExact: true,
+      noProviderMutationPerformed: true,
     },
     nextRequiredProof: "FRESH_REVIEWED_SUCCESSOR_CONFIGURED_ONE_TO_ZERO",
     secretMaterialIncluded: false,
@@ -545,6 +839,86 @@ function reconcilePrepareEnvironment() {
     PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: undefined,
     PINTPATH_RAILWAY_CLI_PATH: undefined,
   };
+}
+
+function coldQuiesceArguments(): string[] {
+  return [
+    "--candidate-sha", CANDIDATE,
+    "--expected-deployment-sha", OLD_SOURCE,
+    "--prepare-run-id", PREPARE_RUN,
+    "--prepare-verification-file", "/private/prerequisites-verification.json",
+    "--successor-bridge-file", "/private/cold-quiesce-successor-bridge.json",
+    "--reviewed-authority-file", "/private/reviewed-authority.json",
+    "--evidence-dir", "/private/evidence",
+  ];
+}
+
+function coldQuiesceEvidence(filename: string): string {
+  return filename.endsWith("cold-quiesce-successor-bridge.json")
+    ? coldQuiesceSuccessorBridge()
+    : filename.endsWith("reviewed-authority.json")
+    ? coldQuiesceSuccessorAuthority()
+    : coldPrepareVerification();
+}
+
+async function runColdQuiesceHistoryScenario(options: {
+  readonly outcome?: "acknowledged" | "transport_uncertain";
+  readonly transformPost?: (value: ScalePatchHistoryEvidence) => void;
+  readonly throwPost?: boolean;
+  readonly mutationAttempt?: RailwayEnvironmentPatchCommitAttempt;
+} = {}) {
+  const evidence = new Map<string, string>();
+  const output: string[] = [];
+  let historyCall = 0;
+  const readPatchHistory = vi.fn(async (
+    _token: string,
+    _environmentId: string,
+    commitMessage: string,
+    expectedPatch: unknown,
+  ) => {
+    const call = historyCall++;
+    if (call === 1 && options.throwPost) {
+      throw new Error("provider_patch_history_invalid");
+    }
+    const value = coldPatchHistory(call === 0 ? 0 : 1, commitMessage, expectedPatch);
+    if (call === 1) options.transformPost?.(value);
+    return value;
+  });
+  const before = state(null, true);
+  const after = state(0, true);
+  const commitScale = vi.fn().mockResolvedValue(
+    options.mutationAttempt ??
+      directMutationAttempt(options.outcome ?? "transport_uncertain"),
+  );
+  const code = await runProtectedPermanentStagingColdQuiesce({
+    argv: coldQuiesceArguments(),
+    env: environment("quiesce"),
+    cwd: process.cwd(),
+    fetchImpl: vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope()),
+    now: () => NOW,
+    sleep: vi.fn(),
+    boundaryCheck: vi.fn().mockResolvedValue({
+      passed: true,
+      receiptSha256: sha("boundary"),
+    }),
+    readState: vi.fn()
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(after),
+    readPrivateEvidence: coldQuiesceEvidence,
+    reassertRepositoryState: () => true,
+    probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
+    commitScale,
+    readPatchHistory,
+    writeDurable: (_directory, leaf, source) => {
+      evidence.set(leaf, source);
+      return sha(source);
+    },
+    writeOutput: (source) => output.push(source),
+  });
+  return { code, commitScale, evidence, output, readPatchHistory };
 }
 
 describe("permanent-staging cold recovery", () => {
@@ -641,9 +1015,27 @@ describe("permanent-staging cold recovery", () => {
     expect(workflow).toContain('GITHUB_ACTIONS: "true"');
     expect(workflow).not.toContain("github.actions");
     expect(workflow).toContain("ambiguous_quiesce_candidate_sha:");
+    expect(workflow).toContain("external_mutation_freeze_attestation:");
+    expect(workflow).toContain(
+      "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    );
     const quiesceJob = workflow.split("\n  quiesce:")[1]
       .split("\n  reconcile-quiesce:")[0];
     expect(quiesceJob).toContain('test -z "$AMBIGUOUS_PREPARE_RUN_ID"');
+    expect(quiesceJob).toContain(
+      "1161e7ecd421556b104bcae059e8764ebf4a545e",
+    );
+    expect(quiesceJob).toContain(
+      'test "$AMBIGUOUS_QUIESCE_RUN_ID" = 34186930666',
+    );
+    expect(quiesceJob).toContain(
+      '"$RUNNER_TEMP/pintpath-cold-prior/sealed"',
+    );
+    expect(quiesceJob).toContain(
+      '"$RUNNER_TEMP/pintpath-cold-legacy/sealed"',
+    );
+    expect(quiesceJob).not.toContain("pintpath-cold-successor-bridge");
+    expect(quiesceJob).not.toContain("pintpath-cold-failed-successor");
     expect(quiesceJob).toContain(
       "--operation cold-recovery-successor-quiesce",
     );
@@ -652,6 +1044,12 @@ describe("permanent-staging cold recovery", () => {
     );
     expect(quiesceJob).toContain(
       '--prior-quiesce-run-id "$AMBIGUOUS_QUIESCE_RUN_ID"',
+    );
+    expect(quiesceJob).toContain(
+      '--legacy-artifact-dir "$RUNNER_TEMP/pintpath-cold-legacy/sealed"',
+    );
+    expect(quiesceJob).toContain(
+      '--prior-artifact-dir "$RUNNER_TEMP/pintpath-cold-prior/sealed"',
     );
     expect(quiesceJob).toContain(
       '--successor-bridge-file "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/cold-quiesce-successor-bridge.json"',
@@ -664,6 +1062,11 @@ describe("permanent-staging cold recovery", () => {
     )[1].split("\n      - name:")[0];
     expect(bridgeStep).not.toContain("PINTPATH_RAILWAY_STAGING_SCALE_TOKEN");
     expect(bridgeStep).not.toContain("PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN");
+    expect(bridgeStep).toContain(
+      "PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}",
+    );
+    expect(workflow).toContain("group: pintpath-permanent-staging-key-rollout");
+    expect(workflow).toContain("cancel-in-progress: false");
     const reconcileJob = workflow.split("\n  reconcile-quiesce:")[1];
     expect(reconcileJob).toContain('test -z "$AMBIGUOUS_PREPARE_RUN_ID"');
     expect(reconcileJob).toContain(
@@ -728,27 +1131,6 @@ describe("permanent-staging cold recovery", () => {
       );
       fs.chmodSync(filename, 0o600);
       expect(readPrivateEvidence(filename)).toBe(source);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("force-settles a CLI process group that ignores the timeout SIGTERM", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-cold-cli-"));
-    const executable = path.join(directory, "railway");
-    try {
-      fs.writeFileSync(executable, "#!/bin/sh\ntrap '' TERM\nsleep 60\n", {
-        mode: 0o700,
-      });
-      const result = await runScaleCommand(
-        executable,
-        "staging-scale-token-long-enough",
-        20,
-        20,
-      );
-      expect(result).toMatchObject({ code: null, timedOut: true });
-      expect(result.stdoutSha256).toMatch(/^[a-f0-9]{64}$/);
-      expect(result.stderrSha256).toMatch(/^[a-f0-9]{64}$/);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -988,10 +1370,12 @@ describe("permanent-staging cold recovery", () => {
   it("truthfully quiesces configured one to zero despite a null legacy aggregate", async () => {
     const before = state(null, true);
     const after = state(0, true);
-    const readState = vi.fn()
-      .mockResolvedValueOnce(before)
-      .mockResolvedValueOnce(before)
-      .mockResolvedValueOnce(after);
+    const awaitedOperations: string[] = [];
+    let stateRead = 0;
+    const readState = vi.fn(async () => {
+      awaitedOperations.push("read-state");
+      return stateRead++ < 2 ? before : after;
+    });
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope());
@@ -1011,7 +1395,10 @@ describe("permanent-staging cold recovery", () => {
       fetchImpl,
       now: () => NOW,
       sleep: vi.fn(),
-      boundaryCheck: vi.fn().mockResolvedValue({ passed: true, receiptSha256: sha("boundary") }),
+      boundaryCheck: vi.fn(async () => {
+        awaitedOperations.push("boundary");
+        return { passed: true, receiptSha256: sha("boundary") };
+      }),
       readState,
       readPrivateEvidence: (filename) =>
         filename.endsWith("cold-quiesce-successor-bridge.json")
@@ -1020,14 +1407,21 @@ describe("permanent-staging cold recovery", () => {
           ? coldQuiesceSuccessorAuthority()
           : coldPrepareVerification(),
       reassertRepositoryState: () => true,
-      probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
-      validateCli: () => true,
-      runScaleCommand: vi.fn().mockResolvedValue({
-        code: 0,
-        timedOut: false,
-        stdoutSha256: sha("stdout"),
-        stderrSha256: sha("stderr"),
+      probeRuntimeAbsent: vi.fn(async () => {
+        awaitedOperations.push("runtime");
+        return true;
       }),
+      commitScale: vi.fn(async () => {
+        awaitedOperations.push("commit");
+        return directMutationAttempt("acknowledged");
+      }),
+      readPatchHistory: (() => {
+        const history = successfulColdPatchHistory();
+        return vi.fn(async (...input: Parameters<typeof history>) => {
+          awaitedOperations.push("history");
+          return history(...input);
+        });
+      })(),
       writeDurable: (_directory, leaf, source) => {
         evidence.set(leaf, source);
         return sha(source);
@@ -1035,8 +1429,11 @@ describe("permanent-staging cold recovery", () => {
       writeOutput: vi.fn(),
     });
     expect(code).toBe(0);
+    expect(awaitedOperations.filter((entry) => entry === "commit")).toHaveLength(1);
+    const commitIndex = awaitedOperations.indexOf("commit");
+    expect(awaitedOperations[commitIndex - 1]).toBe("read-state");
     expect(JSON.parse(evidence.get("cold-quiesce-receipt.json")!)).toMatchObject({
-      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v4",
+      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v6",
       outcome: "configured_zero",
       configuredReplicasBefore: 1,
       configuredReplicasAfter: 0,
@@ -1055,13 +1452,40 @@ describe("permanent-staging cold recovery", () => {
       receiptSource,
       JSON.parse(receiptSource),
       CANDIDATE,
+      CURRENT_RUN,
     )).toMatchObject({ outcome: "configured_zero", replicasAfter: 0 });
+    expect(() => stagingWorkerBootstrapPrerequisiteInternals
+      .validateColdQuiesceReceipt(
+        receiptSource,
+        JSON.parse(receiptSource),
+        CANDIDATE,
+        "9001",
+      )).toThrow("receipt_invalid");
+    const nonCanonicalHistory = JSON.parse(receiptSource) as {
+      providerHistoryEvidence: {
+        postflight: { matchingPatch: { createdAt: string } };
+      };
+    };
+    nonCanonicalHistory.providerHistoryEvidence.postflight.matchingPatch.createdAt =
+      new Date(NOW).toISOString().replace(".000Z", "Z");
+    expect(() => stagingWorkerBootstrapPrerequisiteInternals
+      .validateColdQuiesceReceipt(
+        canonical(nonCanonicalHistory),
+        nonCanonicalHistory,
+        CANDIDATE,
+        CURRENT_RUN,
+      )).toThrow("receipt_invalid");
     const invalid = JSON.parse(receiptSource) as {
       checks: { exactZeroStateAfter: boolean };
     };
     invalid.checks.exactZeroStateAfter = false;
     expect(() => stagingWorkerBootstrapPrerequisiteInternals
-      .validateColdQuiesceReceipt(canonical(invalid), invalid, CANDIDATE))
+      .validateColdQuiesceReceipt(
+        canonical(invalid),
+        invalid,
+        CANDIDATE,
+        CURRENT_RUN,
+      ))
       .toThrow("receipt_invalid");
     const wrongPrepareBinding = JSON.parse(receiptSource) as {
       successorBridge: { currentPrepareRunId: string };
@@ -1072,6 +1496,7 @@ describe("permanent-staging cold recovery", () => {
         canonical(wrongPrepareBinding),
         wrongPrepareBinding,
         CANDIDATE,
+        CURRENT_RUN,
       )).toThrow("receipt_invalid");
   });
 
@@ -1103,6 +1528,33 @@ describe("permanent-staging cold recovery", () => {
       NOW,
     )).toBeNull();
 
+    const wrongProviderQuery = JSON.parse(bridgeSource) as {
+      providerNoWriteProof: { querySha256: { history: string } };
+    };
+    wrongProviderQuery.providerNoWriteProof.querySha256.history = "0".repeat(64);
+    expect(parseColdQuiesceSuccessorBinding(
+      canonical(wrongProviderQuery),
+      authoritySource,
+      CANDIDATE,
+      CURRENT_RUN,
+      PREPARE_RUN,
+      NOW,
+    )).toBeNull();
+
+    const missingFreeze = JSON.parse(bridgeSource) as {
+      mutationExclusivity: { externalMutationFreezeAttestation: string };
+    };
+    missingFreeze.mutationExclusivity.externalMutationFreezeAttestation =
+      "NOT_FROZEN";
+    expect(parseColdQuiesceSuccessorBinding(
+      canonical(missingFreeze),
+      authoritySource,
+      CANDIDATE,
+      CURRENT_RUN,
+      PREPARE_RUN,
+      NOW,
+    )).toBeNull();
+
     const wrongAuthority = JSON.parse(authoritySource) as {
       selectedColdPrepareRunId: string;
     };
@@ -1115,6 +1567,24 @@ describe("permanent-staging cold recovery", () => {
     expect(parseColdQuiesceSuccessorBinding(
       canonical(bridgeForWrongAuthority),
       wrongAuthoritySource,
+      CANDIDATE,
+      CURRENT_RUN,
+      PREPARE_RUN,
+      NOW,
+    )).toBeNull();
+
+    const mixedPriorAndLegacyAuthority = JSON.parse(authoritySource) as
+      Record<string, unknown>;
+    mixedPriorAndLegacyAuthority.priorFailedReadOnlyColdQuiesceReconcileRunId =
+      COLD_QUIESCE_SUCCESSOR_BINDING.legacyReadOnlyReconcileRunId;
+    const mixedAuthoritySource = `${JSON.stringify(mixedPriorAndLegacyAuthority)}\n`;
+    const bridgeForMixedAuthority = JSON.parse(bridgeSource) as {
+      reviewedAuthoritySha256: string;
+    };
+    bridgeForMixedAuthority.reviewedAuthoritySha256 = sha(mixedAuthoritySource);
+    expect(parseColdQuiesceSuccessorBinding(
+      canonical(bridgeForMixedAuthority),
+      mixedAuthoritySource,
       CANDIDATE,
       CURRENT_RUN,
       PREPARE_RUN,
@@ -1144,6 +1614,98 @@ describe("permanent-staging cold recovery", () => {
         NOW,
       )).toBeNull();
     }
+  });
+
+  it("blocks the cold write when the run-bound commit already exists prewrite", async () => {
+    const commitScale = vi.fn();
+    const output: string[] = [];
+    const code = await runProtectedPermanentStagingColdQuiesce({
+      argv: coldQuiesceArguments(),
+      env: environment("quiesce"),
+      cwd: process.cwd(),
+      fetchImpl: vi.fn()
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(scope()),
+      now: () => NOW,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue({
+        passed: true,
+        receiptSha256: sha("boundary"),
+      }),
+      readState: vi.fn().mockResolvedValue(state(null, true)),
+      readPrivateEvidence: coldQuiesceEvidence,
+      reassertRepositoryState: () => true,
+      probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
+      commitScale,
+      readPatchHistory: vi.fn(async (
+        _token,
+        _environmentId,
+        commitMessage,
+        expectedPatch,
+      ) => coldPatchHistory(1, commitMessage, expectedPatch)),
+      writeDurable: (_directory, _leaf, source) => sha(source),
+      writeOutput: (source) => output.push(source),
+    });
+    expect(code).toBe(1);
+    expect(commitScale).not.toHaveBeenCalled();
+    expect(JSON.parse(output.at(-1)!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      failureCode: "provider_patch_history_prewrite_invalid",
+      attempts: 0,
+      checks: {
+        providerHistoryPrewriteExact: false,
+        writeAttemptedAtMostOnce: true,
+      },
+    });
+  });
+
+  it("expires successor authority after ledger traversal and before the sole write", async () => {
+    let clock = NOW;
+    const commitScale = vi.fn();
+    const output: string[] = [];
+    const before = state(null, true);
+    const code = await runProtectedPermanentStagingColdQuiesce({
+      argv: coldQuiesceArguments(),
+      env: environment("quiesce"),
+      cwd: process.cwd(),
+      fetchImpl: vi.fn()
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(scope()),
+      now: () => clock,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue({
+        passed: true,
+        receiptSha256: sha("boundary"),
+      }),
+      readState: vi.fn().mockResolvedValue(before),
+      readPrivateEvidence: coldQuiesceEvidence,
+      reassertRepositoryState: () => true,
+      probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
+      commitScale,
+      readPatchHistory: vi.fn(async (
+        _token,
+        _environmentId,
+        commitMessage,
+        expectedPatch,
+      ) => {
+        clock = Date.parse(COLD_QUIESCE_SUCCESSOR_BINDING.deadline);
+        return coldPatchHistory(0, commitMessage, expectedPatch);
+      }),
+      writeDurable: (_directory, _leaf, source) => sha(source),
+      writeOutput: (source) => output.push(source),
+    });
+    expect(code).toBe(1);
+    expect(commitScale).not.toHaveBeenCalled();
+    expect(JSON.parse(output.at(-1)!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      failureCode: "successor_bridge_expired_or_drifted",
+      attempts: 0,
+      checks: {
+        providerHistoryPrewriteExact: true,
+        providerPrewriteReasserted: true,
+        successorBridgePrewriteReasserted: false,
+      },
+    });
   });
 
   it("accepts a lost scale acknowledgement only after exact configured-zero reconciliation", async () => {
@@ -1183,13 +1745,10 @@ describe("permanent-staging cold recovery", () => {
           : coldPrepareVerification(),
       reassertRepositoryState: () => true,
       probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
-      validateCli: () => true,
-      runScaleCommand: vi.fn().mockResolvedValue({
-        code: 1,
-        timedOut: false,
-        stdoutSha256: sha("stdout"),
-        stderrSha256: sha("stderr"),
-      }),
+      commitScale: vi.fn().mockResolvedValue(
+        directMutationAttempt("transport_uncertain"),
+      ),
+      readPatchHistory: successfulColdPatchHistory(),
       writeDurable: (_directory, leaf, source) => {
         evidence.set(leaf, source);
         return sha(source);
@@ -1212,16 +1771,189 @@ describe("permanent-staging cold recovery", () => {
       receiptSource,
       JSON.parse(receiptSource),
       CANDIDATE,
+      CURRENT_RUN,
     )).toMatchObject({ outcome: "reconciled_configured_zero", replicasAfter: 0 });
     const forgedAcknowledgedReconciliation = JSON.parse(receiptSource) as {
-      commandEvidence: { exitCode: number | null };
+      directMutationEvidence: { transportOutcome: string };
     };
-    forgedAcknowledgedReconciliation.commandEvidence.exitCode = 0;
+    forgedAcknowledgedReconciliation.directMutationEvidence.transportOutcome =
+      "acknowledged";
     expect(() => stagingWorkerBootstrapPrerequisiteInternals
       .validateColdQuiesceReceipt(
         canonical(forgedAcknowledgedReconciliation),
         forgedAcknowledgedReconciliation,
         CANDIDATE,
+        CURRENT_RUN,
+      )).toThrow("receipt_invalid");
+  });
+
+  it.each([
+    ["missing matching row", (value: ScalePatchHistoryEvidence) => {
+      Object.assign(value, {
+        matchingPatchCount: 0,
+        matchingPatch: null,
+        rowsProjectionSha256: value.nonMatchingRowsProjectionSha256,
+      });
+    }],
+    ["duplicate matching rows", (value: ScalePatchHistoryEvidence) => {
+      (value as unknown as Record<string, unknown>).matchingPatchCount = 2;
+    }],
+    ["non-newest matching row", (value: ScalePatchHistoryEvidence) => {
+      (value.matchingPatch as unknown as Record<string, unknown>).rowIndex = 1;
+    }],
+    ["wrong patch", (value: ScalePatchHistoryEvidence) => {
+      (value.matchingPatch as unknown as Record<string, unknown>).patchSha256 =
+        "8".repeat(64);
+    }],
+    ["failed cross-fetch", (value: ScalePatchHistoryEvidence) => {
+      (value.matchingPatch as unknown as Record<string, unknown>).crossFetchExact = false;
+    }],
+    ["unrelated extra provider row", (value: ScalePatchHistoryEvidence) => {
+      (value as unknown as Record<string, unknown>)
+        .nonMatchingRowsProjectionSha256 = "b".repeat(64);
+    }],
+    ["out-of-window matching row", (value: ScalePatchHistoryEvidence) => {
+      (value.matchingPatch as unknown as Record<string, unknown>).createdAt =
+        new Date(NOW - 1).toISOString();
+    }],
+  ])("fails closed on %s in the cold postflight ledger", async (
+    _name,
+    transformPost,
+  ) => {
+    const result = await runColdQuiesceHistoryScenario({
+      outcome: "acknowledged",
+      transformPost,
+    });
+    expect(result.code).toBe(1);
+    expect(result.commitScale).toHaveBeenCalledTimes(1);
+    const receiptSource = result.evidence.get("cold-quiesce-receipt.json");
+    expect(receiptSource).toBeDefined();
+    expect(JSON.parse(receiptSource!)).toMatchObject({
+      outcome: "mutation_uncertain",
+      failureCode: "reconciliation_failed",
+      attempts: 1,
+      configuredOneToZeroReceiptClaimed: false,
+      checks: { providerHistoryPostflightExact: false },
+    });
+  });
+
+  it("durably records uncertainty when lost-ack history collection fails", async () => {
+    const result = await runColdQuiesceHistoryScenario({
+      outcome: "transport_uncertain",
+      throwPost: true,
+    });
+    expect(result.code).toBe(1);
+    expect(result.commitScale).toHaveBeenCalledTimes(1);
+    expect(result.readPatchHistory).toHaveBeenCalledTimes(2);
+    const receiptSource = result.evidence.get("cold-quiesce-receipt.json");
+    expect(receiptSource).toBeDefined();
+    expect(JSON.parse(receiptSource!)).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: 1,
+      directMutationEvidence: {
+        transportOutcome: "transport_uncertain",
+        acknowledgementExact: false,
+      },
+      providerHistoryEvidence: { postflight: null },
+      checks: {
+        lostAcknowledgementExact: true,
+        providerHistoryPostflightExact: false,
+        terminalEvidenceExact: true,
+      },
+    });
+  });
+
+  it("does not classify malformed attempt evidence as a lost acknowledgement", async () => {
+    const malformed = {
+      ...directMutationAttempt("transport_uncertain"),
+      variablesSha256: "0".repeat(64),
+    };
+    const result = await runColdQuiesceHistoryScenario({
+      mutationAttempt: malformed,
+    });
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.evidence.get("cold-quiesce-receipt.json")!))
+      .toMatchObject({
+        outcome: "mutation_uncertain",
+        checks: {
+          mutationResponseClassified: false,
+          acknowledgementExact: false,
+          lostAcknowledgementExact: false,
+          providerHistoryPostflightExact: true,
+        },
+      });
+  });
+
+  it("never reconciles a definitive provider rejection into success", async () => {
+    const before = state(null, true);
+    const after = state(0, true);
+    const evidence = new Map<string, string>();
+    const code = await runProtectedPermanentStagingColdQuiesce({
+      argv: [
+        "--candidate-sha", CANDIDATE,
+        "--expected-deployment-sha", OLD_SOURCE,
+        "--prepare-run-id", PREPARE_RUN,
+        "--prepare-verification-file", "/private/prerequisites-verification.json",
+        "--successor-bridge-file", "/private/cold-quiesce-successor-bridge.json",
+        "--reviewed-authority-file", "/private/reviewed-authority.json",
+        "--evidence-dir", "/private/evidence",
+      ],
+      env: environment("quiesce"),
+      cwd: process.cwd(),
+      fetchImpl: vi.fn()
+        .mockResolvedValueOnce(scope())
+        .mockResolvedValueOnce(scope()),
+      now: () => NOW,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue({
+        passed: true,
+        receiptSha256: sha("boundary"),
+      }),
+      readState: vi.fn()
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(after),
+      readPrivateEvidence: (filename) =>
+        filename.endsWith("cold-quiesce-successor-bridge.json")
+          ? coldQuiesceSuccessorBridge()
+          : filename.endsWith("reviewed-authority.json")
+          ? coldQuiesceSuccessorAuthority()
+          : coldPrepareVerification(),
+      reassertRepositoryState: () => true,
+      probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
+      commitScale: vi.fn().mockResolvedValue(
+        directMutationAttempt("provider_rejected"),
+      ),
+      readPatchHistory: successfulColdPatchHistory(),
+      writeDurable: (_directory, leaf, source) => {
+        evidence.set(leaf, source);
+        return sha(source);
+      },
+      writeOutput: vi.fn(),
+    });
+    expect(code).toBe(1);
+    const receiptSource = evidence.get("cold-quiesce-receipt.json")!;
+    expect(JSON.parse(receiptSource)).toMatchObject({
+      outcome: "mutation_uncertain",
+      failureCode: "provider_rejected_without_acknowledgement",
+      configuredOneToZeroReceiptClaimed: false,
+      directMutationEvidence: {
+        transportOutcome: "provider_rejected",
+        acknowledgementExact: false,
+      },
+      checks: {
+        mutationResponseClassified: true,
+        acknowledgementExact: false,
+        lostAcknowledgementExact: false,
+        exactZeroStateAfter: true,
+      },
+    });
+    expect(() => stagingWorkerBootstrapPrerequisiteInternals
+      .validateColdQuiesceReceipt(
+        receiptSource,
+        JSON.parse(receiptSource),
+        CANDIDATE,
+        CURRENT_RUN,
       )).toThrow("receipt_invalid");
   });
 
@@ -1382,7 +2114,7 @@ describe("permanent-staging cold recovery", () => {
     expect(code).toBe(0);
     const receiptSource = evidence.get("cold-quiesce-receipt.json")!;
     expect(JSON.parse(receiptSource)).toMatchObject({
-      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v4",
+      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v6",
       operation: "cold-quiesce",
       outcome: "reconciled_configured_zero_after_runner_loss",
       configuredReplicasBefore: 0,
@@ -1393,14 +2125,25 @@ describe("permanent-staging cold recovery", () => {
         scaleCredentialPresent: false,
         providerWriteAttempted: false,
       },
-      commandEvidence: {
-        exitCode: null,
-        stdoutSha256: null,
-        stderrSha256: null,
+      directMutationEvidence: {
+        operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+        operation: "environmentPatchCommit",
+        transportOutcome: "not_attempted",
+        variablesSha256: null,
+        requestBodySha256: null,
+        responseBodySha256: null,
+        acknowledgementSha256: null,
+        acknowledgementExact: false,
+        commitMessageSha256: null,
+        zeroRegionsEncodedAsJsonNull: false,
+        providerCasOrLockVerified: false,
+        externalMutationFreezeEnforcement: "operational_attestation_only",
       },
+      providerHistoryEvidence: { prewrite: null, postflight: null },
       checks: {
         scaleCredentialAbsent: true,
         noProviderWriteAttempted: true,
+        providerHistoryNotClaimed: true,
         exactZeroStateBefore: true,
         exactZeroStateAfter: true,
       },
@@ -1409,6 +2152,7 @@ describe("permanent-staging cold recovery", () => {
       receiptSource,
       JSON.parse(receiptSource),
       CANDIDATE,
+      CURRENT_RUN,
     )).toMatchObject({
       outcome: "reconciled_configured_zero_after_runner_loss",
       replicasBefore: 0,
@@ -1444,6 +2188,18 @@ describe("permanent-staging cold recovery", () => {
         canonical(forgedWritableReceipt),
         forgedWritableReceipt,
         CANDIDATE,
+        CURRENT_RUN,
+      )).toThrow("receipt_invalid");
+    const forgedHistoryReceipt = JSON.parse(receiptSource) as {
+      providerHistoryEvidence: { prewrite: unknown };
+    };
+    forgedHistoryReceipt.providerHistoryEvidence.prewrite = {};
+    expect(() => stagingWorkerBootstrapPrerequisiteInternals
+      .validateColdQuiesceReceipt(
+        canonical(forgedHistoryReceipt),
+        forgedHistoryReceipt,
+        CANDIDATE,
+        CURRENT_RUN,
       )).toThrow("receipt_invalid");
   });
 

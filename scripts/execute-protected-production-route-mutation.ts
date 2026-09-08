@@ -23,10 +23,8 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
-import {
-  PROTECTED_SCALE_RECEIPT_SCHEMA,
-  protectedScaleReplicaTopologyExact,
-} from "./lib/protected-scale-receipt-topology.js";
+import { parseProtectedProductionScaleReceipt as parseScaleReceiptV4 } from
+  "./lib/protected-production-scale-receipt.js";
 import {
   parseRailwayMultiRegionReplicaTopology,
   type RailwayRegionReplicaCount,
@@ -841,75 +839,20 @@ function parseProductionScaleReceipt(
 ): { sourceSha256: string; deploymentIdSha256: string } | null {
   try {
     const value = JSON.parse(source) as unknown;
-    if (canonical(value) !== source || !exact(value, [
-      "schemaVersion", "executorState", "direction", "outcome", "candidateSha",
-      "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256", "attempts",
-      "retryAllowed", "intentSha256", "terminalEvidenceSha256", "commandStdoutSha256",
-      "commandStderrSha256", "productionActivationPrerequisite",
-      "replicaTopology", "checks",
-    ])
-      || value.schemaVersion !== PROTECTED_SCALE_RECEIPT_SCHEMA
-      || value.executorState !== PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
-      || value.direction !== "converge-production-two"
-      || (value.outcome !== "scaled" && value.outcome !== "already_converged")
-      || value.candidateSha !== candidateSha
-      || value.desiredReplicas !== 2
-      || !sha256Exact(value.deploymentIdSha256)
-      || value.retryAllowed !== false
-      || (value.attempts !== 0 && value.attempts !== 1)
-      || !timestampWithinStage(value.startedAt, value.completedAt, stage)
-      || timestampMilliseconds(value.startedAt)! < timestampMilliseconds(deploymentCompletedAt)!
-      || !sha256Exact(value.terminalEvidenceSha256)
-      || (value.attempts === 0
-        ? value.intentSha256 !== null
-          || value.commandStdoutSha256 !== null
-          || value.commandStderrSha256 !== null
-        : !sha256Exact(value.intentSha256)
-          || !sha256Exact(value.commandStdoutSha256)
-          || !sha256Exact(value.commandStderrSha256))
-      || !exact(value.productionActivationPrerequisite, [
-        "runId", "verificationSha256", "terminalSha256", "prerequisitesSha256",
-        "deploymentBeforeIdSha256", "deploymentAfterIdSha256",
-      ])
-      || typeof value.productionActivationPrerequisite.runId !== "string"
-      || !/^[1-9][0-9]*$/.test(value.productionActivationPrerequisite.runId)
-      || !sha256Exact(value.productionActivationPrerequisite.verificationSha256)
-      || !sha256Exact(value.productionActivationPrerequisite.terminalSha256)
-      || !sha256Exact(value.productionActivationPrerequisite.prerequisitesSha256)
-      || value.productionActivationPrerequisite.deploymentBeforeIdSha256
-        !== deploymentBeforeActivationIdSha256
-      || value.productionActivationPrerequisite.deploymentAfterIdSha256
-        !== value.deploymentIdSha256
-      || value.productionActivationPrerequisite.deploymentAfterIdSha256
-        === value.productionActivationPrerequisite.deploymentBeforeIdSha256
-      || !exact(value.checks, [
-        "policyExact", "githubAuthorityExact", "tokenScopesExact", "cliExact",
-        "boundaryPreflightExact", "targetPreflightExact",
-        "productionActivationPrerequisiteExact",
-        "productionActivationDeploymentContinuityExact",
-        "runtimePreflightExact",
-        "durableIntentExact",
-        "repositoryPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
-        "postflightAttempted", "targetPostflightExact", "runtimePostflightExact",
-        "candidateUnchanged",
-        "deploymentUnchanged", "replicaTopologyEvidenceExact",
-        "boundaryPostflightExact", "terminalEvidenceExact",
-        "finalReceiptEvidenceExact",
-      ])
-      || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
-        direction: "converge-production-two",
-        attempts: value.attempts === 0 ? 0 : 1,
-        desiredReplicas: 2,
-        target: "production",
-      })) return null;
-    const required = Object.entries(value.checks)
-      .filter(([name]) => name !== "durableIntentExact")
-      .every(([, check]) => check === true);
-    if (!required || value.checks.durableIntentExact !== (value.attempts === 1)
-      || (value.outcome === "scaled") !== (value.attempts === 1)) return null;
+    const parsed = canonical(value) === source
+      ? parseScaleReceiptV4(value, {
+          candidateSha,
+          deploymentBeforeActivationIdSha256,
+          expectedGithubRunId: String(stage.runId),
+        })
+      : null;
+    if (parsed === null ||
+      !timestampWithinStage(parsed.startedAt, parsed.completedAt, stage) ||
+      timestampMilliseconds(parsed.startedAt)! <
+        timestampMilliseconds(deploymentCompletedAt)!) return null;
     return {
       sourceSha256: sha256(source),
-      deploymentIdSha256: value.deploymentIdSha256 as string,
+      deploymentIdSha256: parsed.deploymentIdSha256,
     };
   } catch {
     return null;

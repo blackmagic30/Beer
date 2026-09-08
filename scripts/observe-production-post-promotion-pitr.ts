@@ -17,10 +17,8 @@ import {
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 import { parseProductionApplicationDeploymentReceipt } from
   "./lib/production-application-deployment-receipt.js";
-import {
-  PROTECTED_SCALE_RECEIPT_SCHEMA,
-  protectedScaleReplicaTopologyExact,
-} from "./lib/protected-scale-receipt-topology.js";
+import { parseProtectedProductionScaleReceipt } from
+  "./lib/protected-production-scale-receipt.js";
 import {
   PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA,
   productionRouteReplicaTopologyExact,
@@ -31,11 +29,12 @@ export const PRODUCTION_POST_PROMOTION_PITR_OBSERVATION_SCHEMA =
 
 const ARGUMENTS = new Set([
   "--candidate-sha", "--production-deployment-receipt",
-  "--production-scale-receipt",
+  "--production-scale-receipt", "--production-scale-run-id",
   "--closed-route-receipt",
   "--logical-backup-manifest", "--output",
 ]);
 const CANDIDATE = /^[a-f0-9]{40}$/;
+const RUN_ID = /^[1-9][0-9]{0,19}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const TOKEN = /^[^\r\n\0]{16,4096}$/;
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
@@ -146,83 +145,21 @@ function finalDeploymentFromScale(
   candidateSha: string,
   deploymentIdSha256: string,
   deploymentCompletedAt: string,
+  productionScaleRunId: string,
 ): string {
-  const checks = value.checks;
-  const prerequisite = value.productionActivationPrerequisite;
-  const attempts = value.attempts;
-  const checkKeys = [
-    "policyExact", "githubAuthorityExact", "tokenScopesExact", "cliExact",
-    "boundaryPreflightExact", "targetPreflightExact",
-    "productionActivationPrerequisiteExact",
-    "productionActivationDeploymentContinuityExact", "runtimePreflightExact",
-    "durableIntentExact", "repositoryPrewriteReasserted",
-    "writeAttemptedAtMostOnce", "acknowledgementExact", "postflightAttempted",
-    "targetPostflightExact", "runtimePostflightExact", "candidateUnchanged",
-    "deploymentUnchanged", "replicaTopologyEvidenceExact",
-    "boundaryPostflightExact", "terminalEvidenceExact",
-    "finalReceiptEvidenceExact",
-  ];
-  if (
-    !exactKeys(value, [
-      "schemaVersion", "executorState", "direction", "outcome", "candidateSha",
-      "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256",
-      "attempts", "retryAllowed", "intentSha256", "terminalEvidenceSha256",
-      "commandStdoutSha256", "commandStderrSha256",
-      "productionActivationPrerequisite", "replicaTopology", "checks",
-    ])
-    || value.schemaVersion !== PROTECTED_SCALE_RECEIPT_SCHEMA
-    || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
-    || value.direction !== "converge-production-two"
-    || !["scaled", "already_converged"].includes(String(value.outcome))
-    || value.candidateSha !== candidateSha
-    || value.desiredReplicas !== 2
-    || typeof value.deploymentIdSha256 !== "string"
-    || !SHA256.test(value.deploymentIdSha256)
-    || value.retryAllowed !== false
-    || (attempts !== 0 && attempts !== 1)
-    || typeof value.terminalEvidenceSha256 !== "string"
-    || !SHA256.test(value.terminalEvidenceSha256)
-    || (attempts === 0
-      ? value.intentSha256 !== null
-        || value.commandStdoutSha256 !== null
-        || value.commandStderrSha256 !== null
-      : typeof value.intentSha256 !== "string" || !SHA256.test(value.intentSha256)
-        || typeof value.commandStdoutSha256 !== "string"
-        || !SHA256.test(value.commandStdoutSha256)
-        || typeof value.commandStderrSha256 !== "string"
-        || !SHA256.test(value.commandStderrSha256))
-    || !exactKeys(prerequisite, [
-      "runId", "verificationSha256", "terminalSha256", "prerequisitesSha256",
-      "deploymentBeforeIdSha256", "deploymentAfterIdSha256",
-    ])
-    || typeof prerequisite.runId !== "string"
-    || !/^[1-9][0-9]*$/.test(prerequisite.runId)
-    || [prerequisite.verificationSha256, prerequisite.terminalSha256,
-      prerequisite.prerequisitesSha256].some(
-      (entry) => typeof entry !== "string" || !SHA256.test(entry),
-    )
-    || prerequisite.deploymentBeforeIdSha256 !== deploymentIdSha256
-    || prerequisite.deploymentAfterIdSha256 !== value.deploymentIdSha256
-    || prerequisite.deploymentAfterIdSha256 === prerequisite.deploymentBeforeIdSha256
-    || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
-      direction: "converge-production-two",
-      attempts: attempts === 0 ? 0 : 1,
-      desiredReplicas: 2,
-      target: "production",
-    })
-    || !exactKeys(checks, checkKeys)
-    || Object.entries(checks).some(([name, entry]) => (
-      name === "durableIntentExact" ? entry !== (attempts === 1) : entry !== true
-    ))
-    || (value.outcome === "scaled") !== (attempts === 1)
-  ) fail("deployment_invalid");
-  const startedAt = timestamp(value.startedAt);
-  const completedAt = timestamp(value.completedAt);
+  const parsed = parseProtectedProductionScaleReceipt(value, {
+    candidateSha,
+    deploymentBeforeActivationIdSha256: deploymentIdSha256,
+    expectedGithubRunId: productionScaleRunId,
+  });
+  if (parsed === null) fail("deployment_invalid");
+  const startedAt = timestamp(parsed.startedAt);
+  const completedAt = timestamp(parsed.completedAt);
   if (
     Date.parse(startedAt) < Date.parse(deploymentCompletedAt)
     || Date.parse(completedAt) < Date.parse(startedAt)
   ) fail("deployment_invalid");
-  return value.deploymentIdSha256;
+  return parsed.deploymentIdSha256;
 }
 
 function verifyClosedRouteForCapture(
@@ -383,8 +320,10 @@ export async function observeProductionPostPromotionPitr(
     fail("arguments_invalid");
   }
   const candidateSha = args.get("--candidate-sha")!;
+  const productionScaleRunId = args.get("--production-scale-run-id")!;
   const uid = dependencies.getUid();
-  if (!CANDIDATE.test(candidateSha) || !Number.isSafeInteger(uid) || Number(uid) < 0) {
+  if (!CANDIDATE.test(candidateSha) || !RUN_ID.test(productionScaleRunId) ||
+    !Number.isSafeInteger(uid) || Number(uid) < 0) {
     fail("arguments_invalid");
   }
   if (
@@ -412,6 +351,7 @@ export async function observeProductionPostPromotionPitr(
       candidateSha,
       deploymentReceipt.deploymentIdSha256,
       deploymentReceipt.completedAt,
+      productionScaleRunId,
     );
     verifyClosedRouteForCapture(
       parseProducerReceipt(closeSource),

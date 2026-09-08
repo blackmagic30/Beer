@@ -1943,20 +1943,31 @@ Before worker preparation, select exactly one policy-pinned staging bootstrap
 path with empty staged patches. A sole healthy one-replica legacy deployment
 uses the normal path. The current exact failed/stopped cold/dead topology uses
 only `Recover dead permanent staging to explicit zero`; its one permitted
-cross-candidate bridge pins predecessor candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
-and reviewed intermediate candidate
-`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`. The intermediate's prepare
-`34180322982` may have written before acknowledgement failed, while its
-`reconcile-prepare` run `34181145015` failed without a provider write. The
-executable successor must be the exact reviewed direct child of the
-intermediate, perform a fresh same-candidate Supabase replacement and normal
-cold prepare, and supply that fresh `prepare_run_id`. Its quiesce authority
-requires exactly seven all-ref cold-recovery runs split `3 + 2 + 2`, and keeps
-the original deadline `2026-09-08T18:57:20Z`. For successor quiesce pass
-`ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`
-and `ambiguous_quiesce_run_id=34153306935`, and leave
-`ambiguous_prepare_run_id` empty. No generic failed deployment or ad-hoc Railway
+cross-candidate bridge pins the complete legacy `838e8c877dca…` -> intermediate
+`919cbbc9ed4a…` -> immediate-prior `1161e7ecd421…` -> new-candidate lineage.
+The intermediate prepare `34180322982` may have written before acknowledgement
+failed, while its read-only reconciliation `34181145015` made no provider
+write. The immediate prior's successful prepare is `34186355641`; its failed
+quiesce is `34186930666`. The new candidate must be the exact reviewed direct
+child of the immediate prior, perform a fresh same-candidate Supabase
+replacement and cold prepare, and supply that fresh `prepare_run_id`. Its
+authority requires exactly nine all-ref cold-recovery runs split `3 + 2 + 2 +
+2`, and keeps the original deadline `2026-09-08T18:57:20Z`. Pass
+`ambiguous_quiesce_candidate_sha=1161e7ecd421556b104bcae059e8764ebf4a545e`
+and `ambiguous_quiesce_run_id=34186930666`, and leave
+`ambiguous_prepare_run_id` empty. The bridge must prove both failed-quiesce
+windows contain no provider patch, the complete redacted patch prefix is
+unchanged, and the dead service remains configured at one replica. Supply the
+exact external Railway writer-freeze attestation only after dashboard, API,
+autodeploy, and every other staging writer are frozen:
+`I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`. The serialized
+bridge uses metadata-only token custody before the mutation token is introduced.
+The one quiesce write is a direct `environmentPatchCommit` with both allowed regions
+encoded as JSON `null`; only an uncertain transport acknowledgement may be
+reconciled from exact zero plus the v6 receipt's exact run-bound provider patch
+ledger: zero matches prewrite, one newest committed cross-fetched match
+postflight, and an unchanged prior-row projection. The final provider state
+read immediately precedes the only write attempt. No generic failed deployment or ad-hoc Railway
 write is eligible. While the selected baseline remains unchanged, execute the
 four candidate-bound Google Maps/Map ID, Google Places, and OpenAI
 provider-variable operations plus the atomic Supabase publishable/secret-key
@@ -1968,17 +1979,18 @@ Then establish the protected permanent-staging prepare/quiesce prerequisite for
 [`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
 with staging `prepare`, followed by
 [`Bootstrap permanent-staging worker fence`](../.github/workflows/bootstrap-permanent-staging-worker-fence.yml)
-with `quiesce` to prove the legacy deployment changes exactly from one replica
-to zero. On the cold/dead path, use only the cold recovery workflow's fresh
-`prepare` and pinned successor `quiesce` described above; it must prove explicit
-configured topology changes exactly from one replica to zero and runtime
-absence. Then dispatch
+with `quiesce` and the exact input
+`external_mutation_freeze_attestation=I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`
+to prove the legacy deployment changes exactly from one replica to zero. On the
+cold/dead path, use only the cold recovery workflow's fresh `prepare` and pinned
+successor `quiesce` described above; it must prove explicit configured topology
+changes exactly from one replica to zero and runtime absence. Then dispatch
 [`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
 with phase `fenced`, supplying the exact prepare and quiesce run IDs. While the
 candidate is fenced at zero, apply and prove the reviewed permanent-staging
 venue-directory migration and status refresh against only the pinned staging
 Supabase project. Restore the candidate exactly from zero to one through the
-bootstrap workflow, require
+bootstrap workflow with the same exact freeze-attestation input, require
 all three runtime routes to report disabled and candidate-bound automatic
 maintenance, then dispatch staging `activate` with the exact
 `venue_directory_run_id`. Finally dispatch the staging deployment workflow with
@@ -1989,9 +2001,10 @@ provider token.
 
 The current receipt contracts are
 `pintpath-automatic-maintenance-worker-fence-terminal/v2`,
-`pintpath-permanent-staging-scale-operation/v3`, and
+`pintpath-permanent-staging-scale-operation/v4`, and
 `pintpath-railway-application-deployment-executor/v6`. A v1 worker terminal,
-v2 scale receipt, or v5 application deployment receipt is not launch evidence.
+v2 or v3 scale receipt, or v5 application deployment receipt is not launch
+evidence; only scale receipt v4 is accepted.
 
 There must be exactly these two successful same-candidate staging deployment
 runs: the fenced zero-replica source upload and active one-replica closeout.
@@ -1999,6 +2012,9 @@ Both must complete before the protected staging scale proof starts; the release
 gate selects the second closeout run and rejects zero, one, more than two, or
 ambiguous same-candidate successes. Execute the complete Phase 12 staging,
 load/soak, rolling-replacement, and rollback plan against that deployed tree.
+The scale-evidence dispatch must supply
+`external_mutation_freeze_attestation=I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`;
+neither its scale-out nor convergence direction permits a workflow rerun.
 All provider/Auth/Storage, data, two-replica, restart, rolling-deploy, iOS, and
 rollback evidence must bind `deploymentSha`; any implementation change requires
 a new candidate and protected merge.
@@ -2034,11 +2050,15 @@ the exact live deployment before enabling candidate-bound workers.
 Only after the activation artifact passes, dispatch the candidate-bound
 [`Converge Pint Path production to two replicas`](../.github/workflows/production-converge-two-replicas.yml)
 workflow with `candidate_sha=deploymentSha`, the exact activation run ID, and
-confirmation `CONVERGE_PRODUCTION_TO_TWO_REPLICAS`. Its verifier authenticates
-the complete role→activate chain, and the scale executor binds that receipt and
-requires the live deployment ID to equal activation postflight before changing
-topology. The workflow supplies that same candidate internally as the expected
-deployed SHA; there is no separate operator-controlled deployment-SHA input.
+confirmation `CONVERGE_PRODUCTION_TO_TWO_REPLICAS`, plus
+`external_mutation_freeze_attestation=I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`
+after every external production Railway writer is frozen. This dispatch is
+original-attempt-only; a workflow rerun is rejected before provider access. Its
+verifier authenticates the complete role→activate chain, and the scale executor
+binds that receipt and requires the live deployment ID to equal activation
+postflight before changing topology. The workflow supplies that same candidate
+internally as the expected deployed SHA; there is no separate operator-controlled
+deployment-SHA input.
 Never scale the older production deployment first: it may still be the
 authoritative SQLite build. These exact workflow files are the only
 application-deployment operator paths; similarly named dashboard or local CLI

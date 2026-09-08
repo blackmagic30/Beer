@@ -16,6 +16,10 @@ on:
         description: Exact successful production automatic-maintenance activation run ID
         required: true
         type: string
+      external_mutation_freeze_attestation:
+        description: I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -48,6 +52,7 @@ jobs:
           DISPATCH_SHA: ${{ github.sha }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           ACTIVATE_RUN_ID: ${{ inputs.activate_run_id }}
         shell: bash
         run: |
@@ -58,6 +63,8 @@ jobs:
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = '1'
           test "$CONFIRMATION" = 'CONVERGE_PRODUCTION_TO_TWO_REPLICAS'
+          test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
+            I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain=v2 --untracked-files=all)"
@@ -121,27 +128,6 @@ jobs:
             --activation-prerequisites-file "$activation_prerequisites" \
             --output "$RUNNER_TEMP/pintpath-production-scale-evidence/production-scale-activation-verification.json"
 
-      - name: Install the exact reviewed Railway CLI archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          cli_root="$RUNNER_TEMP/pintpath-production-scale-cli"
-          cli_archive="$cli_root/railway-5.32.0-x86_64-linux.tar.gz"
-          mkdir -m 700 "$cli_root"
-          curl --fail --silent --show-error --location \
-            'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' \
-            --output "$cli_archive"
-          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$cli_archive" \
-            | sha256sum --check --strict
-          tar --extract --gzip --file "$cli_archive" --directory "$cli_root" \
-            --no-same-owner --no-same-permissions
-          cli_path="$cli_root/railway"
-          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$cli_path" \
-            | sha256sum --check --strict
-          chmod 500 "$cli_path"
-          test "$("$cli_path" --version)" = 'railway 5.32.0'
-          echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path" >> "$GITHUB_ENV"
-
       - name: Verify the complete repository before the provider write
         run: npm run check
 
@@ -163,6 +149,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           PINTPATH_SCALE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID: ${{ inputs.activate_run_id }}
           PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE: ${{ runner.temp }}/pintpath-production-scale-evidence/production-scale-activation-verification.json
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}

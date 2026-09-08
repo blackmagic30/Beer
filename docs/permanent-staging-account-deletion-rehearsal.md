@@ -2,6 +2,12 @@
 
 Status: **STAGING-ONLY, MANUAL DISPATCH, FAIL CLOSED**.
 
+> **Temporarily blocked:** the protected rehearsal scale and quarantine
+> executors still invoke Railway CLI `service scale`. The current project token
+> succeeds on the reviewed direct GraphQL mutation path but is unauthorized for
+> that CLI operation. Do not dispatch this rehearsal until its scale/quarantine
+> transport is migrated in a separate reviewed change.
+
 This runbook operates the protected account-deletion rehearsal and its cleanup
 guardian. It does not authorize a production deployment, a production provider
 mutation, a source upload, an arbitrary variable edit, or reuse of staging

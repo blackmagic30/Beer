@@ -13,6 +13,11 @@ import {
 import { COLD_QUIESCE_SUCCESSOR_BINDING } from
   "./lib/permanent-staging-cold-recovery.js";
 import {
+  railwayEnvironmentPatchCommitVariables,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+  RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+} from "./lib/railway-environment-patch-commit.js";
+import {
   PROTECTED_SCALE_RECEIPT_SCHEMA,
   protectedScaleReplicaTopologyExact,
 } from "./lib/protected-scale-receipt-topology.js";
@@ -20,11 +25,11 @@ import { workerFenceTopologyEvidenceExact } from
   "./lib/worker-fence-topology-evidence.js";
 
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
-  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v5" as const;
+  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v6" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "b329d08110047897743d4acf7d55e2e7c4aac59c4d16b5e632380bde6079416d" as const;
+  "aaaecea008dab4c79dfec6d623d23c3a0ec35636e3a0e013aede329bd4f4c552" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -38,7 +43,7 @@ const WORKER_POLICY_SHA256 =
 const SCALE_POLICY_PATH =
   "ops/railway/permanent-staging-scale-evidence-policy.json";
 const SCALE_POLICY_SHA256 =
-  "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608";
+  "e960db6dde4c367ae26148d5e4c0e013b8f8cb5e4923bdced9a606d965673cb0";
 const FENCED_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-fenced-app-deployment-policy.json";
 const FENCED_DEPLOYMENT_POLICY_SHA256 =
@@ -50,7 +55,7 @@ const ACTIVE_DEPLOYMENT_POLICY_SHA256 =
 const COLD_RECOVERY_POLICY_PATH =
   "ops/railway/permanent-staging-cold-recovery-policy.json";
 const COLD_RECOVERY_POLICY_SHA256 =
-  "83d3c01669719a2e061b120b5337f2b6119782357a1b68f5537352b0e8e15666";
+  "02fa6bf7154341a1fbb09ed68169585fe8ce9432e826108f993e6992d9d8e413";
 const VENUE_DIRECTORY_POLICY_PATH =
   "ops/supabase/permanent-staging-venue-directory-policy.json";
 const VENUE_DIRECTORY_POLICY_SHA256 =
@@ -88,7 +93,7 @@ const RESTORE_RECONCILIATION_RECEIPT_SCHEMA =
 const ACTIVATE_RECONCILIATION_RECEIPT_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v2";
 const COLD_QUIESCE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce/v4";
+  "pintpath-permanent-staging-cold-quiesce/v6";
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -583,6 +588,10 @@ function canonicalCompact(value: unknown): string {
   return `${JSON.stringify(canonicalCompactValue(value))}\n`;
 }
 
+function canonicalProviderJson(value: unknown): string {
+  return `${JSON.stringify(canonicalCompactValue(value), null, 2)}\n`;
+}
+
 function record(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -595,6 +604,18 @@ function exactKeys(value: unknown, keys: readonly string[]): value is JsonRecord
 
 function exactTrueChecks(value: unknown, keys: readonly string[]): boolean {
   return exactKeys(value, keys) && keys.every((key) => value[key] === true);
+}
+
+function canonicalTimestampExact(value: unknown): value is string {
+  if (typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return false;
+  }
+  const milliseconds = Date.parse(value);
+  const canonicalValue = Number.isFinite(milliseconds)
+    ? new Date(milliseconds).toISOString()
+    : "";
+  return canonicalValue === value;
 }
 
 function timestamp(value: unknown, code: FailureCode): {
@@ -1529,12 +1550,13 @@ const COLD_PREPARE_RECONCILIATION_CHECK_KEYS = [
 const COLD_QUIESCE_CHECK_KEYS = [
   "policyExact",
   "githubAuthorityExact",
+  "externalMutationFreezeAttested",
   "successorBridgeExact",
   "successorBridgeTopologyExact",
   "successorBridgePrewriteReasserted",
   "preparePrerequisiteExact",
   "tokenScopesExact",
-  "cliExact",
+  "directMutationContractExact",
   "boundaryPreflightExact",
   "exactDeadStateBefore",
   "maintenanceRowsBeforeExact",
@@ -1543,8 +1565,12 @@ const COLD_QUIESCE_CHECK_KEYS = [
   "repositoryPrewriteReasserted",
   "providerPrewriteReasserted",
   "runtimePrewriteReasserted",
+  "providerHistoryPrewriteExact",
   "writeAttemptedAtMostOnce",
+  "mutationResponseClassified",
   "acknowledgementExact",
+  "lostAcknowledgementExact",
+  "providerHistoryPostflightExact",
   "postflightAttempted",
   "exactZeroStateAfter",
   "configuredTopologyTransitionExact",
@@ -1573,6 +1599,7 @@ const COLD_RECONCILE_QUIESCE_CHECK_KEYS = [
   "providerReasserted",
   "runtimeReasserted",
   "noProviderWriteAttempted",
+  "providerHistoryNotClaimed",
   "postflightAttempted",
   "exactZeroStateAfter",
   "maintenanceRowsAfterExact",
@@ -1884,6 +1911,7 @@ function validateColdQuiesceReceipt(
   source: string,
   value: JsonRecord,
   candidateSha: string,
+  producerRunId: string,
 ): ReceiptSummary {
   if (!exactKeys(value, [
     "schemaVersion",
@@ -1908,7 +1936,8 @@ function validateColdQuiesceReceipt(
     "preparePrerequisite",
     "successorBridge",
     "runnerLossReconciliation",
-    "commandEvidence",
+    "directMutationEvidence",
+    "providerHistoryEvidence",
     "providerEvidence",
     "mutationBoundaryEvidence",
     "checks",
@@ -1922,12 +1951,17 @@ function validateColdQuiesceReceipt(
   const prerequisite = record(value.preparePrerequisite)
     ? value.preparePrerequisite
     : null;
-  const command = record(value.commandEvidence) ? value.commandEvidence : null;
+  const directMutation = record(value.directMutationEvidence)
+    ? value.directMutationEvidence
+    : null;
   const successorBridge = record(value.successorBridge)
     ? value.successorBridge
     : null;
   const runnerLoss = record(value.runnerLossReconciliation)
     ? value.runnerLossReconciliation
+    : null;
+  const providerHistory = record(value.providerHistoryEvidence)
+    ? value.providerHistoryEvidence
     : null;
   const provider = validateColdProviderEvidence(value.providerEvidence, false);
   const boundary = record(value.mutationBoundaryEvidence)
@@ -1947,29 +1981,17 @@ function validateColdQuiesceReceipt(
   );
   const checks = record(value.checks) ? value.checks : null;
   const commonChecks = COLD_QUIESCE_CHECK_KEYS.filter(
-    (key) => key !== "acknowledgementExact",
+    (key) =>
+      key !== "acknowledgementExact" && key !== "lostAcknowledgementExact",
   );
   const checkRelationExact = exactKeys(checks, COLD_QUIESCE_CHECK_KEYS) &&
     commonChecks.every((key) => checks[key] === true) &&
-    checks.acknowledgementExact === configuredZero;
+    checks.acknowledgementExact === configuredZero &&
+    checks.lostAcknowledgementExact === reconciled;
   const runnerLossChecksExact = exactTrueChecks(
     checks,
     COLD_RECONCILE_QUIESCE_CHECK_KEYS,
   );
-  const commandHashesExact =
-    (SHA256_PATTERN.test(String(command?.stdoutSha256)) &&
-      SHA256_PATTERN.test(String(command?.stderrSha256))) ||
-    (command?.stdoutSha256 === null && command?.stderrSha256 === null);
-  const commandRelationExact = configuredZero
-    ? command?.exitCode === 0 && command?.timedOut === false && commandHashesExact &&
-      command?.stdoutSha256 !== null && command?.stderrSha256 !== null
-    : reconciled &&
-      (command?.exitCode === null ||
-        (typeof command?.exitCode === "number" &&
-          Number.isSafeInteger(command?.exitCode))) &&
-      typeof command?.timedOut === "boolean" &&
-      !(command?.exitCode === 0 && command?.timedOut === false) &&
-      commandHashesExact;
   const successorVerifiedAt = timestamp(
     successorBridge?.verifiedAt,
     "receipt_invalid",
@@ -2006,8 +2028,92 @@ function validateColdQuiesceReceipt(
     successorVerifiedAt.milliseconds <
       Date.parse(COLD_QUIESCE_SUCCESSOR_BINDING.deadline) &&
     successorVerifiedAt.milliseconds <= started.milliseconds &&
+    (runnerLossReconciled || successorBridge.currentRunId === producerRunId) &&
     (runnerLossReconciled || successorBridge.liveStateSha256 ===
       provider.stateBeforeSha256);
+  const commitMessage = successorBridgeRelationExact && !runnerLossReconciled
+    ? `PintPath cold quiesce ${candidateSha} run ${producerRunId}`
+    : "";
+  const expectedVariables = railwayEnvironmentPatchCommitVariables({
+    environmentId: ENVIRONMENT_ID,
+    serviceId: SERVICE_ID,
+    regions: [
+      { region: COLD_DEPLOYMENT_REGION, numReplicas: 0 },
+      { region: COLD_CONFIGURED_REGION_BEFORE, numReplicas: 0 },
+    ],
+    commitMessage,
+  });
+  const expectedVariablesSource = expectedVariables === null
+    ? null
+    : JSON.stringify(expectedVariables);
+  const expectedRequestSource = expectedVariables === null
+    ? null
+    : JSON.stringify({
+      operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+      query: RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+      variables: expectedVariables,
+    });
+  const expectedHistory = expectedVariables === null
+    ? null
+    : {
+      querySha256: {
+        history: sha256(SCALE_PATCH_HISTORY_QUERY),
+        patch: sha256(SCALE_PATCH_QUERY),
+      },
+      messageSha256: sha256(commitMessage),
+      patchSha256: sha256(canonicalProviderJson(expectedVariables.patch)),
+      startedAtMs: started.milliseconds,
+      completedAtMs: completed.milliseconds,
+    };
+  const directMutationBaseExact = exactKeys(directMutation, [
+    "operationName",
+    "operation",
+    "transportOutcome",
+    "querySha256",
+    "variablesSha256",
+    "requestBodySha256",
+    "responseBodySha256",
+    "acknowledgementSha256",
+    "acknowledgementExact",
+    "commitMessageSha256",
+    "zeroRegionsEncodedAsJsonNull",
+    "providerCasOrLockVerified",
+    "externalMutationFreezeEnforcement",
+  ]) && directMutation.operationName ===
+      RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME &&
+    directMutation.operation === "environmentPatchCommit" &&
+    directMutation.querySha256 ===
+      sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION) &&
+    directMutation.providerCasOrLockVerified === false &&
+    directMutation.externalMutationFreezeEnforcement ===
+      "operational_attestation_only";
+  const directMutationRelationExact = runnerLossReconciled
+    ? directMutationBaseExact &&
+      directMutation.transportOutcome === "not_attempted" &&
+      directMutation.variablesSha256 === null &&
+      directMutation.requestBodySha256 === null &&
+      directMutation.responseBodySha256 === null &&
+      directMutation.acknowledgementSha256 === null &&
+      directMutation.acknowledgementExact === false &&
+      directMutation.commitMessageSha256 === null &&
+      directMutation.zeroRegionsEncodedAsJsonNull === false
+    : directMutationBaseExact && expectedVariablesSource !== null &&
+      expectedRequestSource !== null &&
+      directMutation.variablesSha256 === sha256(expectedVariablesSource) &&
+      directMutation.requestBodySha256 === sha256(expectedRequestSource) &&
+      directMutation.commitMessageSha256 === sha256(commitMessage) &&
+      directMutation.zeroRegionsEncodedAsJsonNull === true &&
+      (directMutation.responseBodySha256 === null ||
+        SHA256_PATTERN.test(String(directMutation.responseBodySha256))) &&
+      (configuredZero
+        ? directMutation.transportOutcome === "acknowledged" &&
+          SHA256_PATTERN.test(String(directMutation.responseBodySha256)) &&
+          SHA256_PATTERN.test(String(directMutation.acknowledgementSha256)) &&
+          directMutation.acknowledgementExact === true
+        : reconciled &&
+          directMutation.transportOutcome === "transport_uncertain" &&
+          directMutation.acknowledgementSha256 === null &&
+          directMutation.acknowledgementExact === false);
   const runnerLossRelationExact = runnerLossReconciled &&
     value.configuredReplicasBefore === 0 &&
     value.configuredReplicasAfter === 0 &&
@@ -2026,9 +2132,13 @@ function validateColdQuiesceReceipt(
     SHA256_PATTERN.test(String(runnerLoss.reviewedAuthoritySha256)) &&
     runnerLoss.scaleCredentialPresent === false &&
     runnerLoss.providerWriteAttempted === false &&
-    command?.exitCode === null && command?.timedOut === false &&
-    command?.stdoutSha256 === null && command?.stderrSha256 === null &&
+    directMutationRelationExact &&
     runnerLossChecksExact;
+  const providerHistoryRelationExact = runnerLossReconciled
+    ? exactKeys(providerHistory, ["prewrite", "postflight"]) &&
+      providerHistory.prewrite === null && providerHistory.postflight === null
+    : expectedHistory !== null &&
+      scaleProviderHistoryEvidenceExact(providerHistory, expectedHistory);
   if (
     value.schemaVersion !== COLD_QUIESCE_RECEIPT_SCHEMA
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
@@ -2057,11 +2167,12 @@ function validateColdQuiesceReceipt(
     || !RUN_ID_PATTERN.test(String(prerequisite.runId))
     || successorBridge?.currentPrepareRunId !== prerequisite.runId
     || !SHA256_PATTERN.test(String(prerequisite.verificationSha256))
-    || !exactKeys(command, ["exitCode", "timedOut", "stdoutSha256", "stderrSha256"])
+    || !directMutationRelationExact
+    || !providerHistoryRelationExact
     || !successorBridgeRelationExact
     || (runnerLossReconciled
       ? !runnerLossRelationExact
-      : runnerLoss !== null || !commandRelationExact || !checkRelationExact)
+      : runnerLoss !== null || !checkRelationExact)
     || !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"])
     || !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256))
     || !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256))
@@ -2092,8 +2203,9 @@ function validateColdQuiesceReceipt(
 const SCALE_CHECK_KEYS = [
   "policyExact",
   "githubAuthorityExact",
+  "externalMutationFreezeAttested",
   "tokenScopesExact",
-  "cliExact",
+  "directMutationContractExact",
   "boundaryPreflightExact",
   "targetPreflightExact",
   "productionActivationPrerequisiteExact",
@@ -2102,17 +2214,57 @@ const SCALE_CHECK_KEYS = [
   "durableIntentExact",
   "repositoryPrewriteReasserted",
   "writeAttemptedAtMostOnce",
+  "mutationResponseClassified",
   "acknowledgementExact",
+  "lostAcknowledgementExact",
+  "providerHistoryPrewriteExact",
+  "providerHistoryPostflightExact",
   "postflightAttempted",
   "targetPostflightExact",
   "runtimePostflightExact",
   "candidateUnchanged",
   "deploymentUnchanged",
+  "providerConfigurationCollateralUnchanged",
   "replicaTopologyEvidenceExact",
   "boundaryPostflightExact",
   "terminalEvidenceExact",
   "finalReceiptEvidenceExact",
 ] as const;
+const SCALE_PATCH_HISTORY_QUERY =
+  `query PintPathProtectedScalePatchHistory(
+  $environmentId: String!
+  $after: String
+) {
+  environmentPatches(environmentId: $environmentId, first: 100, after: $after) {
+    edges {
+      cursor
+      node {
+        id
+        environmentId
+        status
+        createdAt
+        updatedAt
+        appliedAt
+        message
+        patch(decryptVariables: false)
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}` as const;
+const SCALE_PATCH_QUERY =
+  `query PintPathProtectedScalePatch($id: String!) {
+  environmentPatch(id: $id) {
+    id
+    environmentId
+    status
+    createdAt
+    updatedAt
+    appliedAt
+    message
+    patch(decryptVariables: false)
+  }
+}` as const;
 
 const RESTORE_RECONCILIATION_CHECK_KEYS = [
   "policyExact",
@@ -2141,12 +2293,187 @@ const RESTORE_RECONCILIATION_CHECK_KEYS = [
   "terminalEvidenceExact",
 ] as const;
 
+function scaleDirectMutationEvidenceExact(
+  value: unknown,
+  reconciled: boolean,
+  expected: {
+    readonly variablesSha256: string;
+    readonly requestBodySha256: string;
+    readonly commitMessageSha256: string;
+  },
+): boolean {
+  if (!exactKeys(value, [
+    "operationName",
+    "operation",
+    "transportOutcome",
+    "querySha256",
+    "variablesSha256",
+    "requestBodySha256",
+    "responseBodySha256",
+    "acknowledgementSha256",
+    "acknowledgementExact",
+    "commitMessageSha256",
+    "zeroRegionsEncodedAsJsonNull",
+    "providerCasOrLockVerified",
+    "externalMutationFreezeEnforcement",
+  ])) return false;
+  return value.operationName === "PintPathEnvironmentPatchCommit" &&
+    value.operation === "environmentPatchCommit" &&
+    value.transportOutcome === (reconciled
+      ? "transport_uncertain"
+      : "acknowledged") &&
+    value.querySha256 === sha256(RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION) &&
+    value.variablesSha256 === expected.variablesSha256 &&
+    value.requestBodySha256 === expected.requestBodySha256 &&
+    (reconciled
+      ? (value.responseBodySha256 === null ||
+          SHA256_PATTERN.test(String(value.responseBodySha256))) &&
+        value.acknowledgementSha256 === null &&
+        value.acknowledgementExact === false
+      : SHA256_PATTERN.test(String(value.responseBodySha256)) &&
+        SHA256_PATTERN.test(String(value.acknowledgementSha256)) &&
+        value.acknowledgementExact === true) &&
+    value.commitMessageSha256 === expected.commitMessageSha256 &&
+    value.zeroRegionsEncodedAsJsonNull === true &&
+    value.providerCasOrLockVerified === false &&
+    value.externalMutationFreezeEnforcement ===
+      "operational_attestation_only";
+}
+
+function scalePatchHistoryEvidenceExact(
+  value: unknown,
+  matchingCount: 0 | 1,
+  expected: {
+    readonly querySha256: {
+      readonly history: string;
+      readonly patch: string;
+    };
+    readonly messageSha256: string;
+    readonly patchSha256: string;
+    readonly startedAtMs: number;
+    readonly completedAtMs: number;
+  },
+): value is JsonRecord {
+  if (!exactKeys(value, [
+    "querySha256",
+    "pages",
+    "pageCount",
+    "rowCount",
+    "rowsProjectionSha256",
+    "nonMatchingRowsProjectionSha256",
+    "paginationCompleteExact",
+    "matchingPatchCount",
+    "matchingPatch",
+    "secretMaterialIncluded",
+    "secretDerivedCommitmentsIncluded",
+  ]) || !exactKeys(value.querySha256, ["history", "patch"]) ||
+    value.querySha256.history !== expected.querySha256.history ||
+    value.querySha256.patch !== expected.querySha256.patch ||
+    !Array.isArray(value.pages) ||
+    !Number.isSafeInteger(value.pageCount) || Number(value.pageCount) < 1 ||
+    Number(value.pageCount) > 8 || !Number.isSafeInteger(value.rowCount) ||
+    Number(value.rowCount) < 0 || Number(value.rowCount) > 800 ||
+    value.pageCount !== value.pages.length ||
+    !SHA256_PATTERN.test(String(value.rowsProjectionSha256)) ||
+    !SHA256_PATTERN.test(String(value.nonMatchingRowsProjectionSha256)) ||
+    value.paginationCompleteExact !== true ||
+    value.matchingPatchCount !== matchingCount ||
+    value.secretMaterialIncluded !== false ||
+    value.secretDerivedCommitmentsIncluded !== false ||
+    !scalePatchHistoryPagesExact(value.pages, Number(value.rowCount))) return false;
+  if (matchingCount === 0) return value.matchingPatch === null &&
+    value.rowsProjectionSha256 === value.nonMatchingRowsProjectionSha256;
+  return exactKeys(value.matchingPatch, [
+    "rowIndex",
+    "idSha256",
+    "status",
+    "createdAt",
+    "updatedAt",
+    "appliedAt",
+    "messageSha256",
+    "patchSha256",
+    "crossFetchExact",
+  ]) && value.matchingPatch.rowIndex === 0 &&
+    SHA256_PATTERN.test(String(value.matchingPatch.idSha256)) &&
+    value.matchingPatch.status === "COMMITTED" &&
+    canonicalTimestampExact(value.matchingPatch.createdAt) &&
+    canonicalTimestampExact(value.matchingPatch.updatedAt) &&
+    canonicalTimestampExact(value.matchingPatch.appliedAt) &&
+    Date.parse(String(value.matchingPatch.createdAt)) <=
+      Date.parse(String(value.matchingPatch.updatedAt)) &&
+    Date.parse(String(value.matchingPatch.appliedAt)) <=
+      Date.parse(String(value.matchingPatch.updatedAt)) &&
+    Date.parse(String(value.matchingPatch.createdAt)) >= expected.startedAtMs &&
+    Date.parse(String(value.matchingPatch.appliedAt)) >= expected.startedAtMs &&
+    Date.parse(String(value.matchingPatch.createdAt)) <= expected.completedAtMs &&
+    Date.parse(String(value.matchingPatch.appliedAt)) <= expected.completedAtMs &&
+    Date.parse(String(value.matchingPatch.updatedAt)) <= expected.completedAtMs &&
+    value.matchingPatch.messageSha256 === expected.messageSha256 &&
+    value.matchingPatch.patchSha256 === expected.patchSha256 &&
+    value.matchingPatch.crossFetchExact === true;
+}
+
+function scalePatchHistoryPagesExact(
+  pages: readonly unknown[],
+  rowCount: number,
+): boolean {
+  let expectedAfter: string | null = null;
+  let total = 0;
+  const endCursors = new Set<string>();
+  for (const [index, page] of pages.entries()) {
+    if (!exactKeys(page, [
+      "requestAfter",
+      "count",
+      "endCursor",
+      "hasNextPage",
+    ]) || page.requestAfter !== expectedAfter ||
+      !Number.isSafeInteger(page.count) || Number(page.count) < 0 ||
+      Number(page.count) > 100 || typeof page.hasNextPage !== "boolean" ||
+      !(page.endCursor === null || typeof page.endCursor === "string") ||
+      (typeof page.endCursor === "string" &&
+        (page.endCursor.length < 1 || page.endCursor.length > 4096 ||
+          /[\r\n\0]/.test(page.endCursor) ||
+          endCursors.has(page.endCursor))) ||
+      (Number(page.count) === 0
+        ? page.endCursor !== null
+        : page.endCursor === null) ||
+      (page.hasNextPage && Number(page.count) !== 100) ||
+      (page.hasNextPage !== (index < pages.length - 1))) return false;
+    total += Number(page.count);
+    if (typeof page.endCursor === "string") endCursors.add(page.endCursor);
+    expectedAfter = page.endCursor as string | null;
+  }
+  return pages.length >= 1 && pages.length <= 8 && total === rowCount;
+}
+
+function scaleProviderHistoryEvidenceExact(
+  value: unknown,
+  expected: {
+    readonly querySha256: {
+      readonly history: string;
+      readonly patch: string;
+    };
+    readonly messageSha256: string;
+    readonly patchSha256: string;
+    readonly startedAtMs: number;
+    readonly completedAtMs: number;
+  },
+): boolean {
+  if (!exactKeys(value, ["prewrite", "postflight"]) ||
+    !scalePatchHistoryEvidenceExact(value.prewrite, 0, expected) ||
+    !scalePatchHistoryEvidenceExact(value.postflight, 1, expected)) return false;
+  return Number(value.postflight.rowCount) === Number(value.prewrite.rowCount) + 1 &&
+    value.postflight.nonMatchingRowsProjectionSha256 ===
+      value.prewrite.rowsProjectionSha256;
+}
+
 function validateScaleReceipt(
   source: string,
   value: JsonRecord,
   candidateSha: string,
   kind: "quiesce" | "restore",
   sourceSha: string,
+  runId: string,
 ): ReceiptSummary {
   if (value.schemaVersion === RESTORE_RECONCILIATION_RECEIPT_SCHEMA) {
     if (kind !== "restore" || !exactKeys(value, [
@@ -2300,6 +2627,7 @@ function validateScaleReceipt(
     "direction",
     "outcome",
     "candidateSha",
+    "githubRunId",
     "startedAt",
     "completedAt",
     "desiredReplicas",
@@ -2308,23 +2636,62 @@ function validateScaleReceipt(
     "retryAllowed",
     "intentSha256",
     "terminalEvidenceSha256",
-    "commandStdoutSha256",
-    "commandStderrSha256",
+    "directMutationEvidence",
+    "providerHistoryEvidence",
     "productionActivationPrerequisite",
     "replicaTopology",
+    "secretMaterialIncluded",
+    "secretDerivedCommitmentsIncluded",
     "checks",
   ])) fail("receipt_invalid");
   const started = timestamp(value.startedAt, "receipt_invalid");
   const completed = timestamp(value.completedAt, "receipt_invalid");
   const quiesce = kind === "quiesce";
+  const direction = quiesce
+    ? "quiesce-staging-zero"
+    : "bootstrap-staging-one";
+  const desiredReplicas = quiesce ? 0 : 1;
+  const commitMessage =
+    `PintPath scale ${direction} ${candidateSha} run ${runId}`;
+  const mutationVariables = railwayEnvironmentPatchCommitVariables({
+    environmentId: ENVIRONMENT_ID,
+    serviceId: SERVICE_ID,
+    regions: [
+      { region: "asia-southeast1-eqsg3a", numReplicas: desiredReplicas },
+      { region: "europe-west4-drams3a", numReplicas: 0 },
+    ],
+    commitMessage,
+  });
+  if (mutationVariables === null) fail("receipt_invalid");
+  const mutationRequestBody = JSON.stringify({
+    operationName: RAILWAY_ENVIRONMENT_PATCH_COMMIT_OPERATION_NAME,
+    query: RAILWAY_ENVIRONMENT_PATCH_COMMIT_MUTATION,
+    variables: mutationVariables,
+  });
+  const mutationExpected = {
+    variablesSha256: sha256(JSON.stringify(mutationVariables)),
+    requestBodySha256: sha256(mutationRequestBody),
+    commitMessageSha256: sha256(commitMessage),
+  };
+  const historyExpected = {
+    querySha256: {
+      history: sha256(SCALE_PATCH_HISTORY_QUERY),
+      patch: sha256(SCALE_PATCH_QUERY),
+    },
+    messageSha256: sha256(commitMessage),
+    patchSha256: sha256(canonicalProviderJson(mutationVariables.patch)),
+    startedAtMs: started.milliseconds,
+    completedAtMs: completed.milliseconds,
+  };
   if (
     value.schemaVersion !== SCALE_RECEIPT_SCHEMA
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.direction !== (quiesce
       ? "quiesce-staging-zero"
       : "bootstrap-staging-one")
-    || value.outcome !== "scaled"
+    || (value.outcome !== "scaled" && value.outcome !== "reconciled_scaled")
     || value.candidateSha !== candidateSha
+    || value.githubRunId !== runId
     || completed.milliseconds < started.milliseconds
     || value.desiredReplicas !== (quiesce ? 0 : 1)
     || !SHA256_PATTERN.test(String(value.deploymentIdSha256))
@@ -2332,8 +2699,15 @@ function validateScaleReceipt(
     || value.retryAllowed !== false
     || !SHA256_PATTERN.test(String(value.intentSha256))
     || !SHA256_PATTERN.test(String(value.terminalEvidenceSha256))
-    || !SHA256_PATTERN.test(String(value.commandStdoutSha256))
-    || !SHA256_PATTERN.test(String(value.commandStderrSha256))
+    || !scaleDirectMutationEvidenceExact(
+      value.directMutationEvidence,
+      value.outcome === "reconciled_scaled",
+      mutationExpected,
+    )
+    || !scaleProviderHistoryEvidenceExact(
+      value.providerHistoryEvidence,
+      historyExpected,
+    )
     || value.productionActivationPrerequisite !== null
     || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
       direction: quiesce
@@ -2343,7 +2717,15 @@ function validateScaleReceipt(
       desiredReplicas: quiesce ? 0 : 1,
       target: "staging",
     })
-    || !exactTrueChecks(value.checks, SCALE_CHECK_KEYS)
+    || !exactKeys(value.checks, SCALE_CHECK_KEYS)
+    || Object.entries(value.checks).some(([name, check]) =>
+      name !== "acknowledgementExact" && name !== "lostAcknowledgementExact" &&
+      check !== true)
+    || value.checks.acknowledgementExact !== (value.outcome === "scaled")
+    || value.checks.lostAcknowledgementExact !==
+      (value.outcome === "reconciled_scaled")
+    || value.secretMaterialIncluded !== false
+    || value.secretDerivedCommitmentsIncluded !== false
   ) fail("receipt_invalid");
   return {
     filename: quiesce
@@ -2351,7 +2733,7 @@ function validateScaleReceipt(
       : "bootstrap-staging-one-receipt.json",
     schemaVersion: SCALE_RECEIPT_SCHEMA,
     sha256: sha256(source),
-    outcome: "scaled",
+    outcome: value.outcome as "scaled" | "reconciled_scaled",
     candidateSha,
     sourceSha,
     deploymentIdSha256: String(value.deploymentIdSha256),
@@ -3176,18 +3558,31 @@ function validateReceipt(
   value: JsonRecord,
   candidateSha: string,
   sourceSha: string,
+  runId: string,
 ): ReceiptSummary {
   if (kind === "cold-prepare") {
     return validateColdPrepareReceipt(source, value, candidateSha);
   }
   if (kind === "cold-quiesce") {
-    return validateColdQuiesceReceipt(source, value, candidateSha);
+    return validateColdQuiesceReceipt(
+      source,
+      value,
+      candidateSha,
+      runId,
+    );
   }
   if (kind === "prepare" || kind === "activate") {
     return validateWorkerReceipt(source, value, candidateSha, kind);
   }
   if (kind === "quiesce" || kind === "restore") {
-    return validateScaleReceipt(source, value, candidateSha, kind, sourceSha);
+    return validateScaleReceipt(
+      source,
+      value,
+      candidateSha,
+      kind,
+      sourceSha,
+      runId,
+    );
   }
   if (kind === "venue-directory") fail("receipt_invalid");
   return validateDeploymentReceipt(source, value, candidateSha, kind);
@@ -3452,6 +3847,7 @@ async function verify(
         receiptInput!.value,
         args.candidateSha,
         sourceSha,
+        input.runId,
       );
     if (kind === "cold-quiesce") {
       if (!receiptInput) fail("receipt_invalid");

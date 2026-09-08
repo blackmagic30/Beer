@@ -105,11 +105,11 @@ const LEGACY_AMBIGUOUS_COLD_QUIESCE_JOB_NAME =
 const LEGACY_AMBIGUOUS_COLD_QUIESCE_WRITE_STEP =
   "Initialize the dead baseline from null to explicit zero once";
 const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
-  priorCandidateSha: "838e8c877dcafc0a822a12e5a26afa81c26924a3",
-  priorReviewedHeadSha: "cc2c5311d47f3e895173cb11ef094ef856e0cf07",
-  priorTreeSha: "9da75485e85addfec7096b1c04c52f6780d17b64",
-  priorPullRequestNumber: 90,
-  priorMergedAt: "2026-09-07T18:18:58Z",
+  legacyCandidateSha: "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  legacyReviewedHeadSha: "cc2c5311d47f3e895173cb11ef094ef856e0cf07",
+  legacyTreeSha: "9da75485e85addfec7096b1c04c52f6780d17b64",
+  legacyPullRequestNumber: 90,
+  legacyMergedAt: "2026-09-07T18:18:58Z",
   prepareRunId: 34152745186,
   prepareRunCreatedAt: "2026-09-07T18:43:02Z",
   prepareRunStartedAt: "2026-09-07T18:43:02Z",
@@ -141,6 +141,38 @@ const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
     "2026-09-08T02:45:16Z",
   intermediateFailedReadOnlyPrepareReconcileRunCompletedAt:
     "2026-09-08T02:48:59Z",
+  failedSuccessorCandidateSha:
+    "1161e7ecd421556b104bcae059e8764ebf4a545e",
+  failedSuccessorReviewedHeadSha:
+    "23f6b96154de7a0eb5a0cc90136d3796a1301668",
+  failedSuccessorTreeSha:
+    "8a58c3eb755a68a2c456a5abff34fa7c01a9af3e",
+  failedSuccessorPullRequestNumber: 93,
+  failedSuccessorMergedAt: "2026-09-08T04:04:40Z",
+  failedSuccessorPrepareRunId: 34186355641,
+  failedSuccessorPrepareRunCreatedAt: "2026-09-08T04:15:27Z",
+  failedSuccessorPrepareRunStartedAt: "2026-09-08T04:15:27Z",
+  failedSuccessorPrepareRunCompletedAt: "2026-09-08T04:20:00Z",
+  failedSuccessorQuiesceRunId: 34186930666,
+  failedSuccessorQuiesceRunCreatedAt: "2026-09-08T04:25:21Z",
+  failedSuccessorQuiesceRunStartedAt: "2026-09-08T04:25:21Z",
+  failedSuccessorQuiesceRunCompletedAt: "2026-09-08T04:32:27Z",
+  failedSuccessorArtifactId: 10040956324,
+  failedSuccessorArtifactName:
+    "pintpath-permanent-staging-cold-quiesce-1161e7ecd421556b104bcae059e8764ebf4a545e",
+  failedSuccessorArtifactDigest:
+    "sha256:3db418b86eea098ff4cf8c3a5198ac445d5a51c2f0ac7481dce288027c70166e",
+  failedSuccessorArtifactBytes: 8155,
+  failedSuccessorArtifactCreatedAt: "2026-09-08T04:32:24Z",
+  failedSuccessorArtifactExpiresAt: "2026-10-08T04:32:22Z",
+  priorCandidateSha: "1161e7ecd421556b104bcae059e8764ebf4a545e",
+  priorReviewedHeadSha: "23f6b96154de7a0eb5a0cc90136d3796a1301668",
+  priorTreeSha: "8a58c3eb755a68a2c456a5abff34fa7c01a9af3e",
+  priorPullRequestNumber: 93,
+  priorMergedAt: "2026-09-08T04:04:40Z",
+  priorPrepareRunId: 34186355641,
+  priorQuiesceRunId: 34186930666,
+  priorQuiesceRunCompletedAt: "2026-09-08T04:32:27Z",
   artifactId: 10030213299,
   artifactName:
     "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
@@ -416,7 +448,7 @@ function parseArguments(argv) {
       ? !RUN_ID.test(replacementRunId ?? "") ||
         !RUN_ID.test(deploymentRunId ?? "") ||
         !CUTOVER_MODES.has(cutoverMode)
-      : coldPrepare || coldPrepareReconcile
+      : coldPrepare || coldPrepareReconcile || coldQuiesceSuccessor
       ? !RUN_ID.test(replacementRunId ?? "") ||
         deploymentRunId !== null ||
         cutoverMode !== null
@@ -1910,23 +1942,30 @@ export async function verifyColdQuiesceSuccessorBridge(
   const expected = COLD_QUIESCE_SUCCESSOR_BRIDGE;
   if (
     input.priorCandidateSha !== expected.priorCandidateSha ||
-    input.priorRunId !== String(expected.ambiguousQuiesceRunId)
+    input.priorRunId !== String(expected.priorQuiesceRunId)
   ) fail("cold_quiesce_successor_bridge_invalid");
 
   let priorPull;
   let intermediatePull;
+  let failedSuccessorPull;
   try {
     priorPull = await verifyReviewedPullRequest(
       input.fetchImpl,
       input.token,
       policy,
-      expected.priorCandidateSha,
+      expected.legacyCandidateSha,
     );
     intermediatePull = await verifyReviewedPullRequest(
       input.fetchImpl,
       input.token,
       policy,
       expected.intermediateCandidateSha,
+    );
+    failedSuccessorPull = await verifyReviewedPullRequest(
+      input.fetchImpl,
+      input.token,
+      policy,
+      expected.failedSuccessorCandidateSha,
     );
   } catch {
     fail("cold_quiesce_successor_bridge_invalid");
@@ -1943,11 +1982,17 @@ export async function verifyColdQuiesceSuccessorBridge(
     REPOSITORY,
     `/git/commits/${input.candidateSha}`,
   );
+  const failedSuccessorCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${expected.failedSuccessorCandidateSha}`,
+  );
   if (
-    priorPull.number !== expected.priorPullRequestNumber ||
-    priorPull.reviewedPrHeadSha !== expected.priorReviewedHeadSha ||
-    priorPull.treeSha !== expected.priorTreeSha ||
-    priorPull.mergedAt !== expected.priorMergedAt ||
+    priorPull.number !== expected.legacyPullRequestNumber ||
+    priorPull.reviewedPrHeadSha !== expected.legacyReviewedHeadSha ||
+    priorPull.treeSha !== expected.legacyTreeSha ||
+    priorPull.mergedAt !== expected.legacyMergedAt ||
     intermediatePull.number !== expected.intermediatePullRequestNumber ||
     intermediatePull.reviewedPrHeadSha !==
       expected.intermediateReviewedHeadSha ||
@@ -1957,12 +2002,22 @@ export async function verifyColdQuiesceSuccessorBridge(
     intermediateCommit?.tree?.sha !== expected.intermediateTreeSha ||
     !Array.isArray(intermediateCommit?.parents) ||
     intermediateCommit.parents.length !== 1 ||
-    intermediateCommit.parents[0]?.sha !== expected.priorCandidateSha ||
+    intermediateCommit.parents[0]?.sha !== expected.legacyCandidateSha ||
+    failedSuccessorPull.number !== expected.failedSuccessorPullRequestNumber ||
+    failedSuccessorPull.reviewedPrHeadSha !==
+      expected.failedSuccessorReviewedHeadSha ||
+    failedSuccessorPull.treeSha !== expected.failedSuccessorTreeSha ||
+    failedSuccessorPull.mergedAt !== expected.failedSuccessorMergedAt ||
+    failedSuccessorCommit?.sha !== expected.failedSuccessorCandidateSha ||
+    failedSuccessorCommit?.tree?.sha !== expected.failedSuccessorTreeSha ||
+    !Array.isArray(failedSuccessorCommit?.parents) ||
+    failedSuccessorCommit.parents.length !== 1 ||
+    failedSuccessorCommit.parents[0]?.sha !== expected.intermediateCandidateSha ||
     currentCommit?.sha !== input.candidateSha ||
     currentCommit?.tree?.sha !== currentPull.treeSha ||
     !Array.isArray(currentCommit?.parents) ||
     currentCommit.parents.length !== 1 ||
-    currentCommit.parents[0]?.sha !== expected.intermediateCandidateSha
+    currentCommit.parents[0]?.sha !== expected.failedSuccessorCandidateSha
   ) fail("cold_quiesce_successor_bridge_invalid");
 
   const currentPrepareRunId = Number(input.prepareRunId);
@@ -1980,7 +2035,7 @@ export async function verifyColdQuiesceSuccessorBridge(
   } catch {
     fail("cold_quiesce_successor_bridge_history_invalid");
   }
-  const priorMergedAtMs = Date.parse(expected.priorMergedAt);
+  const priorMergedAtMs = Date.parse(expected.legacyMergedAt);
   const retained = history.map((run) => Object.freeze({
     run,
     createdAt: parseTimestamp(
@@ -1999,9 +2054,11 @@ export async function verifyColdQuiesceSuccessorBridge(
     item.updatedAt >= priorMergedAtMs
   ).map((item) => item.run);
   const priorRuns = relevant.filter((run) =>
-    run?.head_sha === expected.priorCandidateSha);
+    run?.head_sha === expected.legacyCandidateSha);
   const intermediateRuns = relevant.filter((run) =>
     run?.head_sha === expected.intermediateCandidateSha);
+  const failedSuccessorRuns = relevant.filter((run) =>
+    run?.head_sha === expected.failedSuccessorCandidateSha);
   const currentRuns = relevant.filter((run) =>
     run?.head_sha === input.candidateSha);
   const expectedRunIds = [
@@ -2010,6 +2067,8 @@ export async function verifyColdQuiesceSuccessorBridge(
     expected.failedReadOnlyReconcileRunId,
     expected.intermediateAmbiguousPrepareRunId,
     expected.intermediateFailedReadOnlyPrepareReconcileRunId,
+    expected.failedSuccessorPrepareRunId,
+    expected.failedSuccessorQuiesceRunId,
     currentPrepareRunId,
     currentRun.id,
   ];
@@ -2017,12 +2076,14 @@ export async function verifyColdQuiesceSuccessorBridge(
     relevant.length !== expectedRunIds.length ||
     priorRuns.length !== 3 ||
     intermediateRuns.length !== 2 ||
+    failedSuccessorRuns.length !== 2 ||
     currentRuns.length !== 2 ||
     new Set(relevant.map((run) => run?.id)).size !== relevant.length ||
     expectedRunIds.some((id) => !relevant.some((run) => run?.id === id)) ||
     relevant.some((run) =>
-      run?.head_sha !== expected.priorCandidateSha &&
+      run?.head_sha !== expected.legacyCandidateSha &&
       run?.head_sha !== expected.intermediateCandidateSha &&
+      run?.head_sha !== expected.failedSuccessorCandidateSha &&
       run?.head_sha !== input.candidateSha)
   ) fail("cold_quiesce_successor_bridge_history_invalid");
 
@@ -2068,7 +2129,7 @@ export async function verifyColdQuiesceSuccessorBridge(
   };
   const prepare = validatePinnedRun(
     priorRuns,
-    expected.priorCandidateSha,
+    expected.legacyCandidateSha,
     expected.prepareRunId,
     "cold-recovery-prepare",
     {
@@ -2080,7 +2141,7 @@ export async function verifyColdQuiesceSuccessorBridge(
   );
   const quiesce = validatePinnedRun(
     priorRuns,
-    expected.priorCandidateSha,
+    expected.legacyCandidateSha,
     expected.ambiguousQuiesceRunId,
     "cold-recovery-quiesce",
     {
@@ -2092,7 +2153,7 @@ export async function verifyColdQuiesceSuccessorBridge(
   );
   const reconciliation = validatePinnedRun(
     priorRuns,
-    expected.priorCandidateSha,
+    expected.legacyCandidateSha,
     expected.failedReadOnlyReconcileRunId,
     "cold-recovery-reconcile-quiesce",
     {
@@ -2126,6 +2187,30 @@ export async function verifyColdQuiesceSuccessorBridge(
         expected.intermediateFailedReadOnlyPrepareReconcileRunStartedAt,
       completedAt:
         expected.intermediateFailedReadOnlyPrepareReconcileRunCompletedAt,
+      conclusion: "failure",
+    },
+  );
+  const failedSuccessorPrepare = validatePinnedRun(
+    failedSuccessorRuns,
+    expected.failedSuccessorCandidateSha,
+    expected.failedSuccessorPrepareRunId,
+    "cold-recovery-prepare",
+    {
+      createdAt: expected.failedSuccessorPrepareRunCreatedAt,
+      startedAt: expected.failedSuccessorPrepareRunStartedAt,
+      completedAt: expected.failedSuccessorPrepareRunCompletedAt,
+      conclusion: "success",
+    },
+  );
+  const failedSuccessorQuiesce = validatePinnedRun(
+    failedSuccessorRuns,
+    expected.failedSuccessorCandidateSha,
+    expected.failedSuccessorQuiesceRunId,
+    "cold-recovery-quiesce",
+    {
+      createdAt: expected.failedSuccessorQuiesceRunCreatedAt,
+      startedAt: expected.failedSuccessorQuiesceRunStartedAt,
+      completedAt: expected.failedSuccessorQuiesceRunCompletedAt,
       conclusion: "failure",
     },
   );
@@ -2165,6 +2250,10 @@ export async function verifyColdQuiesceSuccessorBridge(
     expected.intermediateMergedAt,
     "cold_quiesce_successor_bridge_history_invalid",
   );
+  const failedSuccessorMergedAtMs = parseTimestamp(
+    expected.failedSuccessorMergedAt,
+    "cold_quiesce_successor_bridge_history_invalid",
+  );
   if (
     await priorRunWriteDisposition(
       input,
@@ -2194,6 +2283,11 @@ export async function verifyColdQuiesceSuccessorBridge(
     ) ||
     !await successfulWriteRunExact(
       input,
+      failedSuccessorPrepare.run,
+      failedSuccessorPrepare.configuration,
+    ) ||
+    !await successfulWriteRunExact(
+      input,
       currentPrepare,
       currentPrepareConfiguration,
     ) ||
@@ -2208,7 +2302,11 @@ export async function verifyColdQuiesceSuccessorBridge(
     intermediatePrepare.run.updatedAt >=
       intermediatePrepareReconciliation.run.startedAt ||
     intermediatePrepareReconciliation.run.updatedAt >=
-      input.currentMergedAtMs ||
+      failedSuccessorMergedAtMs ||
+    failedSuccessorMergedAtMs >= failedSuccessorPrepare.run.createdAt ||
+    failedSuccessorPrepare.run.updatedAt >=
+      failedSuccessorQuiesce.run.startedAt ||
+    failedSuccessorQuiesce.run.updatedAt >= input.currentMergedAtMs ||
     input.currentMergedAtMs >= currentPrepare.createdAt ||
     currentPrepare.status !== "completed" ||
     currentPrepare.conclusion !== "success" ||
@@ -2250,10 +2348,57 @@ export async function verifyColdQuiesceSuccessorBridge(
     artifact?.expires_at !== expected.artifactExpiresAt ||
     artifact?.workflow_run?.id !== expected.ambiguousQuiesceRunId ||
     artifact?.workflow_run?.head_branch !== "main" ||
-    artifact?.workflow_run?.head_sha !== expected.priorCandidateSha ||
+    artifact?.workflow_run?.head_sha !== expected.legacyCandidateSha ||
     artifactCreatedAt !== artifactUpdatedAt ||
     artifactUpdatedAt > quiesce.run.updatedAt ||
     artifactExpiresAt <= currentRun.startedAt
+  ) fail("cold_quiesce_successor_bridge_artifact_invalid");
+
+  const failedSuccessorArtifactListing = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/actions/runs/${expected.failedSuccessorQuiesceRunId}/artifacts?name=${encodeURIComponent(expected.failedSuccessorArtifactName)}&per_page=100&page=1`,
+  );
+  const failedSuccessorArtifact =
+      failedSuccessorArtifactListing?.total_count === 1 &&
+      Array.isArray(failedSuccessorArtifactListing?.artifacts) &&
+      failedSuccessorArtifactListing.artifacts.length === 1
+    ? failedSuccessorArtifactListing.artifacts[0]
+    : null;
+  const failedSuccessorArtifactCreatedAt = parseTimestamp(
+    failedSuccessorArtifact?.created_at,
+    "cold_quiesce_successor_bridge_artifact_invalid",
+  );
+  const failedSuccessorArtifactUpdatedAt = parseTimestamp(
+    failedSuccessorArtifact?.updated_at,
+    "cold_quiesce_successor_bridge_artifact_invalid",
+  );
+  const failedSuccessorArtifactExpiresAt = parseTimestamp(
+    failedSuccessorArtifact?.expires_at,
+    "cold_quiesce_successor_bridge_artifact_invalid",
+  );
+  if (
+    failedSuccessorArtifact?.id !== expected.failedSuccessorArtifactId ||
+    failedSuccessorArtifact?.name !== expected.failedSuccessorArtifactName ||
+    failedSuccessorArtifact?.size_in_bytes !==
+      expected.failedSuccessorArtifactBytes ||
+    failedSuccessorArtifact?.digest !== expected.failedSuccessorArtifactDigest ||
+    failedSuccessorArtifact?.expired !== false ||
+    failedSuccessorArtifact?.created_at !==
+      expected.failedSuccessorArtifactCreatedAt ||
+    failedSuccessorArtifact?.updated_at !==
+      expected.failedSuccessorArtifactCreatedAt ||
+    failedSuccessorArtifact?.expires_at !==
+      expected.failedSuccessorArtifactExpiresAt ||
+    failedSuccessorArtifact?.workflow_run?.id !==
+      expected.failedSuccessorQuiesceRunId ||
+    failedSuccessorArtifact?.workflow_run?.head_branch !== "main" ||
+    failedSuccessorArtifact?.workflow_run?.head_sha !==
+      expected.failedSuccessorCandidateSha ||
+    failedSuccessorArtifactCreatedAt !== failedSuccessorArtifactUpdatedAt ||
+    failedSuccessorArtifactUpdatedAt > failedSuccessorQuiesce.run.updatedAt ||
+    failedSuccessorArtifactExpiresAt <= currentRun.startedAt
   ) fail("cold_quiesce_successor_bridge_artifact_invalid");
 
   return Object.freeze({
@@ -2263,15 +2408,24 @@ export async function verifyColdQuiesceSuccessorBridge(
     priorAmbiguousColdQuiescePullRequestNumber:
       expected.priorPullRequestNumber,
     priorAmbiguousColdQuiesceCandidateMergedAt: expected.priorMergedAt,
-    priorAmbiguousColdQuiesceRunId: String(expected.ambiguousQuiesceRunId),
+    priorAmbiguousColdQuiesceRunId: String(expected.priorQuiesceRunId),
     priorAmbiguousColdQuiesceRunCompletedAt:
-      new Date(quiesce.run.updatedAt).toISOString(),
+      new Date(failedSuccessorQuiesce.run.updatedAt).toISOString(),
     coldQuiesceSuccessorGraceHours: expected.successorGraceHours,
     coldQuiesceSuccessorDeadline: expected.successorDeadline,
     coldQuiesceSuccessorWithinGraceExact: true,
-    priorColdPrepareRunId: String(expected.prepareRunId),
+    priorColdPrepareRunId: String(expected.priorPrepareRunId),
     selectedColdPrepareRunId: String(currentPrepareRunId),
-    priorFailedReadOnlyColdQuiesceReconcileRunId:
+    legacyColdRecoveryCandidateSha: expected.legacyCandidateSha,
+    legacyColdRecoveryReviewedHeadSha: expected.legacyReviewedHeadSha,
+    legacyColdRecoveryTreeSha: expected.legacyTreeSha,
+    legacyColdRecoveryPullRequestNumber: expected.legacyPullRequestNumber,
+    legacyColdRecoveryCandidateMergedAt: expected.legacyMergedAt,
+    legacyColdPrepareRunId: String(expected.prepareRunId),
+    legacyColdQuiesceRunId: String(expected.ambiguousQuiesceRunId),
+    legacyColdQuiesceRunCompletedAt:
+      new Date(quiesce.run.updatedAt).toISOString(),
+    legacyFailedReadOnlyColdQuiesceReconcileRunId:
       String(expected.failedReadOnlyReconcileRunId),
     intermediateColdRecoveryCandidateSha:
       expected.intermediateCandidateSha,
@@ -2286,17 +2440,31 @@ export async function verifyColdQuiesceSuccessorBridge(
       String(expected.intermediateAmbiguousPrepareRunId),
     intermediateFailedReadOnlyColdPrepareReconcileRunId:
       String(expected.intermediateFailedReadOnlyPrepareReconcileRunId),
-    priorAmbiguousColdQuiesceArtifactId: String(expected.artifactId),
-    priorAmbiguousColdQuiesceArtifactName: expected.artifactName,
-    priorAmbiguousColdQuiesceArtifactDigest: expected.artifactDigest,
+    selectedColdPrepareRunStartedAt:
+      new Date(currentPrepare.startedAt).toISOString(),
+    selectedColdPrepareRunCompletedAt:
+      new Date(currentPrepare.updatedAt).toISOString(),
+    priorAmbiguousColdQuiesceArtifactId:
+      String(expected.failedSuccessorArtifactId),
+    priorAmbiguousColdQuiesceArtifactName:
+      expected.failedSuccessorArtifactName,
+    priorAmbiguousColdQuiesceArtifactDigest:
+      expected.failedSuccessorArtifactDigest,
+    legacyAmbiguousColdQuiesceArtifactId: String(expected.artifactId),
+    legacyAmbiguousColdQuiesceArtifactName: expected.artifactName,
+    legacyAmbiguousColdQuiesceArtifactDigest: expected.artifactDigest,
     coldQuiesceSuccessorDirectParentExact: true,
-    coldQuiesceSuccessorPriorToIntermediateParentExact: true,
-    coldQuiesceSuccessorTwoHopLineageExact: true,
-    coldQuiesceSuccessorPriorHistoryExact: true,
+    coldQuiesceSuccessorLegacyToIntermediateParentExact: true,
+    coldQuiesceSuccessorIntermediateToPriorParentExact: true,
+    coldQuiesceSuccessorCompleteFourCandidateLineageExact: true,
+    coldQuiesceSuccessorLegacyHistoryExact: true,
     coldQuiesceSuccessorIntermediateHistoryExact: true,
+    coldQuiesceSuccessorPriorHistoryExact: true,
     coldQuiesceSuccessorAllRefsHistoryExact: true,
     coldQuiesceSuccessorCurrentPrepareExact: true,
-    coldQuiesceSuccessorArtifactMetadataExact: true,
+    coldQuiesceSuccessorLegacyArtifactMetadataExact: true,
+    coldQuiesceSuccessorPriorArtifactMetadataExact: true,
+    coldQuiesceSuccessorPriorProviderProofRequired: true,
     coldQuiesceSuccessorBridgeRequired: true,
   });
 }
@@ -3317,6 +3485,10 @@ async function verifySelectedReplacementHistory(input) {
   if (selected === null) fail("replacement_history_invalid");
   return Object.freeze({
     selectedReplacementRunId: input.replacementRunId,
+    selectedReplacementRunStartedAt:
+      new Date(selected.startedAt).toISOString(),
+    selectedReplacementRunCompletedAt:
+      new Date(selected.updatedAt).toISOString(),
     safeSkippedReplacementRunIds: safePriorRunIds.sort(
       (left, right) => Number(left) - Number(right),
     ),
@@ -3783,7 +3955,8 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
   const replacementHistory =
     input.operation === "supabase-legacy-key-cutover" ||
       input.operation === "cold-recovery-prepare" ||
-      input.operation === "cold-recovery-reconcile-prepare"
+      input.operation === "cold-recovery-reconcile-prepare" ||
+      coldQuiesceSuccessor
     ? await verifySelectedReplacementHistory({
       ...historyInput,
       replacementRunId: input.replacementRunId,

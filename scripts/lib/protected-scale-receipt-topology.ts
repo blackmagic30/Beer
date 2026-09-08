@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 export const PROTECTED_SCALE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-scale-operation/v3" as const;
+  "pintpath-permanent-staging-scale-operation/v4" as const;
 
 const PRIMARY_REGION = "asia-southeast1-eqsg3a";
 const LEGACY_STAGING_REGION = "europe-west4-drams3a";
@@ -43,6 +43,8 @@ interface ParsedTopologySnapshot {
   }[];
   readonly configuredTopologySha256: string;
   readonly legacyAggregateReplicas: number | null;
+  readonly serviceSourceSha256: string;
+  readonly stagedPatchEmpty: true;
 }
 
 function parseSnapshot(
@@ -54,11 +56,15 @@ function parseSnapshot(
     "configuredRegions",
     "configuredTopologySha256",
     "legacyAggregateReplicas",
+    "serviceSourceSha256",
+    "stagedPatchEmpty",
   ]) || !Number.isSafeInteger(value.configuredReplicas)
     || Number(value.configuredReplicas) < 0
     || Number(value.configuredReplicas) > 50
     || !Array.isArray(value.configuredRegions)
     || !SHA256_PATTERN.test(String(value.configuredTopologySha256))
+    || !SHA256_PATTERN.test(String(value.serviceSourceSha256))
+    || value.stagedPatchEmpty !== true
     || !(value.legacyAggregateReplicas === null
       || Number.isSafeInteger(value.legacyAggregateReplicas)
         && Number(value.legacyAggregateReplicas) >= 0
@@ -87,6 +93,8 @@ function parseSnapshot(
     legacyAggregateReplicas: value.legacyAggregateReplicas === null
       ? null
       : Number(value.legacyAggregateReplicas),
+    serviceSourceSha256: String(value.serviceSourceSha256),
+    stagedPatchEmpty: true,
   };
 }
 
@@ -94,30 +102,32 @@ function configuredPlacementExact(
   snapshot: ParsedTopologySnapshot,
   replicas: number,
   placement: "primary" | "any-single",
+  allowedRegions: readonly string[],
 ): boolean {
   if (snapshot.configuredReplicas !== replicas) return false;
-  if (replicas === 0) {
-    return snapshot.configuredRegions.every(({ numReplicas }) => numReplicas === 0);
-  }
   if (placement === "any-single") {
     return snapshot.configuredRegions.filter(({ numReplicas }) => numReplicas > 0)
       .length === 1
       && snapshot.configuredRegions.some(({ numReplicas }) => numReplicas === replicas);
   }
-  return snapshot.configuredRegions.some(({ region, numReplicas }) =>
-    region === PRIMARY_REGION && numReplicas === replicas)
-    && snapshot.configuredRegions.every(({ region, numReplicas }) =>
-      region === PRIMARY_REGION || numReplicas === 0);
+  return replicas === 0
+    ? snapshot.configuredRegions.every(({ numReplicas }) => numReplicas === 0)
+    : snapshot.configuredRegions.some(({ region, numReplicas }) =>
+      region === PRIMARY_REGION && numReplicas === replicas)
+      && snapshot.configuredRegions.every(({ region, numReplicas }) =>
+        region === PRIMARY_REGION || numReplicas === 0)
+      && snapshot.configuredRegions.every(({ region }) =>
+        allowedRegions.includes(region));
 }
 
-function assignmentsFor(
-  snapshot: ParsedTopologySnapshot,
+function patchRegionsFor(
+  allowedRegions: readonly string[],
   desiredReplicas: number,
-): readonly string[] {
-  const regions = new Set(snapshot.configuredRegions.map(({ region }) => region));
-  regions.add(PRIMARY_REGION);
-  return [...regions].sort().map((region) =>
-    `${region}=${region === PRIMARY_REGION ? desiredReplicas : 0}`);
+): readonly { readonly region: string; readonly numReplicas: number }[] {
+  return allowedRegions.map((region) => ({
+    region,
+    numReplicas: region === PRIMARY_REGION ? desiredReplicas : 0,
+  }));
 }
 
 function beforeReplicaCount(
@@ -151,12 +161,16 @@ export function protectedScaleReplicaTopologyExact(
     "before",
     "immediatelyBeforeWrite",
     "after",
-    "commandAssignments",
+    "patchRegions",
+    "environmentConfigCollateralUnchanged",
   ]) || value.authoritySource !== "environment.config(decryptVariables:false)"
     || value.primaryRegion !== PRIMARY_REGION
     || canonical(value.allowedRegions) !== canonical(allowedRegions)
-    || !Array.isArray(value.commandAssignments)
-    || value.commandAssignments.some((entry) => typeof entry !== "string")) {
+    || !Array.isArray(value.patchRegions)
+    || value.patchRegions.some((entry) => !exactKeys(entry, ["region", "numReplicas"])
+      || typeof entry.region !== "string"
+      || !Number.isSafeInteger(entry.numReplicas))
+    || value.environmentConfigCollateralUnchanged !== true) {
     return false;
   }
   const before = parseSnapshot(value.before, allowedRegions);
@@ -173,21 +187,36 @@ export function protectedScaleReplicaTopologyExact(
       expected.desiredReplicas,
     ),
     beforePlacement,
-  ) || !configuredPlacementExact(after, expected.desiredReplicas, "primary")) {
+    allowedRegions,
+  ) || !configuredPlacementExact(
+    after,
+    expected.desiredReplicas,
+    "primary",
+    allowedRegions,
+  )) {
     return false;
   }
   if (expected.attempts === 0) {
     return value.immediatelyBeforeWrite === null
-      && value.commandAssignments.length === 0
-      && before.configuredTopologySha256 === after.configuredTopologySha256;
+      && value.patchRegions.length === 0
+      && before.configuredTopologySha256 === after.configuredTopologySha256
+      && before.serviceSourceSha256 === after.serviceSourceSha256;
   }
   const immediatelyBeforeWrite = parseSnapshot(
     value.immediatelyBeforeWrite,
     allowedRegions,
   );
+  const expectedPatchRegions = patchRegionsFor(
+    allowedRegions,
+    expected.desiredReplicas,
+  );
   return immediatelyBeforeWrite !== null
     && before.configuredTopologySha256
       === immediatelyBeforeWrite.configuredTopologySha256
-    && canonical(value.commandAssignments)
-      === canonical(assignmentsFor(immediatelyBeforeWrite, expected.desiredReplicas));
+    && before.serviceSourceSha256 === immediatelyBeforeWrite.serviceSourceSha256
+    && before.serviceSourceSha256 === after.serviceSourceSha256
+    && value.patchRegions.length === expectedPatchRegions.length
+    && value.patchRegions.every((entry, index) =>
+      entry.region === expectedPatchRegions[index]?.region &&
+      entry.numReplicas === expectedPatchRegions[index]?.numReplicas);
 }

@@ -935,15 +935,45 @@ describe("protected provider mutation workflows", () => {
         minimumSoakMinutes: 60,
       },
     });
-    expect(executor).toContain(
-      'commandAssignments = scaleAssignments(before, desiredReplicas!)',
-    );
-    expect(executor).toContain(
-      '"service", "scale", ...commandAssignments',
+    expect(executor).toContain("commitRailwayReplicaEnvironmentPatch");
+    expect(executor).toContain("scalePatchRegions(target, desiredReplicas!)");
+    expect(executor).toContain("PROTECTED_STAGING_SCALE_PATCH_HISTORY_QUERY");
+    expect(executor).toContain("providerCasOrLockVerified: false");
+    expect(executor).not.toContain('"service", "scale"');
+    expect(workflow).toContain(
+      "PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION",
     );
     expect(executor).toContain("attempts = 1");
     expect(executor).toContain("checks.postflightAttempted = true");
     expect(executor).toContain("retryAllowed: false");
+  });
+
+  it.each([
+    ["bootstrap", ".github/workflows/bootstrap-permanent-staging-worker-fence.yml"],
+    ["staging scale evidence", ".github/workflows/permanent-staging-scale-evidence.yml"],
+    ["production convergence", ".github/workflows/production-converge-two-replicas.yml"],
+  ])("requires freeze-bound direct scale transport in the %s workflow", (
+    _label,
+    filename,
+  ) => {
+    const workflow = read(filename);
+    const executor = read("scripts/execute-protected-permanent-staging-scale.ts");
+
+    expect(workflow).toContain("external_mutation_freeze_attestation:");
+    expect(workflow).toContain(
+      "I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN",
+    );
+    expect(workflow).toContain(
+      "PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}",
+    );
+    expect(workflow).toContain(
+      "scripts/execute-protected-permanent-staging-scale.ts",
+    );
+    expect(workflow).toMatch(/test "\$RUN_ATTEMPT" = (?:'1'|1)/);
+    expect(workflow).not.toContain("railway service scale");
+    expect(workflow).not.toContain("@railway/cli");
+    expect(executor).toContain("commitRailwayReplicaEnvironmentPatch");
+    expect(executor).not.toContain('"service", "scale"');
   });
 
   it("provides a protected one-way production convergence to two replicas", () => {

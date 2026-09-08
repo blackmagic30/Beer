@@ -18,8 +18,11 @@ The protected end-to-end path is
 exact current `main` candidate at one replica, performs one non-retried scale to
 two, runs 5-minute expected peak, 5-minute 2x peak, and the minimum 60-minute
 soak, then unconditionally converges the same deployment to one replica. The
-convergence operation is idempotent and remains available on a workflow rerun;
-the scale-out operation does not. Do not cancel the workflow after scale-out.
+convergence operation is idempotent only inside the original workflow attempt.
+Every scale direction rejects a workflow rerun before provider access, so do
+not cancel the workflow after scale-out. Each original dispatch must supply
+`external_mutation_freeze_attestation=I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN`
+after every external Railway writer has been frozen.
 
 ## What the runner proves
 

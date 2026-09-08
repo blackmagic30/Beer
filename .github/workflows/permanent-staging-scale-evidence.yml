@@ -27,6 +27,10 @@ on:
         description: SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE
         required: true
         type: string
+      external_mutation_freeze_attestation:
+        description: I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -62,6 +66,7 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          EXTERNAL_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
           ACTIVE_DEPLOYMENT_RUN_ID: ${{ inputs.active_deployment_run_id }}
         shell: bash
@@ -73,6 +78,8 @@ jobs:
           test "$RUN_ATTEMPT" = '1'
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$CONFIRMATION" = 'SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE'
+          test "$EXTERNAL_MUTATION_FREEZE_ATTESTATION" = \
+            I_ATTEST_EXTERNAL_RAILWAY_MUTATIONS_ARE_FROZEN_FOR_THIS_RUN
           [[ "$ACTIVATION_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$ACTIVE_DEPLOYMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           test "$ACTIVATION_RUN_ID" != "$ACTIVE_DEPLOYMENT_RUN_ID"
@@ -90,27 +97,6 @@ jobs:
 
       - name: Install immutable dependencies
         run: npm ci
-
-      - name: Install the exact reviewed Railway CLI archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          cli_root="$RUNNER_TEMP/pintpath-railway-cli"
-          cli_archive="$cli_root/railway-5.32.0-x86_64-linux.tar.gz"
-          mkdir -m 700 "$cli_root"
-          curl --fail --silent --show-error --location \
-            'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' \
-            --output "$cli_archive"
-          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$cli_archive" \
-            | sha256sum --check --strict
-          tar --extract --gzip --file "$cli_archive" --directory "$cli_root" \
-            --no-same-owner --no-same-permissions
-          cli_path="$cli_root/railway"
-          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$cli_path" \
-            | sha256sum --check --strict
-          chmod 500 "$cli_path"
-          test "$("$cli_path" --version)" = 'railway 5.32.0'
-          echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path" >> "$GITHUB_ENV"
 
       - name: Create private evidence custody
         env:
@@ -219,9 +205,11 @@ jobs:
       - name: Scale the exact staging deployment from one to two once
         env:
           GITHUB_REF: ${{ github.ref }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           PINTPATH_SCALE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}
@@ -335,9 +323,11 @@ jobs:
         if: always()
         env:
           GITHUB_REF: ${{ github.ref }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           PINTPATH_SCALE_CONFIRMATION: CONVERGE_PERMANENT_STAGING_TO_ONE
+          PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION: ${{ inputs.external_mutation_freeze_attestation }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}

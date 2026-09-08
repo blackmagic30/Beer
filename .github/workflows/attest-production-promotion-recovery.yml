@@ -216,12 +216,29 @@ jobs:
           activation_input="$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-input"
           activation_authority="$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-authority"
           output="$RUNNER_TEMP/pintpath-production-promotion-recovery-output"
+          chain="$RUNNER_TEMP/pintpath-production-promotion-recovery-github/required-chain.json"
+          production_scale_run_id="$(node --input-type=module -e '
+            import fs from "node:fs";
+            const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const matches = Array.isArray(value.productionChain)
+              ? value.productionChain.filter((entry) => entry?.stage === "scale")
+              : [];
+            const selected = matches[0];
+            if (value.schemaVersion !== "pintpath-github-release-candidate-receipt/v5" ||
+              value.candidateSha !== process.argv[2] || matches.length !== 1 ||
+              !Number.isSafeInteger(selected?.runId) || selected.runId <= 0 ||
+              selected?.artifact?.stage !== "scale" ||
+              selected.artifact.runId !== selected.runId) process.exit(1);
+            process.stdout.write(String(selected.runId));
+          ' "$chain" "$CANDIDATE_SHA")"
+          [[ "$production_scale_run_id" =~ ^[1-9][0-9]{0,19}$ ]]
           authority_sha256="$(sha256sum "$input/authority.json" | cut -d ' ' -f 1)"
           npm run --silent production:promotion-recovery:attest -- \
             --authority "$input/authority.json" \
             --authority-sha256 "$authority_sha256" \
             --production-deployment-receipt "$input/production-deployment-receipt.json" \
             --production-scale-receipt "$input/production-scale-receipt.json" \
+            --production-scale-run-id "$production_scale_run_id" \
             --closed-route-receipt "$input/closed-route-receipt.json" \
             --closed-route-terminal "$input/closed-route-terminal.json" \
             --apply-authorization-receipt "$input/apply-authorization-receipt.json" \

@@ -50,7 +50,7 @@ const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const APPLICATION_TARGET_PORT = 8_080;
 const SCALE_POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const SCALE_POLICY_SHA256 =
-  "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608";
+  "e960db6dde4c367ae26148d5e4c0e013b8f8cb5e4923bdced9a606d965673cb0";
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const RUN_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
@@ -605,8 +605,8 @@ function prerequisitesExact(
   args: Arguments,
 ): boolean {
   const expectedKinds = args.bootstrapPath === "cold-dead"
-    ? ["cold-prepare", "cold-quiesce", "fenced-deployment"]
-    : ["prepare", "quiesce", "fenced-deployment"];
+    ? ["cold-prepare", "cold-quiesce", "fenced-deployment", "venue-directory"]
+    : ["prepare", "quiesce", "fenced-deployment", "venue-directory"];
   return value.operation === "reconcile-restore" &&
     value.bootstrapPath === args.bootstrapPath &&
     value.candidateSha === args.candidateSha &&
@@ -614,7 +614,12 @@ function prerequisitesExact(
     value.prerequisites.length === expectedKinds.length &&
     value.prerequisites.every((item, index) => item.kind === expectedKinds[index]) &&
     value.prerequisites[2]?.receipt.sourceSha === args.candidateSha &&
-    SHA256_PATTERN.test(value.prerequisites[2]?.receipt.deploymentIdSha256 ?? "");
+    SHA256_PATTERN.test(value.prerequisites[2]?.receipt.deploymentIdSha256 ?? "") &&
+    value.prerequisites[3]?.receipt.sourceSha === args.candidateSha &&
+    // The venue receipt summary carries its plan hash in this generic slot;
+    // it is not a deployment identity. Deployment continuity remains bound by
+    // the fenced-deployment prerequisite and the live provider reassertion.
+    SHA256_PATTERN.test(value.prerequisites[3]?.receipt.deploymentIdSha256 ?? "");
 }
 
 export async function runPermanentStagingBootstrapRestoreReconciliationProbe(

@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-cold-quiesce-successor-bridge/v2",
+  "operation": "cold-quiesce-successor-bridge",
+  "candidateSha": "1161e7ecd421556b104bcae059e8764ebf4a545e",
+  "currentRunId": "34186930666",
+  "currentPrepareRunId": "34186355641",
+  "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+  "priorCandidateSha": "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  "priorQuiesceRunId": "34153306935",
+  "priorAmbiguousColdQuiesceRunCompletedAt": "2026-09-07T18:57:20.000Z",
+  "coldQuiesceSuccessorGraceHours": 24,
+  "coldQuiesceSuccessorDeadline": "2026-09-08T18:57:20.000Z",
+  "coldQuiesceSuccessorWithinGraceExact": true,
+  "priorReadOnlyReconcileRunId": "34154020478",
+  "intermediateCandidate": {
+    "candidateSha": "919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604",
+    "reviewedHeadSha": "a8448524162c36da3d220c4b8aa21dd42cb11535",
+    "treeSha": "06257eba9476e393fe54b70395af8641f8b6d59a",
+    "pullRequestNumber": 91,
+    "mergedAt": "2026-09-08T02:22:51Z",
+    "ambiguousPrepareRunId": "34180322982",
+    "failedReadOnlyPrepareReconcileRunId": "34181145015"
+  },
+  "priorArtifact": {
+    "id": "10030213299",
+    "name": "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
+    "digest": "sha256:3f830a7376e604a46e0d8cfe3521fc8eb4e1db444ab73bec4063c22442c42fbe",
+    "receiptSha256": "e9fa51ae3a56f405ba091417299cf6b4c3d0ad19d9ed8ff8601a7f51a450e0fd",
+    "intentSha256": "7f37309fd87088b2333067387ba234622e4f24f8a9bcf2029ccb698b6ca12421",
+    "prerequisitesSha256": "b17e6b115d6331ba63b7abdd8a130d39ae2008f652480bbc167de4e9bb84b8bb",
+    "priorReviewedAuthoritySha256": "f45df8c1260857eddbe1e326064ba822169d800392c4bf8fc95f6591df5c0d41"
+  },
+  "priorCliFailure": {
+    "cliVersion": "5.32.0",
+    "cliSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43",
+    "stderrSha256": "5df1ca8f5b08f53475635a850aaab5837e482d4096e9f6b319c4f962f4400930",
+    "normalizedReplicaAssignment": "project=48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "deterministicPrecommitBarrier": "replica-u64-parse-before-commit_scale_patch",
+    "scaleMutationPathReachable": false,
+    "providerWriteCommitted": false
+  },
+  "sourceProof": {
+    "commandProducer": {
+      "repository": "blackmagic30/Beer",
+      "candidateSha": "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+      "path": "scripts/lib/permanent-staging-cold-recovery.ts",
+      "gitBlobSha": "beb1eb9ac760101b3b477fe9960dfbe6f7332d7a",
+      "sha256": "3f761dd08c8a08f872fc9e37d626aac64614092aa0de548deeaf1b890952450c"
+    },
+    "railwayCli": {
+      "repository": "railwayapp/cli",
+      "version": "5.32.0",
+      "tag": "v5.32.0",
+      "tagCommitSha": "5a8c5065b5cb929d7a1cadf7e168c2eed9453999",
+      "main": {
+        "path": "src/main.rs",
+        "gitBlobSha": "e4516626d224e239ef3d74f9f85e33ea84b50d47",
+        "sha256": "09f30a5fa1ee19df3a352796ab9bf6a4ca599145bc08972717c3c4fb8147754d"
+      },
+      "scale": {
+        "path": "src/commands/scale.rs",
+        "gitBlobSha": "8d5530d85f2d5ce8771610417eb47787752b633c",
+        "sha256": "f015a7aa1cd9a90d75d6f9bd4903faed28569b942b61dfc5fe7e2638360b86f9"
+      }
+    }
+  },
+  "liveTopology": {
+    "configuredReplicas": 1,
+    "configuredRegions": [
+      {
+        "region": "europe-west4-drams3a",
+        "numReplicas": 1
+      }
+    ],
+    "legacyAggregateReplicas": null,
+    "deploymentManifestRegions": [
+      {
+        "region": "asia-southeast1-eqsg3a",
+        "numReplicas": 1
+      }
+    ],
+    "liveStateSha256": "3007f93e4a822963d98fb127a121b5355a301e154e0d0981a33c33dad5bd639d"
+  },
+  "reviewedAuthoritySha256": "973faf61ab61cec680ad064a88624c887b516a125b21f6792090b21d5a33fb46",
+  "verifiedAt": "2026-09-08T04:30:38.065Z",
+  "checks": {
+    "reviewedSuccessorAuthorityExact": true,
+    "directSuccessorLineageExact": true,
+    "priorToIntermediateLineageExact": true,
+    "twoHopSuccessorLineageExact": true,
+    "priorColdHistoryExact": true,
+    "intermediateColdHistoryExact": true,
+    "priorArtifactMetadataExact": true,
+    "priorArtifactContentsExact": true,
+    "sourceAnchorsExact": true,
+    "priorCliDeterministicPrecommitBarrierExact": true,
+    "readOnlyTokenScopeExact": true,
+    "configuredLiveTopologyExact": true,
+    "deploymentManifestIdentityExact": true,
+    "noSecondScaleWritePerformed": true
+  },
+  "nextRequiredProof": "FRESH_REVIEWED_SUCCESSOR_CONFIGURED_ONE_TO_ZERO",
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}
