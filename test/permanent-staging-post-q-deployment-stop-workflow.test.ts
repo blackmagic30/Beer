@@ -36,11 +36,11 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
       "pintpath-permanent-staging-cold-quiesce-606d33facb515dd10bc94c360e43c20beb999cc1",
     );
     expect(workflow).toContain(
-      "scripts/verify-permanent-staging-post-q-authority.mjs",
+      "scripts/verify-permanent-staging-post-q-authority-v2.mjs",
     );
     expect(
       workflow.match(
-        /scripts\/verify-permanent-staging-post-q-authority\.mjs/gu,
+        /scripts\/verify-permanent-staging-post-q-authority-v2\.mjs/gu,
       ),
     ).toHaveLength(3);
     expect(workflow).toContain('--q-run-id "$Q_RUN_ID"');
@@ -68,7 +68,7 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
         "PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION:",
       );
       expect(step).toContain(
-        "scripts/verify-permanent-staging-post-q-authority.mjs",
+        "scripts/verify-permanent-staging-post-q-authority-v2.mjs",
       );
     }
     expect(policy).toMatchObject({
@@ -754,7 +754,8 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
         .readdirSync(path.join(root, "ops/railway"))
         .filter(
           (name) =>
-            name.endsWith(".json") && name !== path.basename(policyPath),
+            name.endsWith(".json") && name !== path.basename(policyPath) &&
+            name !== "permanent-staging-post-q-deployment-stop-policy-v2.json",
         )
         .map((name) => `ops/railway/${name}`),
     ];
