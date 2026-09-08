@@ -222,7 +222,7 @@ export const COLD_QUIESCE_SUCCESSOR_BINDING = Object.freeze({
   authorityOperation: "cold-recovery-successor-quiesce",
   bridgeOperation: "cold-quiesce-successor-bridge",
   bridgeSchema:
-    "pintpath-permanent-staging-cold-quiesce-successor-bridge/v1",
+    "pintpath-permanent-staging-cold-quiesce-successor-bridge/v2",
   priorCandidateSha: "838e8c877dcafc0a822a12e5a26afa81c26924a3",
   priorReviewedHeadSha: "cc2c5311d47f3e895173cb11ef094ef856e0cf07",
   priorTreeSha: "9da75485e85addfec7096b1c04c52f6780d17b64",
@@ -231,6 +231,14 @@ export const COLD_QUIESCE_SUCCESSOR_BINDING = Object.freeze({
   priorPrepareRunId: "34152745186",
   priorQuiesceRunId: "34153306935",
   priorReadOnlyReconcileRunId: "34154020478",
+  intermediateCandidateSha: "919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604",
+  intermediateReviewedHeadSha:
+    "a8448524162c36da3d220c4b8aa21dd42cb11535",
+  intermediateTreeSha: "06257eba9476e393fe54b70395af8641f8b6d59a",
+  intermediatePullRequestNumber: 91,
+  intermediateMergedAt: "2026-09-08T02:22:51Z",
+  intermediateAmbiguousPrepareRunId: "34180322982",
+  intermediateFailedReadOnlyPrepareReconcileRunId: "34181145015",
   priorArtifactId: "10030213299",
   priorArtifactName:
     "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
@@ -320,6 +328,10 @@ export function parseColdQuiesceSuccessorBinding(
     const priorArtifact = record(bridge) && record(bridge.priorArtifact)
       ? bridge.priorArtifact
       : null;
+    const intermediateCandidate = record(bridge) &&
+        record(bridge.intermediateCandidate)
+      ? bridge.intermediateCandidate
+      : null;
     const priorCliFailure = record(bridge) && record(bridge.priorCliFailure)
       ? bridge.priorCliFailure
       : null;
@@ -374,6 +386,26 @@ export function parseColdQuiesceSuccessorBinding(
       bridge.priorCandidateSha !== expected.priorCandidateSha ||
       bridge.priorQuiesceRunId !== expected.priorQuiesceRunId ||
       bridge.priorReadOnlyReconcileRunId !== expected.priorReadOnlyReconcileRunId ||
+      !exactKeys(intermediateCandidate, [
+        "candidateSha",
+        "reviewedHeadSha",
+        "treeSha",
+        "pullRequestNumber",
+        "mergedAt",
+        "ambiguousPrepareRunId",
+        "failedReadOnlyPrepareReconcileRunId",
+      ]) ||
+      intermediateCandidate.candidateSha !== expected.intermediateCandidateSha ||
+      intermediateCandidate.reviewedHeadSha !==
+        expected.intermediateReviewedHeadSha ||
+      intermediateCandidate.treeSha !== expected.intermediateTreeSha ||
+      intermediateCandidate.pullRequestNumber !==
+        expected.intermediatePullRequestNumber ||
+      intermediateCandidate.mergedAt !== expected.intermediateMergedAt ||
+      intermediateCandidate.ambiguousPrepareRunId !==
+        expected.intermediateAmbiguousPrepareRunId ||
+      intermediateCandidate.failedReadOnlyPrepareReconcileRunId !==
+        expected.intermediateFailedReadOnlyPrepareReconcileRunId ||
       !exactKeys(priorArtifact, [
         "id",
         "name",
@@ -451,7 +483,10 @@ export function parseColdQuiesceSuccessorBinding(
       !exactKeys(checks, [
         "reviewedSuccessorAuthorityExact",
         "directSuccessorLineageExact",
+        "priorToIntermediateLineageExact",
+        "twoHopSuccessorLineageExact",
         "priorColdHistoryExact",
+        "intermediateColdHistoryExact",
         "priorArtifactMetadataExact",
         "priorArtifactContentsExact",
         "sourceAnchorsExact",
@@ -492,6 +527,20 @@ export function parseColdQuiesceSuccessorBinding(
         expected.priorQuiesceRunId ||
       authority.priorFailedReadOnlyColdQuiesceReconcileRunId !==
         expected.priorReadOnlyReconcileRunId ||
+      authority.intermediateColdRecoveryCandidateSha !==
+        expected.intermediateCandidateSha ||
+      authority.intermediateColdRecoveryReviewedHeadSha !==
+        expected.intermediateReviewedHeadSha ||
+      authority.intermediateColdRecoveryTreeSha !==
+        expected.intermediateTreeSha ||
+      authority.intermediateColdRecoveryPullRequestNumber !==
+        expected.intermediatePullRequestNumber ||
+      authority.intermediateColdRecoveryCandidateMergedAt !==
+        expected.intermediateMergedAt ||
+      authority.intermediateAmbiguousColdPrepareRunId !==
+        expected.intermediateAmbiguousPrepareRunId ||
+      authority.intermediateFailedReadOnlyColdPrepareReconcileRunId !==
+        expected.intermediateFailedReadOnlyPrepareReconcileRunId ||
       authority.priorAmbiguousColdQuiesceArtifactId !==
         expected.priorArtifactId ||
       authority.priorAmbiguousColdQuiesceArtifactName !==
@@ -504,7 +553,10 @@ export function parseColdQuiesceSuccessorBinding(
       authority.coldQuiesceSuccessorDeadline !== expected.deadline ||
       authority.coldQuiesceSuccessorWithinGraceExact !== true ||
       authority.coldQuiesceSuccessorDirectParentExact !== true ||
+      authority.coldQuiesceSuccessorPriorToIntermediateParentExact !== true ||
+      authority.coldQuiesceSuccessorTwoHopLineageExact !== true ||
       authority.coldQuiesceSuccessorPriorHistoryExact !== true ||
+      authority.coldQuiesceSuccessorIntermediateHistoryExact !== true ||
       authority.coldQuiesceSuccessorAllRefsHistoryExact !== true ||
       authority.coldQuiesceSuccessorCurrentPrepareExact !== true ||
       authority.coldQuiesceSuccessorArtifactMetadataExact !== true ||

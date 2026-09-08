@@ -31,6 +31,14 @@ export const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
   successorGraceHours: 24,
   successorDeadline: "2026-09-08T18:57:20.000Z",
   priorReadOnlyReconcileRunId: "34154020478",
+  intermediateCandidateSha: "919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604",
+  intermediateReviewedHeadSha:
+    "a8448524162c36da3d220c4b8aa21dd42cb11535",
+  intermediateTreeSha: "06257eba9476e393fe54b70395af8641f8b6d59a",
+  intermediatePullRequestNumber: 91,
+  intermediateMergedAt: "2026-09-08T02:22:51Z",
+  intermediateAmbiguousPrepareRunId: "34180322982",
+  intermediateFailedReadOnlyPrepareReconcileRunId: "34181145015",
   artifactId: "10030213299",
   artifactName:
     "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
@@ -97,7 +105,7 @@ export const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
 } as const);
 
 export const COLD_QUIESCE_SUCCESSOR_BRIDGE_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce-successor-bridge/v1" as const;
+  "pintpath-permanent-staging-cold-quiesce-successor-bridge/v2" as const;
 
 const SHA = /^[a-f0-9]{40}$/;
 const RUN_ID = /^[1-9][0-9]{0,19}$/;
@@ -352,12 +360,28 @@ function currentAuthorityExact(
     value.priorColdPrepareRunId === expected.priorPrepareRunId &&
     value.priorFailedReadOnlyColdQuiesceReconcileRunId ===
       expected.priorReadOnlyReconcileRunId &&
+    value.intermediateColdRecoveryCandidateSha ===
+      expected.intermediateCandidateSha &&
+    value.intermediateColdRecoveryReviewedHeadSha ===
+      expected.intermediateReviewedHeadSha &&
+    value.intermediateColdRecoveryTreeSha === expected.intermediateTreeSha &&
+    value.intermediateColdRecoveryPullRequestNumber ===
+      expected.intermediatePullRequestNumber &&
+    value.intermediateColdRecoveryCandidateMergedAt ===
+      expected.intermediateMergedAt &&
+    value.intermediateAmbiguousColdPrepareRunId ===
+      expected.intermediateAmbiguousPrepareRunId &&
+    value.intermediateFailedReadOnlyColdPrepareReconcileRunId ===
+      expected.intermediateFailedReadOnlyPrepareReconcileRunId &&
     value.priorAmbiguousColdQuiesceArtifactId === expected.artifactId &&
     value.priorAmbiguousColdQuiesceArtifactName === expected.artifactName &&
     value.priorAmbiguousColdQuiesceArtifactDigest ===
       expected.artifactDigest &&
     value.coldQuiesceSuccessorDirectParentExact === true &&
+    value.coldQuiesceSuccessorPriorToIntermediateParentExact === true &&
+    value.coldQuiesceSuccessorTwoHopLineageExact === true &&
     value.coldQuiesceSuccessorPriorHistoryExact === true &&
+    value.coldQuiesceSuccessorIntermediateHistoryExact === true &&
     value.coldQuiesceSuccessorAllRefsHistoryExact === true &&
     value.coldQuiesceSuccessorCurrentPrepareExact === true &&
     value.coldQuiesceSuccessorArtifactMetadataExact === true &&
@@ -453,6 +477,20 @@ export async function verifyPermanentStagingColdQuiesceSuccessorBridge(
     coldQuiesceSuccessorWithinGraceExact: true,
     priorReadOnlyReconcileRunId:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.priorReadOnlyReconcileRunId,
+    intermediateCandidate: {
+      candidateSha: COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateCandidateSha,
+      reviewedHeadSha:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateReviewedHeadSha,
+      treeSha: COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateTreeSha,
+      pullRequestNumber:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediatePullRequestNumber,
+      mergedAt: COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateMergedAt,
+      ambiguousPrepareRunId:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateAmbiguousPrepareRunId,
+      failedReadOnlyPrepareReconcileRunId:
+        COLD_QUIESCE_SUCCESSOR_BRIDGE
+          .intermediateFailedReadOnlyPrepareReconcileRunId,
+    },
     priorArtifact: {
       id: COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactId,
       name: COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactName,
@@ -473,7 +511,10 @@ export async function verifyPermanentStagingColdQuiesceSuccessorBridge(
     checks: {
       reviewedSuccessorAuthorityExact: true,
       directSuccessorLineageExact: true,
+      priorToIntermediateLineageExact: true,
+      twoHopSuccessorLineageExact: true,
       priorColdHistoryExact: true,
+      intermediateColdHistoryExact: true,
       priorArtifactMetadataExact: true,
       priorArtifactContentsExact: true,
       sourceAnchorsExact: true,

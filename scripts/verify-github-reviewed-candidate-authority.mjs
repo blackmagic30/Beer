@@ -124,6 +124,23 @@ const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
   failedReadOnlyReconcileRunCreatedAt: "2026-09-07T19:02:23Z",
   failedReadOnlyReconcileRunStartedAt: "2026-09-07T19:02:23Z",
   failedReadOnlyReconcileRunCompletedAt: "2026-09-07T19:06:38Z",
+  intermediateCandidateSha: "919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604",
+  intermediateReviewedHeadSha:
+    "a8448524162c36da3d220c4b8aa21dd42cb11535",
+  intermediateTreeSha: "06257eba9476e393fe54b70395af8641f8b6d59a",
+  intermediatePullRequestNumber: 91,
+  intermediateMergedAt: "2026-09-08T02:22:51Z",
+  intermediateAmbiguousPrepareRunId: 34180322982,
+  intermediateAmbiguousPrepareRunCreatedAt: "2026-09-08T02:31:01Z",
+  intermediateAmbiguousPrepareRunStartedAt: "2026-09-08T02:31:01Z",
+  intermediateAmbiguousPrepareRunCompletedAt: "2026-09-08T02:36:30Z",
+  intermediateFailedReadOnlyPrepareReconcileRunId: 34181145015,
+  intermediateFailedReadOnlyPrepareReconcileRunCreatedAt:
+    "2026-09-08T02:45:16Z",
+  intermediateFailedReadOnlyPrepareReconcileRunStartedAt:
+    "2026-09-08T02:45:16Z",
+  intermediateFailedReadOnlyPrepareReconcileRunCompletedAt:
+    "2026-09-08T02:48:59Z",
   artifactId: 10030213299,
   artifactName:
     "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
@@ -1897,6 +1914,7 @@ export async function verifyColdQuiesceSuccessorBridge(
   ) fail("cold_quiesce_successor_bridge_invalid");
 
   let priorPull;
+  let intermediatePull;
   try {
     priorPull = await verifyReviewedPullRequest(
       input.fetchImpl,
@@ -1904,9 +1922,21 @@ export async function verifyColdQuiesceSuccessorBridge(
       policy,
       expected.priorCandidateSha,
     );
+    intermediatePull = await verifyReviewedPullRequest(
+      input.fetchImpl,
+      input.token,
+      policy,
+      expected.intermediateCandidateSha,
+    );
   } catch {
     fail("cold_quiesce_successor_bridge_invalid");
   }
+  const intermediateCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${expected.intermediateCandidateSha}`,
+  );
   const currentCommit = await githubGet(
     input.fetchImpl,
     input.token,
@@ -1918,11 +1948,21 @@ export async function verifyColdQuiesceSuccessorBridge(
     priorPull.reviewedPrHeadSha !== expected.priorReviewedHeadSha ||
     priorPull.treeSha !== expected.priorTreeSha ||
     priorPull.mergedAt !== expected.priorMergedAt ||
+    intermediatePull.number !== expected.intermediatePullRequestNumber ||
+    intermediatePull.reviewedPrHeadSha !==
+      expected.intermediateReviewedHeadSha ||
+    intermediatePull.treeSha !== expected.intermediateTreeSha ||
+    intermediatePull.mergedAt !== expected.intermediateMergedAt ||
+    intermediateCommit?.sha !== expected.intermediateCandidateSha ||
+    intermediateCommit?.tree?.sha !== expected.intermediateTreeSha ||
+    !Array.isArray(intermediateCommit?.parents) ||
+    intermediateCommit.parents.length !== 1 ||
+    intermediateCommit.parents[0]?.sha !== expected.priorCandidateSha ||
     currentCommit?.sha !== input.candidateSha ||
     currentCommit?.tree?.sha !== currentPull.treeSha ||
     !Array.isArray(currentCommit?.parents) ||
     currentCommit.parents.length !== 1 ||
-    currentCommit.parents[0]?.sha !== expected.priorCandidateSha
+    currentCommit.parents[0]?.sha !== expected.intermediateCandidateSha
   ) fail("cold_quiesce_successor_bridge_invalid");
 
   const currentPrepareRunId = Number(input.prepareRunId);
@@ -1960,30 +2000,42 @@ export async function verifyColdQuiesceSuccessorBridge(
   ).map((item) => item.run);
   const priorRuns = relevant.filter((run) =>
     run?.head_sha === expected.priorCandidateSha);
+  const intermediateRuns = relevant.filter((run) =>
+    run?.head_sha === expected.intermediateCandidateSha);
   const currentRuns = relevant.filter((run) =>
     run?.head_sha === input.candidateSha);
   const expectedRunIds = [
     expected.prepareRunId,
     expected.ambiguousQuiesceRunId,
     expected.failedReadOnlyReconcileRunId,
+    expected.intermediateAmbiguousPrepareRunId,
+    expected.intermediateFailedReadOnlyPrepareReconcileRunId,
     currentPrepareRunId,
     currentRun.id,
   ];
   if (
     relevant.length !== expectedRunIds.length ||
     priorRuns.length !== 3 ||
+    intermediateRuns.length !== 2 ||
     currentRuns.length !== 2 ||
     new Set(relevant.map((run) => run?.id)).size !== relevant.length ||
     expectedRunIds.some((id) => !relevant.some((run) => run?.id === id)) ||
     relevant.some((run) =>
       run?.head_sha !== expected.priorCandidateSha &&
+      run?.head_sha !== expected.intermediateCandidateSha &&
       run?.head_sha !== input.candidateSha)
   ) fail("cold_quiesce_successor_bridge_history_invalid");
 
-  const validatePinnedRun = (runId, operation, expectedRun) => {
+  const validatePinnedRun = (
+    runs,
+    candidateSha,
+    runId,
+    operation,
+    expectedRun,
+  ) => {
     const currentConfiguration = operationConfiguration(
       operation,
-      expected.priorCandidateSha,
+      candidateSha,
       null,
       null,
     );
@@ -1996,10 +2048,10 @@ export async function verifyColdQuiesceSuccessorBridge(
       })
       : currentConfiguration;
     const run = validateRunIdentity(
-      priorRuns.find((item) => item?.id === runId),
+      runs.find((item) => item?.id === runId),
       {
         runId,
-        candidateSha: expected.priorCandidateSha,
+        candidateSha,
         workflowPath: COLD_RECOVERY_WORKFLOW_PATH,
         displayTitle: configuration.displayTitle,
         failureCode: "cold_quiesce_successor_bridge_history_invalid",
@@ -2015,6 +2067,8 @@ export async function verifyColdQuiesceSuccessorBridge(
     return Object.freeze({ run, configuration });
   };
   const prepare = validatePinnedRun(
+    priorRuns,
+    expected.priorCandidateSha,
     expected.prepareRunId,
     "cold-recovery-prepare",
     {
@@ -2025,6 +2079,8 @@ export async function verifyColdQuiesceSuccessorBridge(
     },
   );
   const quiesce = validatePinnedRun(
+    priorRuns,
+    expected.priorCandidateSha,
     expected.ambiguousQuiesceRunId,
     "cold-recovery-quiesce",
     {
@@ -2035,12 +2091,41 @@ export async function verifyColdQuiesceSuccessorBridge(
     },
   );
   const reconciliation = validatePinnedRun(
+    priorRuns,
+    expected.priorCandidateSha,
     expected.failedReadOnlyReconcileRunId,
     "cold-recovery-reconcile-quiesce",
     {
       createdAt: expected.failedReadOnlyReconcileRunCreatedAt,
       startedAt: expected.failedReadOnlyReconcileRunStartedAt,
       completedAt: expected.failedReadOnlyReconcileRunCompletedAt,
+      conclusion: "failure",
+    },
+  );
+  const intermediatePrepare = validatePinnedRun(
+    intermediateRuns,
+    expected.intermediateCandidateSha,
+    expected.intermediateAmbiguousPrepareRunId,
+    "cold-recovery-prepare",
+    {
+      createdAt: expected.intermediateAmbiguousPrepareRunCreatedAt,
+      startedAt: expected.intermediateAmbiguousPrepareRunStartedAt,
+      completedAt: expected.intermediateAmbiguousPrepareRunCompletedAt,
+      conclusion: "failure",
+    },
+  );
+  const intermediatePrepareReconciliation = validatePinnedRun(
+    intermediateRuns,
+    expected.intermediateCandidateSha,
+    expected.intermediateFailedReadOnlyPrepareReconcileRunId,
+    "cold-recovery-reconcile-prepare",
+    {
+      createdAt:
+        expected.intermediateFailedReadOnlyPrepareReconcileRunCreatedAt,
+      startedAt:
+        expected.intermediateFailedReadOnlyPrepareReconcileRunStartedAt,
+      completedAt:
+        expected.intermediateFailedReadOnlyPrepareReconcileRunCompletedAt,
       conclusion: "failure",
     },
   );
@@ -2076,6 +2161,10 @@ export async function verifyColdQuiesceSuccessorBridge(
       failureCode: "cold_quiesce_successor_bridge_history_invalid",
     },
   );
+  const intermediateMergedAtMs = parseTimestamp(
+    expected.intermediateMergedAt,
+    "cold_quiesce_successor_bridge_history_invalid",
+  );
   if (
     await priorRunWriteDisposition(
       input,
@@ -2092,6 +2181,17 @@ export async function verifyColdQuiesceSuccessorBridge(
         LEGACY_AMBIGUOUS_COLD_QUIESCE_JOB_NAME,
       ),
     ) ||
+    await priorRunWriteDisposition(
+      input,
+      intermediatePrepare.run,
+      intermediatePrepare.configuration,
+    ) !== "may-have-written" ||
+    !await readOnlyReconciliationRunExact(
+      input,
+      intermediatePrepareReconciliation.run,
+      intermediatePrepareReconciliation.configuration,
+      ["failure"],
+    ) ||
     !await successfulWriteRunExact(
       input,
       currentPrepare,
@@ -2103,7 +2203,12 @@ export async function verifyColdQuiesceSuccessorBridge(
     priorMergedAtMs >= prepare.run.createdAt ||
     prepare.run.updatedAt >= quiesce.run.startedAt ||
     quiesce.run.updatedAt >= reconciliation.run.startedAt ||
-    reconciliation.run.updatedAt >= input.currentMergedAtMs ||
+    reconciliation.run.updatedAt >= intermediateMergedAtMs ||
+    intermediateMergedAtMs >= intermediatePrepare.run.createdAt ||
+    intermediatePrepare.run.updatedAt >=
+      intermediatePrepareReconciliation.run.startedAt ||
+    intermediatePrepareReconciliation.run.updatedAt >=
+      input.currentMergedAtMs ||
     input.currentMergedAtMs >= currentPrepare.createdAt ||
     currentPrepare.status !== "completed" ||
     currentPrepare.conclusion !== "success" ||
@@ -2168,11 +2273,27 @@ export async function verifyColdQuiesceSuccessorBridge(
     selectedColdPrepareRunId: String(currentPrepareRunId),
     priorFailedReadOnlyColdQuiesceReconcileRunId:
       String(expected.failedReadOnlyReconcileRunId),
+    intermediateColdRecoveryCandidateSha:
+      expected.intermediateCandidateSha,
+    intermediateColdRecoveryReviewedHeadSha:
+      expected.intermediateReviewedHeadSha,
+    intermediateColdRecoveryTreeSha: expected.intermediateTreeSha,
+    intermediateColdRecoveryPullRequestNumber:
+      expected.intermediatePullRequestNumber,
+    intermediateColdRecoveryCandidateMergedAt:
+      expected.intermediateMergedAt,
+    intermediateAmbiguousColdPrepareRunId:
+      String(expected.intermediateAmbiguousPrepareRunId),
+    intermediateFailedReadOnlyColdPrepareReconcileRunId:
+      String(expected.intermediateFailedReadOnlyPrepareReconcileRunId),
     priorAmbiguousColdQuiesceArtifactId: String(expected.artifactId),
     priorAmbiguousColdQuiesceArtifactName: expected.artifactName,
     priorAmbiguousColdQuiesceArtifactDigest: expected.artifactDigest,
     coldQuiesceSuccessorDirectParentExact: true,
+    coldQuiesceSuccessorPriorToIntermediateParentExact: true,
+    coldQuiesceSuccessorTwoHopLineageExact: true,
     coldQuiesceSuccessorPriorHistoryExact: true,
+    coldQuiesceSuccessorIntermediateHistoryExact: true,
     coldQuiesceSuccessorAllRefsHistoryExact: true,
     coldQuiesceSuccessorCurrentPrepareExact: true,
     coldQuiesceSuccessorArtifactMetadataExact: true,
