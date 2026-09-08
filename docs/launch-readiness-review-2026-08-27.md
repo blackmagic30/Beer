@@ -11,6 +11,13 @@ gates do not yet support a safe launch.
 This is a secret-free status record. Provider credentials, connection strings,
 private evidence, and unpublished resource authorities remain outside Git.
 
+The current unattended operator policy is zero required reviewers, zero wait
+timers, and protected `main` only for every GitHub Environment. Environment
+entry scopes credentials; separate cryptographic signer/reviewer authorities,
+signed change references, exact target inventories, and automated fail-closed
+checks remain mandatory. This solo policy does not close any NO-GO recorded
+below.
+
 ## Post-review incident seal — 28 August 2026
 
 PR [#66](https://github.com/blackmagic30/Beer/pull/66) merged the reviewed,

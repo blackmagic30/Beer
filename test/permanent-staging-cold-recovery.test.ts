@@ -19,8 +19,12 @@ import {
 } from "../scripts/probe-permanent-staging-cold-quiesce-reconciliation.js";
 import {
   argumentsExact,
+  COLD_QUIESCE_SUCCESSOR_BINDING,
   COLD_RECOVERY_LOCK,
+  COLD_RECOVERY_CLI_SHA256,
   COLD_RECOVERY_POLICY_SHA256,
+  fullStateCanonical,
+  parseColdQuiesceSuccessorBinding,
   parseSupabaseReplacementPrerequisite,
   policyExact,
   requiredRowsExact,
@@ -39,7 +43,7 @@ const OLD_SOURCE = COLD_RECOVERY_LOCK.sourceSha;
 const PREPARE_RUN = "1000";
 const REPLACEMENT_RUN = "500";
 const CURRENT_RUN = "9000";
-const NOW = Date.parse("2026-08-28T01:10:00.000Z");
+const NOW = Date.parse("2026-09-07T19:10:00.000Z");
 
 function sha(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -74,6 +78,11 @@ function state(
     serviceInstanceId: COLD_RECOVERY_LOCK.serviceInstanceId,
     serviceId: COLD_RECOVERY_LOCK.serviceId,
     numReplicas: replicas,
+    configuredReplicas: replicas === null ? 1 : 0,
+    configuredRegions: replicas === null
+      ? [{ region: COLD_RECOVERY_LOCK.configuredRegionBefore, numReplicas: 1 }]
+      : [],
+    deploymentRegions: [{ region: COLD_RECOVERY_LOCK.region, numReplicas: 1 }],
     source: { repo: null, image: null },
     latestDeployment: {
       id: COLD_RECOVERY_LOCK.deploymentId,
@@ -202,7 +211,7 @@ function coldPrepareVerification(
       reviewedHeadSha: "b".repeat(40),
       mergeCommitSha: CANDIDATE,
       treeSha: "c".repeat(40),
-      mergedAt: "2026-08-28T01:00:00.000Z",
+      mergedAt: "2026-09-07T19:00:00.000Z",
       authorId: 1,
       mergedById: 2,
     },
@@ -211,34 +220,34 @@ function coldPrepareVerification(
       githubEnvironment: "permanent-staging-scale-evidence",
       runId: CURRENT_RUN,
       runAttempt: 1,
-      startedAt: "2026-08-28T01:09:00.000Z",
+      startedAt: "2026-09-07T19:09:00.000Z",
     },
     prerequisites: [{
       kind: "cold-prepare",
       workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
       runId: PREPARE_RUN,
       runAttempt: 1,
-      startedAt: "2026-08-28T01:01:00.000Z",
-      completedAt: "2026-08-28T01:02:00.000Z",
+      startedAt: "2026-09-07T19:01:00.000Z",
+      completedAt: "2026-09-07T19:02:00.000Z",
       artifactName: `pintpath-permanent-staging-cold-prepare-${CANDIDATE}`,
       artifactId: "7000",
       artifactDigest: `sha256:${"d".repeat(64)}`,
       artifactSizeBytes: 2048,
       receipt: {
         filename: "cold-prepare-terminal.json",
-        schemaVersion: "pintpath-permanent-staging-cold-prepare/v1",
+        schemaVersion: "pintpath-permanent-staging-cold-prepare/v2",
         sha256: "e".repeat(64),
         outcome: "prepared_cold",
         candidateSha: CANDIDATE,
         sourceSha: OLD_SOURCE,
         deploymentIdSha256: "f".repeat(64),
-        replicasBefore: null,
-        replicasAfter: null,
+        replicasBefore: 1,
+        replicasAfter: 1,
       },
       prerequisiteVerificationSha256: null,
     }],
-    verifiedAt: "2026-08-28T01:09:05.000Z",
-    expiresAt: "2026-08-28T01:24:05.000Z",
+    verifiedAt: "2026-09-07T19:09:05.000Z",
+    expiresAt: "2026-09-07T19:24:05.000Z",
     checks: {
       policiesExact: true,
       currentMainExact: true,
@@ -274,7 +283,7 @@ function reconcileAuthority(priorRunId = "676"): string {
     selectedColdPrepareRunId: PREPARE_RUN,
     exactPriorColdQuiesceCandidateRunBound: true,
     secondColdScaleWritePreventedExact: true,
-    runnerLossRecoveryOriginalRunCompletedAt: "2026-08-28T00:55:00.000Z",
+    runnerLossRecoveryOriginalRunCompletedAt: "2026-09-07T18:55:00.000Z",
     runnerLossRecoveryGraceHours: 24,
     runnerLossRecoveryWithinGraceExact: true,
     reviewedAuthorityExact: true,
@@ -300,7 +309,7 @@ function reconcilePrepareAuthority(priorRunId = "673"): string {
     selectedSupabaseReplacementRunId: REPLACEMENT_RUN,
     exactPriorColdPrepareCandidateRunBound: true,
     secondColdPrepareWritePreventedExact: true,
-    runnerLossRecoveryOriginalRunCompletedAt: "2026-08-28T00:55:00.000Z",
+    runnerLossRecoveryOriginalRunCompletedAt: "2026-09-07T18:55:00.000Z",
     runnerLossRecoveryGraceHours: 24,
     runnerLossRecoveryWithinGraceExact: true,
     reviewedAuthorityExact: true,
@@ -328,6 +337,157 @@ function environment(operation: "prepare" | "quiesce") {
     PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: "staging-scale-token-long-enough",
     PINTPATH_RAILWAY_CLI_PATH: "/private/railway",
   };
+}
+
+function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
+  return `${JSON.stringify({
+    command: "verify-github-reviewed-candidate-authority",
+    ok: true,
+    schemaVersion: 1,
+    kind: "pintpath-github-reviewed-candidate-authority",
+    repository: "blackmagic30/Beer",
+    candidateSha: CANDIDATE,
+    operation: "cold-recovery-successor-quiesce",
+    workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    workflowRunId: currentRunId,
+    workflowRunAttempt: 1,
+    selectedColdPrepareRunId: PREPARE_RUN,
+    priorAmbiguousColdQuiesceCandidateSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorCandidateSha,
+    priorAmbiguousColdQuiesceReviewedHeadSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorReviewedHeadSha,
+    priorAmbiguousColdQuiesceTreeSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorTreeSha,
+    priorAmbiguousColdQuiescePullRequestNumber:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorPullRequestNumber,
+    priorAmbiguousColdQuiesceCandidateMergedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorMergedAt,
+    priorColdPrepareRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorPrepareRunId,
+    priorAmbiguousColdQuiesceRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorQuiesceRunId,
+    priorFailedReadOnlyColdQuiesceReconcileRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorReadOnlyReconcileRunId,
+    priorAmbiguousColdQuiesceArtifactId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactId,
+    priorAmbiguousColdQuiesceArtifactName:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactName,
+    priorAmbiguousColdQuiesceArtifactDigest:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactDigest,
+    priorAmbiguousColdQuiesceRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorCompletedAt,
+    coldQuiesceSuccessorGraceHours: 24,
+    coldQuiesceSuccessorDeadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
+    coldQuiesceSuccessorWithinGraceExact: true,
+    coldQuiesceSuccessorDirectParentExact: true,
+    coldQuiesceSuccessorPriorHistoryExact: true,
+    coldQuiesceSuccessorAllRefsHistoryExact: true,
+    coldQuiesceSuccessorCurrentPrepareExact: true,
+    coldQuiesceSuccessorArtifactMetadataExact: true,
+    coldQuiesceSuccessorBridgeRequired: true,
+    completeRetainedHistoryExact: true,
+    stagingLifecycleSealed: false,
+    reviewedAuthorityExact: true,
+    freshDispatchWriteGuardExact: true,
+  })}\n`;
+}
+
+function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
+  const authoritySource = coldQuiesceSuccessorAuthority(currentRunId);
+  return canonical({
+    schemaVersion: COLD_QUIESCE_SUCCESSOR_BINDING.bridgeSchema,
+    operation: COLD_QUIESCE_SUCCESSOR_BINDING.bridgeOperation,
+    candidateSha: CANDIDATE,
+    currentRunId,
+    currentPrepareRunId: PREPARE_RUN,
+    sourceSha: OLD_SOURCE,
+    priorCandidateSha: COLD_QUIESCE_SUCCESSOR_BINDING.priorCandidateSha,
+    priorQuiesceRunId: COLD_QUIESCE_SUCCESSOR_BINDING.priorQuiesceRunId,
+    priorReadOnlyReconcileRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorReadOnlyReconcileRunId,
+    priorArtifact: {
+      id: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactId,
+      name: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactName,
+      digest: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactDigest,
+      receiptSha256: COLD_QUIESCE_SUCCESSOR_BINDING.priorReceiptSha256,
+      intentSha256: COLD_QUIESCE_SUCCESSOR_BINDING.priorIntentSha256,
+      prerequisitesSha256:
+        COLD_QUIESCE_SUCCESSOR_BINDING.priorPrerequisitesSha256,
+      priorReviewedAuthoritySha256:
+        COLD_QUIESCE_SUCCESSOR_BINDING.priorReviewedAuthoritySha256,
+    },
+    priorCliFailure: {
+      cliVersion: "5.32.0",
+      cliSha256: COLD_RECOVERY_CLI_SHA256,
+      stderrSha256: COLD_QUIESCE_SUCCESSOR_BINDING.priorCliStderrSha256,
+      normalizedReplicaAssignment: `project=${COLD_RECOVERY_LOCK.projectId}`,
+      deterministicPrecommitBarrier:
+        "replica-u64-parse-before-commit_scale_patch",
+      scaleMutationPathReachable: false,
+      providerWriteCommitted: false,
+    },
+    sourceProof: {
+      commandProducer: {
+        repository: "blackmagic30/Beer",
+        candidateSha: COLD_QUIESCE_SUCCESSOR_BINDING.priorCandidateSha,
+        path: "scripts/lib/permanent-staging-cold-recovery.ts",
+        gitBlobSha: COLD_QUIESCE_SUCCESSOR_BINDING.commandProducerGitBlobSha,
+        sha256: COLD_QUIESCE_SUCCESSOR_BINDING.commandProducerSha256,
+      },
+      railwayCli: {
+        repository: "railwayapp/cli",
+        version: "5.32.0",
+        tag: "v5.32.0",
+        tagCommitSha: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliTagCommitSha,
+        main: {
+          path: "src/main.rs",
+          gitBlobSha: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliMainGitBlobSha,
+          sha256: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliMainSha256,
+        },
+        scale: {
+          path: "src/commands/scale.rs",
+          gitBlobSha: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliScaleGitBlobSha,
+          sha256: COLD_QUIESCE_SUCCESSOR_BINDING.railwayCliScaleSha256,
+        },
+      },
+    },
+    liveTopology: {
+      configuredReplicas: 1,
+      configuredRegions: [{
+        region: COLD_RECOVERY_LOCK.configuredRegionBefore,
+        numReplicas: 1,
+      }],
+      legacyAggregateReplicas: null,
+      deploymentManifestRegions: [{
+        region: COLD_RECOVERY_LOCK.region,
+        numReplicas: 1,
+      }],
+      liveStateSha256: sha(fullStateCanonical(state(null, true))),
+    },
+    reviewedAuthoritySha256: sha(authoritySource),
+    priorAmbiguousColdQuiesceRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorCompletedAt,
+    coldQuiesceSuccessorGraceHours: 24,
+    coldQuiesceSuccessorDeadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
+    coldQuiesceSuccessorWithinGraceExact: true,
+    verifiedAt: "2026-09-07T19:09:30.000Z",
+    checks: {
+      reviewedSuccessorAuthorityExact: true,
+      directSuccessorLineageExact: true,
+      priorColdHistoryExact: true,
+      priorArtifactMetadataExact: true,
+      priorArtifactContentsExact: true,
+      sourceAnchorsExact: true,
+      priorCliDeterministicPrecommitBarrierExact: true,
+      readOnlyTokenScopeExact: true,
+      configuredLiveTopologyExact: true,
+      deploymentManifestIdentityExact: true,
+      noSecondScaleWritePerformed: true,
+    },
+    nextRequiredProof: "FRESH_REVIEWED_SUCCESSOR_CONFIGURED_ONE_TO_ZERO",
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  });
 }
 
 function reconcileEnvironment() {
@@ -444,15 +604,62 @@ describe("permanent-staging cold recovery", () => {
     expect(workflow).not.toContain("PINTPATH_SUPABASE_STAGING_NEW_PUBLISHABLE_KEY");
     expect(workflow).toContain('GITHUB_ACTIONS: "true"');
     expect(workflow).not.toContain("github.actions");
+    expect(workflow).toContain("ambiguous_quiesce_candidate_sha:");
+    const quiesceJob = workflow.split("\n  quiesce:")[1]
+      .split("\n  reconcile-quiesce:")[0];
+    expect(quiesceJob).toContain('test -z "$AMBIGUOUS_PREPARE_RUN_ID"');
+    expect(quiesceJob).toContain(
+      "--operation cold-recovery-successor-quiesce",
+    );
+    expect(quiesceJob).toContain(
+      "scripts/verify-permanent-staging-cold-quiesce-successor-bridge.ts",
+    );
+    expect(quiesceJob).toContain(
+      '--prior-quiesce-run-id "$AMBIGUOUS_QUIESCE_RUN_ID"',
+    );
+    expect(quiesceJob).toContain(
+      '--successor-bridge-file "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/cold-quiesce-successor-bridge.json"',
+    );
+    expect(quiesceJob).toContain(
+      '--reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"',
+    );
+    const bridgeStep = quiesceJob.split(
+      "- name: Bind the ambiguous predecessor to configured live topology",
+    )[1].split("\n      - name:")[0];
+    expect(bridgeStep).not.toContain("PINTPATH_RAILWAY_STAGING_SCALE_TOKEN");
+    expect(bridgeStep).not.toContain("PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN");
     const reconcileJob = workflow.split("\n  reconcile-quiesce:")[1];
+    expect(reconcileJob).toContain('test -z "$AMBIGUOUS_PREPARE_RUN_ID"');
     expect(reconcileJob).toContain(
       "Prove the ambiguous cold quiesce reached exact zero without a second write",
     );
     expect(reconcileJob).toContain(
       "name: pintpath-permanent-staging-cold-quiesce-${{ inputs.candidate_sha }}",
     );
+    expect(reconcileJob).toContain(
+      "- name: Seal the exact successor bridge continuity evidence",
+    );
+    expect(reconcileJob).toContain(
+      'cmp --silent -- "${matches[0]}" "$root/sealed/$leaf"',
+    );
+    expect(reconcileJob).toContain('chmod 400 "$root/sealed/$leaf"');
+    expect(reconcileJob).toContain(
+      "cold-quiesce-successor-bridge.json \\",
+    );
+    expect(reconcileJob).toContain(
+      '--successor-bridge-file "$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge/sealed/cold-quiesce-successor-bridge.json"',
+    );
+    expect(reconcileJob).toContain(
+      '--successor-reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge/sealed/reviewed-authority.json"',
+    );
+    expect(reconcileJob).toContain(
+      "- name: Remove successor bridge continuity custody",
+    );
     expect(reconcileJob).not.toContain("PINTPATH_RAILWAY_STAGING_SCALE_TOKEN");
     expect(reconcileJob).not.toContain("PINTPATH_RAILWAY_CLI_PATH");
+    expect(reconcileJob).toContain(
+      'test -z "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"',
+    );
     const reconcilePrepareJob = workflow.split("\n  reconcile-prepare:")[1]
       .split("\n  quiesce:")[0];
     expect(reconcilePrepareJob).toContain(
@@ -487,6 +694,19 @@ describe("permanent-staging cold recovery", () => {
   it("pins the exact dead baseline and exact replacement receipt for prepare", () => {
     expect(policyExact(process.cwd())).toBe(true);
     expect(COLD_RECOVERY_POLICY_SHA256).toMatch(/^[a-f0-9]{64}$/);
+    const policy = JSON.parse(fs.readFileSync(
+      "ops/railway/permanent-staging-cold-recovery-policy.json",
+      "utf8",
+    )) as {
+      operations: {
+        quiesce: { configuredOneToZeroReceiptClaimed: boolean };
+        reconcileQuiesce: { configuredOneToZeroReceiptClaimed: boolean };
+      };
+    };
+    expect(policy.operations.quiesce.configuredOneToZeroReceiptClaimed)
+      .toBe(true);
+    expect(policy.operations.reconcileQuiesce.configuredOneToZeroReceiptClaimed)
+      .toBe(false);
     expect(argumentsExact([
       "--candidate-sha", CANDIDATE,
       "--expected-deployment-sha", OLD_SOURCE,
@@ -587,7 +807,7 @@ describe("permanent-staging cold recovery", () => {
       prepareSource,
       JSON.parse(prepareSource),
       CANDIDATE,
-    )).toMatchObject({ outcome: "prepared_cold", replicasBefore: null });
+    )).toMatchObject({ outcome: "prepared_cold", replicasBefore: 1 });
   });
 
   it("rewrites an existing exact prepared-shape pair for the fresh candidate", async () => {
@@ -702,7 +922,7 @@ describe("permanent-staging cold recovery", () => {
     });
   });
 
-  it("truthfully initializes null to zero without minting a normal 1→0 receipt", async () => {
+  it("truthfully quiesces configured one to zero despite a null legacy aggregate", async () => {
     const before = state(null, true);
     const after = state(0, true);
     const readState = vi.fn()
@@ -719,6 +939,8 @@ describe("permanent-staging cold recovery", () => {
         "--expected-deployment-sha", OLD_SOURCE,
         "--prepare-run-id", PREPARE_RUN,
         "--prepare-verification-file", "/private/prerequisites-verification.json",
+        "--successor-bridge-file", "/private/cold-quiesce-successor-bridge.json",
+        "--reviewed-authority-file", "/private/reviewed-authority.json",
         "--evidence-dir", "/private/evidence",
       ],
       env: environment("quiesce"),
@@ -728,7 +950,12 @@ describe("permanent-staging cold recovery", () => {
       sleep: vi.fn(),
       boundaryCheck: vi.fn().mockResolvedValue({ passed: true, receiptSha256: sha("boundary") }),
       readState,
-      readPrivateEvidence: () => coldPrepareVerification(),
+      readPrivateEvidence: (filename) =>
+        filename.endsWith("cold-quiesce-successor-bridge.json")
+          ? coldQuiesceSuccessorBridge()
+          : filename.endsWith("reviewed-authority.json")
+          ? coldQuiesceSuccessorAuthority()
+          : coldPrepareVerification(),
       reassertRepositoryState: () => true,
       probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
       validateCli: () => true,
@@ -746,11 +973,14 @@ describe("permanent-staging cold recovery", () => {
     });
     expect(code).toBe(0);
     expect(JSON.parse(evidence.get("cold-quiesce-receipt.json")!)).toMatchObject({
-      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v2",
-      outcome: "initialized_zero",
-      replicasBefore: null,
-      replicasAfter: 0,
-      normalOneToZeroReceiptClaimed: false,
+      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v4",
+      outcome: "configured_zero",
+      configuredReplicasBefore: 1,
+      configuredReplicasAfter: 0,
+      legacyReplicasBefore: null,
+      legacyReplicasAfter: 0,
+      configuredOneToZeroReceiptClaimed: true,
+      successorBridge: { currentPrepareRunId: PREPARE_RUN },
       checks: {
         runtimeAbsentBefore: true,
         runtimeAbsentAfter: true,
@@ -762,7 +992,7 @@ describe("permanent-staging cold recovery", () => {
       receiptSource,
       JSON.parse(receiptSource),
       CANDIDATE,
-    )).toMatchObject({ outcome: "initialized_zero", replicasAfter: 0 });
+    )).toMatchObject({ outcome: "configured_zero", replicasAfter: 0 });
     const invalid = JSON.parse(receiptSource) as {
       checks: { exactZeroStateAfter: boolean };
     };
@@ -770,9 +1000,90 @@ describe("permanent-staging cold recovery", () => {
     expect(() => stagingWorkerBootstrapPrerequisiteInternals
       .validateColdQuiesceReceipt(canonical(invalid), invalid, CANDIDATE))
       .toThrow("receipt_invalid");
+    const wrongPrepareBinding = JSON.parse(receiptSource) as {
+      successorBridge: { currentPrepareRunId: string };
+    };
+    wrongPrepareBinding.successorBridge.currentPrepareRunId = "1001";
+    expect(() => stagingWorkerBootstrapPrerequisiteInternals
+      .validateColdQuiesceReceipt(
+        canonical(wrongPrepareBinding),
+        wrongPrepareBinding,
+        CANDIDATE,
+      )).toThrow("receipt_invalid");
   });
 
-  it("accepts a lost scale acknowledgement only after exact null-to-zero reconciliation", async () => {
+  it("binds the successor bridge and reviewed authority to the fresh prepare run", () => {
+    const authoritySource = coldQuiesceSuccessorAuthority();
+    const bridgeSource = coldQuiesceSuccessorBridge();
+    expect(parseColdQuiesceSuccessorBinding(
+      bridgeSource,
+      authoritySource,
+      CANDIDATE,
+      CURRENT_RUN,
+      PREPARE_RUN,
+      NOW,
+    )).toMatchObject({
+      currentRunId: CURRENT_RUN,
+      currentPrepareRunId: PREPARE_RUN,
+    });
+
+    const wrongBridge = JSON.parse(bridgeSource) as {
+      currentPrepareRunId: string;
+    };
+    wrongBridge.currentPrepareRunId = "1001";
+    expect(parseColdQuiesceSuccessorBinding(
+      canonical(wrongBridge),
+      authoritySource,
+      CANDIDATE,
+      CURRENT_RUN,
+      PREPARE_RUN,
+      NOW,
+    )).toBeNull();
+
+    const wrongAuthority = JSON.parse(authoritySource) as {
+      selectedColdPrepareRunId: string;
+    };
+    wrongAuthority.selectedColdPrepareRunId = "1001";
+    const wrongAuthoritySource = `${JSON.stringify(wrongAuthority)}\n`;
+    const bridgeForWrongAuthority = JSON.parse(bridgeSource) as {
+      reviewedAuthoritySha256: string;
+    };
+    bridgeForWrongAuthority.reviewedAuthoritySha256 = sha(wrongAuthoritySource);
+    expect(parseColdQuiesceSuccessorBinding(
+      canonical(bridgeForWrongAuthority),
+      wrongAuthoritySource,
+      CANDIDATE,
+      CURRENT_RUN,
+      PREPARE_RUN,
+      NOW,
+    )).toBeNull();
+
+    for (const [field, replacement] of [
+      ["priorColdPrepareRunId", "1001"],
+      ["priorAmbiguousColdQuiesceTreeSha", "c".repeat(40)],
+    ] as const) {
+      const wrongLineageAuthority = JSON.parse(authoritySource) as
+        Record<string, unknown>;
+      wrongLineageAuthority[field] = replacement;
+      const wrongLineageAuthoritySource =
+        `${JSON.stringify(wrongLineageAuthority)}\n`;
+      const bridgeForWrongLineage = JSON.parse(bridgeSource) as {
+        reviewedAuthoritySha256: string;
+      };
+      bridgeForWrongLineage.reviewedAuthoritySha256 =
+        sha(wrongLineageAuthoritySource);
+      expect(parseColdQuiesceSuccessorBinding(
+        canonical(bridgeForWrongLineage),
+        wrongLineageAuthoritySource,
+        CANDIDATE,
+        CURRENT_RUN,
+        PREPARE_RUN,
+        NOW,
+      )).toBeNull();
+    }
+  });
+
+  it("accepts a lost scale acknowledgement only after exact configured-zero reconciliation", async () => {
     const before = state(null, true);
     const after = state(0, true);
     const evidence = new Map<string, string>();
@@ -782,6 +1093,8 @@ describe("permanent-staging cold recovery", () => {
         "--expected-deployment-sha", OLD_SOURCE,
         "--prepare-run-id", PREPARE_RUN,
         "--prepare-verification-file", "/private/prerequisites-verification.json",
+        "--successor-bridge-file", "/private/cold-quiesce-successor-bridge.json",
+        "--reviewed-authority-file", "/private/reviewed-authority.json",
         "--evidence-dir", "/private/evidence",
       ],
       env: environment("quiesce"),
@@ -799,7 +1112,12 @@ describe("permanent-staging cold recovery", () => {
         .mockResolvedValueOnce(before)
         .mockResolvedValueOnce(before)
         .mockResolvedValueOnce(after),
-      readPrivateEvidence: () => coldPrepareVerification(),
+      readPrivateEvidence: (filename) =>
+        filename.endsWith("cold-quiesce-successor-bridge.json")
+          ? coldQuiesceSuccessorBridge()
+          : filename.endsWith("reviewed-authority.json")
+          ? coldQuiesceSuccessorAuthority()
+          : coldPrepareVerification(),
       reassertRepositoryState: () => true,
       probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
       validateCli: () => true,
@@ -817,7 +1135,7 @@ describe("permanent-staging cold recovery", () => {
     });
     expect(code).toBe(0);
     expect(JSON.parse(evidence.get("cold-quiesce-receipt.json")!)).toMatchObject({
-      outcome: "reconciled_success",
+      outcome: "reconciled_configured_zero",
       failureCode: null,
       attempts: 1,
       checks: {
@@ -831,7 +1149,7 @@ describe("permanent-staging cold recovery", () => {
       receiptSource,
       JSON.parse(receiptSource),
       CANDIDATE,
-    )).toMatchObject({ outcome: "reconciled_success", replicasAfter: 0 });
+    )).toMatchObject({ outcome: "reconciled_configured_zero", replicasAfter: 0 });
     const forgedAcknowledgedReconciliation = JSON.parse(receiptSource) as {
       commandEvidence: { exitCode: number | null };
     };
@@ -883,7 +1201,7 @@ describe("permanent-staging cold recovery", () => {
     const receiptSource = evidence.get("cold-prepare-terminal.json")!;
     expect(JSON.parse(receiptSource)).toMatchObject({
       schemaVersion:
-        "pintpath-permanent-staging-cold-prepare-reconciliation/v1",
+        "pintpath-permanent-staging-cold-prepare-reconciliation/v2",
       operation: "cold-prepare",
       outcome: "reconciled_prepared_after_runner_loss",
       replicasBefore: null,
@@ -908,12 +1226,17 @@ describe("permanent-staging cold recovery", () => {
       CANDIDATE,
     )).toMatchObject({
       outcome: "reconciled_prepared_after_runner_loss",
-      replicasBefore: null,
-      replicasAfter: null,
+      replicasBefore: 1,
+      replicasAfter: 1,
     });
   });
 
-  it("rejects cold-prepare reconciliation when a mutation credential remains", async () => {
+  it.each([
+    "PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN",
+    "PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN",
+  ] as const)("rejects cold-prepare reconciliation when %s remains", async (
+    mutationCredential,
+  ) => {
     const output: string[] = [];
     const code = await runPermanentStagingColdPrepareReconciliationProbe({
       argv: [
@@ -927,7 +1250,7 @@ describe("permanent-staging cold recovery", () => {
       ],
       env: {
         ...reconcilePrepareEnvironment(),
-        PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN: "mutation-token-long-enough",
+        [mutationCredential]: "mutation-token-long-enough",
       },
       cwd: process.cwd(),
       fetchImpl: vi.fn(),
@@ -963,6 +1286,8 @@ describe("permanent-staging cold recovery", () => {
         "--prepare-verification-file", "/private/prerequisites-verification.json",
         "--prior-quiesce-run-id", "676",
         "--reviewed-authority-file", "/private/reviewed-authority.json",
+        "--successor-bridge-file", "/private/successor/cold-quiesce-successor-bridge.json",
+        "--successor-reviewed-authority-file", "/private/successor/reviewed-authority.json",
         "--evidence-dir", "/private/evidence",
       ],
       env: reconcileEnvironment(),
@@ -975,9 +1300,14 @@ describe("permanent-staging cold recovery", () => {
         receiptSha256: sha("boundary"),
       }),
       readState: vi.fn().mockResolvedValue(exactZero),
-      readPrivateEvidence: (filename) => filename.endsWith("reviewed-authority.json")
-        ? reconcileAuthority()
-        : coldPrepareVerification("cold-reconcile-quiesce"),
+      readPrivateEvidence: (filename) =>
+        filename === "/private/reviewed-authority.json"
+          ? reconcileAuthority()
+          : filename.endsWith("cold-quiesce-successor-bridge.json")
+          ? coldQuiesceSuccessorBridge("676")
+          : filename === "/private/successor/reviewed-authority.json"
+          ? coldQuiesceSuccessorAuthority("676")
+          : coldPrepareVerification("cold-reconcile-quiesce"),
       reassertRepositoryState: () => true,
       probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
       writeDurable: (_directory, leaf, source) => {
@@ -989,11 +1319,11 @@ describe("permanent-staging cold recovery", () => {
     expect(code).toBe(0);
     const receiptSource = evidence.get("cold-quiesce-receipt.json")!;
     expect(JSON.parse(receiptSource)).toMatchObject({
-      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v2",
+      schemaVersion: "pintpath-permanent-staging-cold-quiesce/v4",
       operation: "cold-quiesce",
-      outcome: "reconciled_zero_after_runner_loss",
-      replicasBefore: 0,
-      replicasAfter: 0,
+      outcome: "reconciled_configured_zero_after_runner_loss",
+      configuredReplicasBefore: 0,
+      configuredReplicasAfter: 0,
       attempts: 0,
       runnerLossReconciliation: {
         priorAmbiguousQuiesceRunId: "676",
@@ -1017,7 +1347,7 @@ describe("permanent-staging cold recovery", () => {
       JSON.parse(receiptSource),
       CANDIDATE,
     )).toMatchObject({
-      outcome: "reconciled_zero_after_runner_loss",
+      outcome: "reconciled_configured_zero_after_runner_loss",
       replicasBefore: 0,
       replicasAfter: 0,
     });
@@ -1054,6 +1384,53 @@ describe("permanent-staging cold recovery", () => {
       )).toThrow("receipt_invalid");
   });
 
+  it("rejects substituted successor authority bytes before reconcile provider access", async () => {
+    const fetchImpl = vi.fn();
+    const readState = vi.fn();
+    const output: string[] = [];
+    const code = await runPermanentStagingColdQuiesceReconciliationProbe({
+      argv: [
+        "--candidate-sha", CANDIDATE,
+        "--expected-deployment-sha", OLD_SOURCE,
+        "--prepare-run-id", PREPARE_RUN,
+        "--prepare-verification-file", "/private/prerequisites-verification.json",
+        "--prior-quiesce-run-id", "676",
+        "--reviewed-authority-file", "/private/reviewed-authority.json",
+        "--successor-bridge-file", "/private/successor/cold-quiesce-successor-bridge.json",
+        "--successor-reviewed-authority-file", "/private/successor/reviewed-authority.json",
+        "--evidence-dir", "/private/evidence",
+      ],
+      env: reconcileEnvironment(),
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => NOW,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn(),
+      readState,
+      readPrivateEvidence: (filename) =>
+        filename === "/private/reviewed-authority.json"
+          ? reconcileAuthority()
+          : filename.endsWith("cold-quiesce-successor-bridge.json")
+          ? coldQuiesceSuccessorBridge("676")
+          : filename === "/private/successor/reviewed-authority.json"
+          ? `${coldQuiesceSuccessorAuthority("676")}\n`
+          : coldPrepareVerification("cold-reconcile-quiesce"),
+      reassertRepositoryState: vi.fn(),
+      probeRuntimeAbsent: vi.fn(),
+      writeDurable: vi.fn(),
+      writeOutput: (source) => output.push(source),
+    });
+    expect(code).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(readState).not.toHaveBeenCalled();
+    expect(JSON.parse(output.at(-1)!)).toMatchObject({
+      outcome: "probe_failed",
+      failureCode: "successor_bridge_invalid",
+      attempts: 0,
+      checks: { successorBridgeExact: false },
+    });
+  });
+
   it("rejects read-only reconciliation when a scale credential or nonzero state exists", async () => {
     for (const [env, observed] of [
       [{
@@ -1071,6 +1448,8 @@ describe("permanent-staging cold recovery", () => {
           "--prepare-verification-file", "/private/prerequisites-verification.json",
           "--prior-quiesce-run-id", "676",
           "--reviewed-authority-file", "/private/reviewed-authority.json",
+          "--successor-bridge-file", "/private/successor/cold-quiesce-successor-bridge.json",
+          "--successor-reviewed-authority-file", "/private/successor/reviewed-authority.json",
           "--evidence-dir", "/private/evidence",
         ],
         env,
@@ -1084,8 +1463,12 @@ describe("permanent-staging cold recovery", () => {
         }),
         readState: vi.fn().mockResolvedValue(observed),
         readPrivateEvidence: (filename) =>
-          filename.endsWith("reviewed-authority.json")
+          filename === "/private/reviewed-authority.json"
             ? reconcileAuthority()
+            : filename.endsWith("cold-quiesce-successor-bridge.json")
+            ? coldQuiesceSuccessorBridge("676")
+            : filename === "/private/successor/reviewed-authority.json"
+            ? coldQuiesceSuccessorAuthority("676")
             : coldPrepareVerification("cold-reconcile-quiesce"),
         reassertRepositoryState: () => true,
         probeRuntimeAbsent: vi.fn().mockResolvedValue(true),

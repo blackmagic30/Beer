@@ -33,7 +33,7 @@ import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
 
 export const COLD_PREPARE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-prepare/v1" as const;
+  "pintpath-permanent-staging-cold-prepare/v2" as const;
 
 interface Checks {
   policyExact: boolean;
@@ -67,7 +67,9 @@ interface Dependencies {
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => Promise<void>;
   readonly boundaryCheck: () => Promise<BoundaryEvidence>;
-  readonly readState: (replicas: null | 0) => Promise<ColdRecoveryState | null>;
+  readonly readState: (
+    configuredReplicas: 0 | 1 | "any",
+  ) => Promise<ColdRecoveryState | null>;
   readonly readPrivateEvidence: (filename: string) => string;
   readonly reassertRepositoryState: (cwd: string, candidateSha: string) => boolean;
   readonly writeDurable: (directory: string, leaf: string, source: string) => string;
@@ -109,7 +111,7 @@ async function reconcile(
 ): Promise<ColdRecoveryState | null> {
   const deadline = dependencies.now() + 60_000;
   do {
-    const state = await dependencies.readState(null);
+    const state = await dependencies.readState(1);
     if (state && maintenanceRowsAfterExact(state.rows)) return state;
     if (dependencies.now() >= deadline) break;
     await dependencies.sleep(5_000);
@@ -202,7 +204,7 @@ export async function runProtectedPermanentStagingColdPrepare(
     resultChecks.boundaryPreflightExact = boundaryBefore.passed &&
       boundaryBefore.receiptSha256 !== null;
     if (!resultChecks.boundaryPreflightExact) throw new Error("boundary_invalid");
-    before = await dependencies.readState(null);
+    before = await dependencies.readState(1);
     resultChecks.exactDeadStateBefore = before !== null;
     resultChecks.requiredVariablesBeforeExact = before !== null &&
       maintenanceRowsBeforeExact(before.rows);
@@ -218,7 +220,7 @@ export async function runProtectedPermanentStagingColdPrepare(
       PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: args.candidateSha,
     } as const;
     const intent = canonical({
-      schemaVersion: "pintpath-permanent-staging-cold-prepare-intent/v1",
+      schemaVersion: "pintpath-permanent-staging-cold-prepare-intent/v2",
       policySha256: COLD_RECOVERY_POLICY_SHA256,
       operation: "cold-prepare",
       candidateSha: args.candidateSha,
@@ -232,6 +234,10 @@ export async function runProtectedPermanentStagingColdPrepare(
       ),
       replicasBefore: null,
       replicasAfter: null,
+      configuredReplicasBefore: 1,
+      configuredReplicasAfter: 1,
+      configuredRegionsBefore: before!.configuredRegions,
+      configuredRegionsAfter: before!.configuredRegions,
       configuredVariables,
       replacementPrerequisite: {
         runId: args.replacementRunId,
@@ -259,7 +265,7 @@ export async function runProtectedPermanentStagingColdPrepare(
     if (!resultChecks.repositoryPrewriteReasserted) {
       throw new Error("repository_drift");
     }
-    const prewrite = await dependencies.readState(null);
+    const prewrite = await dependencies.readState(1);
     resultChecks.providerPrewriteReasserted = prewrite !== null &&
       fullStateCanonical(prewrite) === fullStateCanonical(before!);
     if (!resultChecks.providerPrewriteReasserted) throw new Error("provider_drift");
@@ -294,7 +300,9 @@ export async function runProtectedPermanentStagingColdPrepare(
         maintenanceRowsAfterExact(after.rows);
       resultChecks.deploymentAndTopologyUnchanged = after !== null &&
         coldIdentityCanonical(after) === coldIdentityCanonical(before) &&
-        after.numReplicas === null;
+        after.numReplicas === null &&
+        after.configuredReplicas === 1 &&
+        canonical(after.configuredRegions) === canonical(before.configuredRegions);
       resultChecks.collateralVariablesUnchanged = after !== null &&
         canonical(nonMaintenanceRows(after.rows)) ===
           canonical(nonMaintenanceRows(before.rows));
@@ -325,6 +333,10 @@ export async function runProtectedPermanentStagingColdPrepare(
       completedAt: new Date(dependencies.now()).toISOString(),
       replicasBefore: null,
       replicasAfter: null,
+      configuredReplicasBefore: before.configuredReplicas,
+      configuredReplicasAfter: after?.configuredReplicas ?? null,
+      configuredRegionsBefore: before.configuredRegions,
+      configuredRegionsAfter: after?.configuredRegions ?? null,
       attempts,
       retryAllowed: false,
       intentSha256,
@@ -346,6 +358,10 @@ export async function runProtectedPermanentStagingColdPrepare(
         topologyAfterSha256: after
           ? sha256(coldIdentityCanonical(after))
           : null,
+        configuredTopologyBeforeSha256: sha256(canonical(before.configuredRegions)),
+        configuredTopologyAfterSha256: after
+          ? sha256(canonical(after.configuredRegions))
+          : null,
         collateralVariablesBeforeSha256: sha256(canonical(
           nonMaintenanceRows(before.rows),
         )),
@@ -362,7 +378,7 @@ export async function runProtectedPermanentStagingColdPrepare(
         postflightReceiptSha256: boundaryAfter.receiptSha256,
       },
       checks: { ...resultChecks, terminalEvidenceExact: true },
-      nextRequiredProof: "EXACT_COLD_NULL_TO_ZERO_QUIESCENCE_PROOF",
+      nextRequiredProof: "EXACT_CONFIGURED_ONE_TO_ZERO_QUIESCENCE_PROOF",
       normalOneToZeroReceiptClaimed: false,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
@@ -392,6 +408,8 @@ export async function runProtectedPermanentStagingColdPrepare(
     sourceSha: args?.expectedDeploymentSha ?? null,
     replicasBefore: null,
     replicasAfter: null,
+    configuredReplicasBefore: before?.configuredReplicas ?? null,
+    configuredReplicasAfter: after?.configuredReplicas ?? null,
     attempts,
     retryAllowed: false,
     intentSha256,

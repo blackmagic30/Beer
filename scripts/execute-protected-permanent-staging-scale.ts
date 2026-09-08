@@ -19,12 +19,20 @@ import {
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
 import {
+  parseRailwayMultiRegionReplicaTopology,
+  type RailwayRegionReplicaCount,
+} from "./lib/railway-multi-region-replica-topology.js";
+import {
+  PROTECTED_SCALE_RECEIPT_SCHEMA,
+  protectedScaleReplicaTopologyExact,
+} from "./lib/protected-scale-receipt-topology.js";
+import {
   parseProductionScaleActivationPrerequisiteVerification,
   type ProductionScaleActivationPrerequisiteVerification,
 } from "./verify-production-maintenance-role-limit-prerequisites.js";
 
 export const PROTECTED_STAGING_SCALE_SCHEMA =
-  "pintpath-permanent-staging-scale-operation/v2" as const;
+  PROTECTED_SCALE_RECEIPT_SCHEMA;
 export const PROTECTED_STAGING_SCALE_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 
@@ -33,6 +41,7 @@ const PRODUCTION_ENVIRONMENT_ID = "13dab015-df74-45c6-b26f-69323daea99a";
 const STAGING_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const REGION = "asia-southeast1-eqsg3a";
+const LEGACY_STAGING_REGION = "europe-west4-drams3a";
 const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const PRODUCTION_DOMAIN = "pintpath.au";
 // Railway injects PORT=8080 for the deployed application. Keep the protected
@@ -67,10 +76,15 @@ export const PROTECTED_STAGING_SCALE_DISCOVERY_QUERY = `query PintPathProtectedS
 }`;
 
 export const PROTECTED_STAGING_SCALE_SNAPSHOT_QUERY = `query PintPathProtectedScaleSnapshot(
+  $projectId: String!
   $environmentId: String!
   $serviceId: String!
   $deploymentId: String!
 ) {
+  environment(id: $environmentId, projectId: $projectId) {
+    id
+    config(decryptVariables: false)
+  }
   serviceInstance(environmentId: $environmentId, serviceId: $serviceId) {
     id
     serviceId
@@ -105,14 +119,23 @@ type Direction =
 
 type ReplicaCount = 0 | 1 | 2;
 
-interface RuntimeMaintenanceExpectation {
-  readonly enabled: boolean;
-  readonly candidateBound: boolean;
-}
+type RuntimeMaintenanceExpectation =
+  | {
+      readonly enabled: boolean;
+      readonly candidateBound: boolean;
+      readonly legacyIdentityOnly?: false;
+    }
+  | { readonly legacyIdentityOnly: true };
 
 interface ScaleTarget {
   readonly environmentId: string;
   readonly domain: string;
+}
+
+interface ProtectedScaleSnapshot
+  extends RailwayApplicationDeploymentAttestationProviderSnapshot {
+  readonly configuredReplicas: number;
+  readonly configuredRegions: readonly RailwayRegionReplicaCount[];
 }
 
 const STAGING_TARGET: ScaleTarget = Object.freeze({
@@ -195,6 +218,15 @@ interface ScaleReceipt {
     readonly deploymentBeforeIdSha256: string;
     readonly deploymentAfterIdSha256: string;
   } | null;
+  readonly replicaTopology: {
+    readonly authoritySource: "environment.config(decryptVariables:false)";
+    readonly primaryRegion: typeof REGION;
+    readonly allowedRegions: readonly string[];
+    readonly before: ReplicaTopologySnapshot | null;
+    readonly immediatelyBeforeWrite: ReplicaTopologySnapshot | null;
+    readonly after: ReplicaTopologySnapshot | null;
+    readonly commandAssignments: readonly string[];
+  };
   readonly checks: {
     policyExact: boolean;
     githubAuthorityExact: boolean;
@@ -214,10 +246,18 @@ interface ScaleReceipt {
     runtimePostflightExact: boolean;
     candidateUnchanged: boolean;
     deploymentUnchanged: boolean;
+    replicaTopologyEvidenceExact: boolean;
     boundaryPostflightExact: boolean;
     terminalEvidenceExact: boolean;
     finalReceiptEvidenceExact: boolean;
   };
+}
+
+interface ReplicaTopologySnapshot {
+  readonly configuredReplicas: number;
+  readonly configuredRegions: readonly RailwayRegionReplicaCount[];
+  readonly configuredTopologySha256: string;
+  readonly legacyAggregateReplicas: number | null;
 }
 
 function sha256(value: string | Buffer): string {
@@ -521,7 +561,7 @@ async function querySnapshot(
   fetchImpl: typeof fetch,
   token: string,
   target: ScaleTarget = STAGING_TARGET,
-): Promise<RailwayApplicationDeploymentAttestationProviderSnapshot> {
+): Promise<ProtectedScaleSnapshot> {
   const deploymentId = parseDiscovery(await graphql(
     fetchImpl,
     token,
@@ -529,21 +569,45 @@ async function querySnapshot(
     { environmentId: target.environmentId, serviceId: SERVICE_ID },
   ));
   if (!deploymentId) throw new Error("provider_snapshot_invalid");
-  const source = JSON.stringify(await graphql(
+  const response = await graphql(
     fetchImpl,
     token,
     PROTECTED_STAGING_SCALE_SNAPSHOT_QUERY,
     {
+      projectId: PROJECT_ID,
       environmentId: target.environmentId,
       serviceId: SERVICE_ID,
       deploymentId,
     },
-  ));
+  );
+  if (!exactKeys(response, ["data"])
+    || !exactKeys(response.data, ["environment", "serviceInstance", "deployment"])
+    || !exactKeys(response.data.environment, ["id", "config"])
+    || response.data.environment.id !== target.environmentId) {
+    throw new Error("provider_snapshot_invalid");
+  }
+  const topology = parseRailwayMultiRegionReplicaTopology(
+    response.data.environment.config,
+    SERVICE_ID,
+  );
+  if (topology.kind !== "configured") {
+    throw new Error("provider_snapshot_invalid");
+  }
+  const source = JSON.stringify({
+    data: {
+      serviceInstance: response.data.serviceInstance,
+      deployment: response.data.deployment,
+    },
+  });
   const snapshot = parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
     source,
   );
   if (!snapshot) throw new Error("provider_snapshot_invalid");
-  return snapshot;
+  return Object.freeze({
+    ...snapshot,
+    configuredReplicas: topology.configuredTotal,
+    configuredRegions: topology.regions,
+  });
 }
 
 async function probeRuntime(
@@ -564,6 +628,10 @@ async function probeRuntime(
     if (!response.ok) return false;
     const source = await response.text();
     if (Buffer.byteLength(source, "utf8") > MAX_RESPONSE_BYTES) return false;
+    if ("legacyIdentityOnly" in expectation) {
+      if (!legacyRuntimeIdentityExact(route, source, candidateSha)) return false;
+      continue;
+    }
     const runtime = parseRailwayApplicationDeploymentAttestationRuntimeResponse(
       route,
       source,
@@ -586,6 +654,43 @@ async function probeRuntime(
   return true;
 }
 
+function legacyRuntimeIdentityExact(
+  route: "/health" | "/startup" | "/ready",
+  source: string,
+  expectedCommitSha: string,
+): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(source) as unknown;
+  } catch {
+    return false;
+  }
+  if (!exactKeys(value, ["ok", "data"]) || value.ok !== true) return false;
+  const dataKeys = route === "/health"
+    ? ["service", "status", "deployment"]
+    : ["service", "status", "deployment", "dependencies"];
+  if (!exactKeys(value.data, dataKeys)) return false;
+  const expectedStatus = route === "/health"
+    ? "ok"
+    : route === "/startup"
+      ? "startup_ready"
+      : "ready";
+  if (value.data.service !== "pint-path" || value.data.status !== expectedStatus) {
+    return false;
+  }
+  if (route !== "/health" && (
+    typeof value.data.dependencies !== "object"
+    || value.data.dependencies === null
+    || Array.isArray(value.data.dependencies)
+  )) return false;
+  const deployment = value.data.deployment;
+  return exactKeys(deployment, ["version", "commitSha", "environment"])
+    && typeof deployment.version === "string"
+    && /^[a-z0-9._-]{1,80}$/i.test(deployment.version)
+    && deployment.commitSha === expectedCommitSha
+    && deployment.environment === "production";
+}
+
 async function probeRuntimeAbsent(
   fetchImpl: typeof fetch,
   target: ScaleTarget,
@@ -601,10 +706,12 @@ async function probeRuntimeAbsent(
           cache: "no-store",
           signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
         });
-        if (response.ok) return false;
-        await response.body?.cancel();
+        const exactAbsentStatus = response.status === 404;
+        await response.body?.cancel().catch(() => undefined);
+        if (!exactAbsentStatus) return false;
       } catch {
-        // Connection refusal and provider 5xx both confirm no healthy app route.
+        // Network and redirect failures do not prove that the application is absent.
+        return false;
       }
     }
     if (round < 2) await sleep(10_000);
@@ -613,14 +720,33 @@ async function probeRuntimeAbsent(
 }
 
 function snapshotExact(
-  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
+  snapshot: ProtectedScaleSnapshot,
   candidateSha: string,
   replicas: ReplicaCount,
   target: ScaleTarget = STAGING_TARGET,
+  placement: "primary-region" | "any-single-region" = "primary-region",
 ): boolean {
+  const allowedRegions = target.environmentId === STAGING_ENVIRONMENT_ID
+    ? new Set([REGION, LEGACY_STAGING_REGION])
+    : new Set([REGION]);
+  const configuredTopologyExact = snapshot.configuredReplicas === replicas
+    && snapshot.configuredRegions.every(({ region }) => allowedRegions.has(region))
+    && snapshot.configuredRegions.every(({ numReplicas }) =>
+      Number.isSafeInteger(numReplicas) && numReplicas >= 0)
+    && (replicas === 0
+      ? snapshot.configuredRegions.every(({ numReplicas }) => numReplicas === 0)
+      : placement === "any-single-region"
+        ? snapshot.configuredRegions.filter(({ numReplicas }) => numReplicas > 0)
+          .length === 1
+          && snapshot.configuredRegions.some(({ numReplicas }) =>
+            numReplicas === replicas)
+        : snapshot.configuredRegions.some(({ region, numReplicas }) =>
+          region === REGION && numReplicas === replicas)
+          && snapshot.configuredRegions.every(({ region, numReplicas }) =>
+            region === REGION || numReplicas === 0));
   return snapshot.serviceId === SERVICE_ID
     && snapshot.environmentId === target.environmentId
-    && snapshot.numReplicas === replicas
+    && configuredTopologyExact
     && snapshot.latestDeployment.id === snapshot.deployment.id
     && snapshot.latestDeployment.status === "SUCCESS"
     && snapshot.latestDeployment.deploymentStopped === false
@@ -639,6 +765,108 @@ function snapshotExact(
     && snapshot.domains[0].targetPort === APPLICATION_TARGET_PORT;
 }
 
+function scaleAssignments(
+  snapshot: ProtectedScaleSnapshot,
+  desiredReplicas: ReplicaCount,
+): readonly string[] {
+  const regions = new Set(snapshot.configuredRegions.map(({ region }) => region));
+  regions.add(REGION);
+  return [...regions]
+    .sort()
+    .map((region) => `${region}=${region === REGION ? desiredReplicas : 0}`);
+}
+
+function topologySnapshot(
+  snapshot: ProtectedScaleSnapshot | null,
+): ReplicaTopologySnapshot | null {
+  if (snapshot === null) return null;
+  const configured = {
+    configuredReplicas: snapshot.configuredReplicas,
+    configuredRegions: snapshot.configuredRegions,
+  };
+  return {
+    ...configured,
+    configuredTopologySha256: sha256(canonical(configured)),
+    legacyAggregateReplicas: snapshot.numReplicas,
+  };
+}
+
+function topologyReceipt(
+  target: ScaleTarget,
+  before: ProtectedScaleSnapshot | null,
+  immediatelyBeforeWrite: ProtectedScaleSnapshot | null,
+  after: ProtectedScaleSnapshot | null,
+  commandAssignments: readonly string[],
+): ScaleReceipt["replicaTopology"] {
+  return {
+    authoritySource: "environment.config(decryptVariables:false)",
+    primaryRegion: REGION,
+    allowedRegions: target.environmentId === STAGING_ENVIRONMENT_ID
+      ? [REGION, LEGACY_STAGING_REGION]
+      : [REGION],
+    before: topologySnapshot(before),
+    immediatelyBeforeWrite: topologySnapshot(immediatelyBeforeWrite),
+    after: topologySnapshot(after),
+    commandAssignments,
+  };
+}
+
+function topologyEvidenceExact(
+  direction: Direction,
+  desiredReplicas: ReplicaCount,
+  target: ScaleTarget,
+  attempts: 0 | 1,
+  before: ProtectedScaleSnapshot | null,
+  immediatelyBeforeWrite: ProtectedScaleSnapshot | null,
+  after: ProtectedScaleSnapshot | null,
+  commandAssignments: readonly string[],
+): boolean {
+  const receiptExact = protectedScaleReplicaTopologyExact(
+    topologyReceipt(
+      target,
+      before,
+      immediatelyBeforeWrite,
+      after,
+      commandAssignments,
+    ),
+    {
+      direction,
+      attempts,
+      desiredReplicas,
+      target: target.environmentId === STAGING_ENVIRONMENT_ID
+        ? "staging"
+        : "production",
+    },
+  );
+  if (!receiptExact) return false;
+  if (before === null || after === null || !snapshotExact(
+    after,
+    after.deployment.commitHash,
+    desiredReplicas,
+    target,
+  )) return false;
+  if (attempts === 0) {
+    return immediatelyBeforeWrite === null && commandAssignments.length === 0
+      && authoritativeSnapshotIdentity(before) === authoritativeSnapshotIdentity(after)
+      && before.configuredReplicas === desiredReplicas;
+  }
+  const placement = direction === "quiesce-staging-zero"
+    ? "any-single-region"
+    : "primary-region";
+  return immediatelyBeforeWrite !== null
+    && authoritativeSnapshotIdentity(before)
+      === authoritativeSnapshotIdentity(immediatelyBeforeWrite)
+    && snapshotExact(
+      immediatelyBeforeWrite,
+      before.deployment.commitHash,
+      before.configuredReplicas as ReplicaCount,
+      target,
+      placement,
+    )
+    && canonical(commandAssignments)
+      === canonical(scaleAssignments(immediatelyBeforeWrite, desiredReplicas));
+}
+
 function deploymentIdentity(snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot): string {
   return canonical({
     latestDeployment: snapshot.latestDeployment,
@@ -649,13 +877,27 @@ function deploymentIdentity(snapshot: RailwayApplicationDeploymentAttestationPro
   });
 }
 
+function authoritativeSnapshotIdentity(snapshot: ProtectedScaleSnapshot): string {
+  return canonical({
+    serviceInstanceId: snapshot.serviceInstanceId,
+    serviceId: snapshot.serviceId,
+    environmentId: snapshot.environmentId,
+    configuredReplicas: snapshot.configuredReplicas,
+    configuredRegions: snapshot.configuredRegions,
+    latestDeployment: snapshot.latestDeployment,
+    activeDeployments: snapshot.activeDeployments,
+    domains: snapshot.domains,
+    deployment: snapshot.deployment,
+  });
+}
+
 async function reconcile(
   dependencies: Dependencies,
   token: string,
   candidateSha: string,
   replicas: ReplicaCount,
   target: ScaleTarget = STAGING_TARGET,
-): Promise<RailwayApplicationDeploymentAttestationProviderSnapshot | null> {
+): Promise<ProtectedScaleSnapshot | null> {
   const deadline = dependencies.now() + RECONCILIATION_TIMEOUT_MS;
   do {
     try {
@@ -817,6 +1059,7 @@ function emptyChecks(): ScaleReceipt["checks"] {
     runtimePostflightExact: false,
     candidateUnchanged: false,
     deploymentUnchanged: false,
+    replicaTopologyEvidenceExact: false,
     boundaryPostflightExact: false,
     terminalEvidenceExact: false,
     finalReceiptEvidenceExact: false,
@@ -836,6 +1079,7 @@ function receipt(
   terminalEvidenceSha256: string | null,
   productionActivationPrerequisite:
     ScaleReceipt["productionActivationPrerequisite"],
+  replicaTopology: ScaleReceipt["replicaTopology"],
   command: CommandResult | null,
   checks: ScaleReceipt["checks"],
 ): ScaleReceipt {
@@ -856,6 +1100,7 @@ function receipt(
     commandStdoutSha256: command?.stdoutSha256 ?? null,
     commandStderrSha256: command?.stderrSha256 ?? null,
     productionActivationPrerequisite,
+    replicaTopology,
     checks,
   };
 }
@@ -909,7 +1154,10 @@ export async function runProtectedPermanentStagingScale(
   let terminalSha: string | null = null;
   let command: CommandResult | null = null;
   let outcome: ScaleReceipt["outcome"] = "blocked";
-  let before: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
+  let before: ProtectedScaleSnapshot | null = null;
+  let immediatelyBeforeWrite: ProtectedScaleSnapshot | null = null;
+  let after: ProtectedScaleSnapshot | null = null;
+  let commandAssignments: readonly string[] = [];
   let deploymentIdSha256: string | null = null;
   let metadataToken = "";
   let productionActivationVerification:
@@ -1034,11 +1282,17 @@ export async function runProtectedPermanentStagingScale(
         throw new Error("activation_prerequisite_invalid");
       }
     }
-    const beforeReplicas = before.numReplicas;
+    const beforeReplicas = before.configuredReplicas;
     checks.targetPreflightExact = direction === "out"
       ? snapshotExact(before, args.expectedDeploymentSha, 1, target)
       : direction === "quiesce-staging-zero"
-        ? snapshotExact(before, args.expectedDeploymentSha, 1, target)
+        ? snapshotExact(
+          before,
+          args.expectedDeploymentSha,
+          1,
+          target,
+          "any-single-region",
+        )
         : direction === "bootstrap-staging-one"
           ? snapshotExact(before, args.expectedDeploymentSha, 0, target)
           : (beforeReplicas === 1 || beforeReplicas === 2)
@@ -1050,7 +1304,12 @@ export async function runProtectedPermanentStagingScale(
             );
     if (!checks.targetPreflightExact) throw new Error("target_invalid");
     checks.runtimePreflightExact = direction === "quiesce-staging-zero"
-      ? true
+      ? await dependencies.probeRuntime(
+          target,
+          args.expectedDeploymentSha,
+          before.deployment.id,
+          { legacyIdentityOnly: true },
+        )
       : direction === "bootstrap-staging-one"
         ? await dependencies.probeRuntimeAbsent(target)
         : await dependencies.probeRuntime(
@@ -1062,24 +1321,55 @@ export async function runProtectedPermanentStagingScale(
     if (!checks.runtimePreflightExact) throw new Error("runtime_fence_invalid");
     if ((direction === "converge-one" && beforeReplicas === 1)
       || (direction === "converge-production-two" && beforeReplicas === 2)) {
+      checks.acknowledgementExact = true;
+      checks.postflightAttempted = true;
+      after = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
+      checks.targetPostflightExact = authoritativeSnapshotIdentity(before)
+          === authoritativeSnapshotIdentity(after)
+        && snapshotExact(
+          after,
+          args.expectedDeploymentSha,
+          desiredReplicas!,
+          target,
+        );
+      checks.runtimePostflightExact = checks.targetPostflightExact
+        && await dependencies.probeRuntime(
+          target,
+          args.expectedDeploymentSha,
+          after.deployment.id,
+          { enabled: true, candidateBound: true },
+        );
+      checks.candidateUnchanged = after.deployment.commitHash
+        === args.expectedDeploymentSha;
+      checks.deploymentUnchanged = deploymentIdentity(before)
+        === deploymentIdentity(after);
+      checks.replicaTopologyEvidenceExact = topologyEvidenceExact(
+        args.direction,
+        desiredReplicas!,
+        target,
+        attempts,
+        before,
+        immediatelyBeforeWrite,
+        after,
+        commandAssignments,
+      );
       checks.repositoryPrewriteReasserted = dependencies.reassertRepositoryState(
         dependencies.cwd,
         args.candidateSha,
       );
-      if (!checks.repositoryPrewriteReasserted) {
-        throw new Error("repository_prewrite_drift");
-      }
-      checks.acknowledgementExact = true;
-      checks.postflightAttempted = true;
-      checks.targetPostflightExact = true;
-      checks.runtimePostflightExact = checks.runtimePreflightExact;
-      checks.candidateUnchanged = true;
-      checks.deploymentUnchanged = true;
       checks.boundaryPostflightExact = await dependencies.boundaryCheck() === 0;
-      outcome = checks.boundaryPostflightExact ? "already_converged" : "mutation_uncertain";
+      outcome = checks.targetPostflightExact && checks.runtimePostflightExact
+        && checks.candidateUnchanged && checks.deploymentUnchanged
+        && checks.replicaTopologyEvidenceExact
+        && checks.repositoryPrewriteReasserted
+        && checks.boundaryPostflightExact
+        ? "already_converged"
+        : "mutation_uncertain";
     } else {
+      commandAssignments = scaleAssignments(before, desiredReplicas!);
+      const beforeTopology = topologySnapshot(before)!;
       const intent = canonical({
-        schemaVersion: "pintpath-permanent-staging-scale-intent/v1",
+        schemaVersion: "pintpath-permanent-staging-scale-intent/v2",
         direction,
         candidateSha: args.candidateSha,
         expectedDeploymentSha: args.expectedDeploymentSha,
@@ -1088,6 +1378,10 @@ export async function runProtectedPermanentStagingScale(
         serviceId: SERVICE_ID,
         region: REGION,
         beforeReplicas,
+        legacyAggregateBeforeReplicas: before.numReplicas,
+        beforeConfiguredRegions: before.configuredRegions,
+        beforeConfiguredTopologySha256: beforeTopology.configuredTopologySha256,
+        commandAssignments,
         desiredReplicas,
         productionActivationPrerequisite,
         maximumAttempts: 1,
@@ -1101,51 +1395,35 @@ export async function runProtectedPermanentStagingScale(
       );
       checks.durableIntentExact = intentSha === sha256(intent);
       if (!checks.durableIntentExact) throw new Error("intent_invalid");
-      checks.repositoryPrewriteReasserted = dependencies.reassertRepositoryState(
-        dependencies.cwd,
-        args.candidateSha,
-      );
-      if (!checks.repositoryPrewriteReasserted) {
-        throw new Error("repository_prewrite_drift");
-      }
-
-      let runtimePrewriteExact = direction === "quiesce-staging-zero";
       try {
-        runtimePrewriteExact = direction === "quiesce-staging-zero"
-          ? true
-          : direction === "bootstrap-staging-one"
-            ? await dependencies.probeRuntimeAbsent(target)
-            : await dependencies.probeRuntime(
-                target,
-                args.expectedDeploymentSha,
-                before.deployment.id,
-                { enabled: true, candidateBound: true },
-              );
+        immediatelyBeforeWrite = await querySnapshot(
+          dependencies.fetchImpl,
+          metadataToken,
+          target,
+        );
       } catch {
-        runtimePrewriteExact = false;
-      }
-      checks.runtimePreflightExact = checks.runtimePreflightExact && runtimePrewriteExact;
-      if (!checks.runtimePreflightExact) throw new Error("runtime_prewrite_drift");
-
-      let prewrite: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
-      try {
-        prewrite = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
-      } catch {
-        prewrite = null;
+        immediatelyBeforeWrite = null;
       }
       checks.targetPreflightExact = checks.targetPreflightExact
-        && prewrite !== null
-        && canonical(prewrite) === canonical(before)
+        && immediatelyBeforeWrite !== null
+        && authoritativeSnapshotIdentity(immediatelyBeforeWrite)
+          === authoritativeSnapshotIdentity(before)
         && snapshotExact(
-          prewrite,
+          immediatelyBeforeWrite,
           args.expectedDeploymentSha,
           beforeReplicas as ReplicaCount,
           target,
+          direction === "quiesce-staging-zero"
+            ? "any-single-region"
+            : "primary-region",
         );
       if (direction === "converge-production-two") {
-        const prewriteDeploymentIdSha256 = prewrite === null
+        const prewriteDeploymentIdSha256 = immediatelyBeforeWrite === null
           ? null
-          : railwayDeploymentIdentityIdSha256("deployment", prewrite.deployment.id);
+          : railwayDeploymentIdentityIdSha256(
+              "deployment",
+              immediatelyBeforeWrite.deployment.id,
+            );
         checks.productionActivationDeploymentContinuityExact =
           checks.productionActivationDeploymentContinuityExact
           && productionActivationPrerequisite !== null
@@ -1157,17 +1435,49 @@ export async function runProtectedPermanentStagingScale(
         throw new Error("provider_prewrite_drift");
       }
 
+      let runtimePrewriteExact = false;
+      try {
+        runtimePrewriteExact = direction === "quiesce-staging-zero"
+          ? await dependencies.probeRuntime(
+              target,
+              args.expectedDeploymentSha,
+              immediatelyBeforeWrite!.deployment.id,
+              { legacyIdentityOnly: true },
+            )
+          : direction === "bootstrap-staging-one"
+            ? await dependencies.probeRuntimeAbsent(target)
+            : await dependencies.probeRuntime(
+                target,
+                args.expectedDeploymentSha,
+                immediatelyBeforeWrite!.deployment.id,
+                { enabled: true, candidateBound: true },
+              );
+      } catch {
+        runtimePrewriteExact = false;
+      }
+      checks.runtimePreflightExact = checks.runtimePreflightExact
+        && runtimePrewriteExact;
+      if (!checks.runtimePreflightExact) throw new Error("runtime_prewrite_drift");
+
+      checks.repositoryPrewriteReasserted = dependencies.reassertRepositoryState(
+        dependencies.cwd,
+        args.candidateSha,
+      );
+      if (!checks.repositoryPrewriteReasserted) {
+        throw new Error("repository_prewrite_drift");
+      }
+
       attempts = 1;
       command = await dependencies.runCommand(cli, [
-        "service", "scale", `${REGION}=${desiredReplicas}`,
-        "--project", PROJECT_ID,
-        "--environment", target.environmentId,
-        "--service", SERVICE_ID,
+        "service", "scale", ...commandAssignments,
+        "-p", PROJECT_ID,
+        "-e", target.environmentId,
+        "-s", SERVICE_ID,
         "--json",
       ], mutationToken);
       checks.acknowledgementExact = command.code === 0 && command.timedOut === false;
       checks.postflightAttempted = true;
-      const after = await reconcile(
+      after = await reconcile(
         dependencies,
         metadataToken,
         args.expectedDeploymentSha,
@@ -1190,6 +1500,16 @@ export async function runProtectedPermanentStagingScale(
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
+      checks.replicaTopologyEvidenceExact = topologyEvidenceExact(
+        args.direction,
+        desiredReplicas!,
+        target,
+        attempts,
+        before,
+        immediatelyBeforeWrite,
+        after,
+        commandAssignments,
+      );
       try {
         checks.boundaryPostflightExact = await dependencies.boundaryCheck() === 0;
       } catch {
@@ -1197,6 +1517,7 @@ export async function runProtectedPermanentStagingScale(
       }
       outcome = checks.acknowledgementExact && checks.targetPostflightExact
         && checks.candidateUnchanged && checks.deploymentUnchanged
+        && checks.replicaTopologyEvidenceExact
         && checks.runtimePreflightExact && checks.runtimePostflightExact
         && checks.boundaryPostflightExact && checks.repositoryPrewriteReasserted
         ? "scaled"
@@ -1207,7 +1528,7 @@ export async function runProtectedPermanentStagingScale(
   } finally {
     if (attempts === 1 && !checks.postflightAttempted && args && desiredReplicas !== null) {
       checks.postflightAttempted = true;
-      const after = await reconcile(
+      after = await reconcile(
         dependencies,
         metadataToken,
         args.expectedDeploymentSha,
@@ -1239,6 +1560,22 @@ export async function runProtectedPermanentStagingScale(
       }
     }
   }
+  checks.replicaTopologyEvidenceExact = args !== null
+    && desiredReplicas !== null
+    && topologyEvidenceExact(
+      args.direction,
+      desiredReplicas,
+      target,
+      attempts,
+      before,
+      immediatelyBeforeWrite,
+      after,
+      commandAssignments,
+    );
+  if ((outcome === "scaled" || outcome === "already_converged")
+    && !checks.replicaTopologyEvidenceExact) {
+    outcome = "mutation_uncertain";
+  }
   completedAt = new Date(dependencies.now()).toISOString();
   let provisional = receipt(
     direction,
@@ -1252,13 +1589,20 @@ export async function runProtectedPermanentStagingScale(
     intentSha,
     null,
     productionActivationPrerequisite,
+    topologyReceipt(
+      target,
+      before,
+      immediatelyBeforeWrite,
+      after,
+      commandAssignments,
+    ),
     command,
     checks,
   );
   if (args && (checks.durableIntentExact || outcome === "already_converged")) {
     try {
       const terminal = canonical({
-        schemaVersion: "pintpath-permanent-staging-scale-terminal/v1",
+        schemaVersion: "pintpath-permanent-staging-scale-terminal/v2",
         receipt: provisional,
       });
       terminalSha = dependencies.writeDurable(
@@ -1284,6 +1628,13 @@ export async function runProtectedPermanentStagingScale(
     intentSha,
     terminalSha,
     productionActivationPrerequisite,
+    topologyReceipt(
+      target,
+      before,
+      immediatelyBeforeWrite,
+      after,
+      commandAssignments,
+    ),
     command,
     checks,
   );
@@ -1303,6 +1654,13 @@ export async function runProtectedPermanentStagingScale(
         intentSha,
         terminalSha,
         productionActivationPrerequisite,
+        topologyReceipt(
+          target,
+          before,
+          immediatelyBeforeWrite,
+          after,
+          commandAssignments,
+        ),
         command,
         checks,
       );
@@ -1331,20 +1689,31 @@ export async function runProtectedPermanentStagingScale(
     intentSha,
     terminalSha,
     productionActivationPrerequisite,
+    topologyReceipt(
+      target,
+      before,
+      immediatelyBeforeWrite,
+      after,
+      commandAssignments,
+    ),
     command,
     checks,
   );
   dependencies.writeOutput(`${JSON.stringify(durableReceipt)}\n`);
   return (outcome === "scaled" || outcome === "already_converged")
     && checks.runtimePreflightExact && checks.runtimePostflightExact
+    && checks.replicaTopologyEvidenceExact
     && checks.terminalEvidenceExact && checks.finalReceiptEvidenceExact ? 0 : 1;
 }
 
 export const protectedPermanentStagingScaleInternals = {
+  authoritativeSnapshotIdentity,
   deploymentIdentity,
   parseArguments,
   parseDiscovery,
   parseScope,
+  probeRuntimeAbsent,
+  scaleAssignments,
   snapshotExact,
 };
 

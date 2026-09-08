@@ -224,7 +224,7 @@ export interface RailwayApplicationDeploymentAttestationProviderSnapshot {
   readonly serviceInstanceId: string;
   readonly serviceId: string;
   readonly environmentId: string;
-  readonly numReplicas: number;
+  readonly numReplicas: number | null;
   readonly latestDeployment: ProviderLatestDeployment;
   readonly activeDeployments: readonly ProviderDeploymentSummary[];
   readonly domains: readonly ProviderDomain[];
@@ -535,7 +535,7 @@ function canonicalProviderSnapshot(
   }
   domains += "]";
 
-  return `{"serviceInstanceId":${jsonString(value.serviceInstanceId)},"serviceId":${jsonString(value.serviceId)},"environmentId":${jsonString(value.environmentId)},"numReplicas":${jsonNumber(value.numReplicas)},"latestDeployment":{"id":${jsonString(value.latestDeployment.id)},"status":${jsonString(value.latestDeployment.status)},"deploymentStopped":${jsonBoolean(value.latestDeployment.deploymentStopped)},"snapshotId":${jsonString(value.latestDeployment.snapshotId)}},"activeDeployments":${activeDeployments},"domains":${domains},"deployment":{"id":${jsonString(value.deployment.id)},"projectId":${jsonString(value.deployment.projectId)},"environmentId":${jsonString(value.deployment.environmentId)},"serviceId":${jsonString(value.deployment.serviceId)},"snapshotId":${jsonString(value.deployment.snapshotId)},"commitHash":${jsonString(value.deployment.commitHash)},"imageDigest":${jsonString(value.deployment.imageDigest)},"patchId":${value.deployment.patchId === null ? "null" : jsonString(value.deployment.patchId)}}}`;
+  return `{"serviceInstanceId":${jsonString(value.serviceInstanceId)},"serviceId":${jsonString(value.serviceId)},"environmentId":${jsonString(value.environmentId)},"numReplicas":${value.numReplicas === null ? "null" : jsonNumber(value.numReplicas)},"latestDeployment":{"id":${jsonString(value.latestDeployment.id)},"status":${jsonString(value.latestDeployment.status)},"deploymentStopped":${jsonBoolean(value.latestDeployment.deploymentStopped)},"snapshotId":${jsonString(value.latestDeployment.snapshotId)}},"activeDeployments":${activeDeployments},"domains":${domains},"deployment":{"id":${jsonString(value.deployment.id)},"projectId":${jsonString(value.deployment.projectId)},"environmentId":${jsonString(value.deployment.environmentId)},"serviceId":${jsonString(value.deployment.serviceId)},"snapshotId":${jsonString(value.deployment.snapshotId)},"commitHash":${jsonString(value.deployment.commitHash)},"imageDigest":${jsonString(value.deployment.imageDigest)},"patchId":${value.deployment.patchId === null ? "null" : jsonString(value.deployment.patchId)}}}`;
 }
 
 function jsonString(value: string): string {
@@ -733,13 +733,15 @@ export function parseRailwayApplicationDeploymentAttestationProviderSnapshotResp
     || !matches(UUID_PATTERN, instance.serviceId)
     || typeof instance.environmentId !== "string"
     || !matches(UUID_PATTERN, instance.environmentId)
-    || REFLECT_APPLY(
-      NUMBER_IS_SAFE_INTEGER,
-      NUMBER_CONSTRUCTOR,
-      [instance.numReplicas],
-    ) !== true
-    || (instance.numReplicas as number) < 0
-    || (instance.numReplicas as number) > 50
+    || !(instance.numReplicas === null || (
+      REFLECT_APPLY(
+        NUMBER_IS_SAFE_INTEGER,
+        NUMBER_CONSTRUCTOR,
+        [instance.numReplicas],
+      ) === true
+      && (instance.numReplicas as number) >= 0
+      && (instance.numReplicas as number) <= 50
+    ))
     || !ARRAY_IS_ARRAY(instance.activeDeployments)
     || instance.activeDeployments.length > 100
     || !exactKeys(instance.domains, ["serviceDomains", "customDomains"])
@@ -857,7 +859,7 @@ export function parseRailwayApplicationDeploymentAttestationProviderSnapshotResp
     serviceInstanceId: instance.id,
     serviceId: instance.serviceId,
     environmentId: instance.environmentId,
-    numReplicas: instance.numReplicas as number,
+    numReplicas: instance.numReplicas as number | null,
     latestDeployment,
     activeDeployments,
     domains,

@@ -91,16 +91,20 @@ const CHECK_KEYS = [
   "collateralInventoryExact",
   "collateralStateUnchanged",
   "costPolicyExact",
+  "configuredTopologyExact",
   "deploymentExact",
   "durableIntentExact",
   "gitAutodeployAbsent",
   "githubMainExact",
+  "immediatePrewriteExact",
   "policyExact",
   "prerequisiteExact",
   "reconciliationCompleted",
   "runtimeHealthExact",
   "runtimeReadinessExact",
   "runtimeStartupExact",
+  "fencedRuntimeAbsentBeforeWrite",
+  "fencedRuntimeAbsentPostflight",
   "sourceAuthorityExact",
   "sourceReasserted",
   "targetPostflightAttempted",
@@ -114,6 +118,22 @@ const CHECK_KEYS = [
   "writeTokenScopeExact",
 ] as const;
 
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [
+    key,
+    canonicalKeyOrder(record[key]),
+  ]));
+}
+
+function topologySha256(value: unknown): string {
+  return crypto.createHash("sha256").update(
+    `${JSON.stringify(canonicalKeyOrder(value), null, 2)}\n`,
+  ).digest("hex");
+}
+
 function deploymentReceipt(
   phase: "fenced" | "active",
   outcome: "deployed" | "reconciled_success" | "already_deployed" =
@@ -123,8 +143,20 @@ function deploymentReceipt(
   const runtime = phase === "fenced"
     ? { health: null, startup: null, ready: null }
     : { health: "1".repeat(64), startup: "2".repeat(64), ready: "3".repeat(64) };
+  const configuredReplicas = phase === "fenced" ? 0 : 1;
+  const topologyBase = {
+    configuredReplicas,
+    configuredRegions: [
+      { region: "asia-southeast1-eqsg3a", numReplicas: configuredReplicas },
+      { region: "europe-west4-drams3a", numReplicas: 0 },
+    ],
+  };
+  const topology = {
+    ...topologyBase,
+    configuredTopologySha256: topologySha256(topologyBase),
+  };
   return {
-    schemaVersion: "pintpath-railway-application-deployment-executor/v5",
+    schemaVersion: "pintpath-railway-application-deployment-executor/v6",
     operation: "pintpath-railway-application-source-upload",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     target: "permanent-staging",
@@ -154,6 +186,20 @@ function deploymentReceipt(
     replicaCounts: phase === "fenced"
       ? { before: 0, after: 0 }
       : { before: 1, after: 1 },
+    legacyReplicaCounts: {
+      before: null,
+      immediatelyBeforeWrite: null,
+      after: null,
+    },
+    configuredTopology: {
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      before: topology,
+      immediatelyBeforeWrite: topology,
+      after: topology,
+    },
+    runtimeAbsence: phase === "fenced"
+      ? { required: true, immediatelyBeforeWrite: true, postflight: true }
+      : { required: false, immediatelyBeforeWrite: null, postflight: null },
     runtimeResponseSha256s: runtime,
     workerFencePrerequisite: null,
     checks: Object.fromEntries(CHECK_KEYS.map((key) => [key, true])),
@@ -402,6 +448,19 @@ describe("GitHub permanent-staging deployment authority", () => {
       replacementWindowExact: true,
     });
     expect(fetchImpl).toHaveBeenCalledTimes(9);
+  });
+
+  it("rejects configured-topology hash and runtime-absence tampering", async () => {
+    const topologyTamper = structuredClone(deploymentReceipt("active"));
+    topologyTamper.configuredTopology.after.configuredTopologySha256 =
+      "f".repeat(64);
+    await expect(harness({ deploymentReceipt: topologyTamper }).verify())
+      .rejects.toThrow("github_permanent_staging_deployment_receipt_invalid");
+
+    const absenceTamper = structuredClone(deploymentReceipt("fenced"));
+    absenceTamper.runtimeAbsence.postflight = false;
+    await expect(harness({ fencedDeploymentReceipt: absenceTamper }).verify())
+      .rejects.toThrow("github_permanent_staging_deployment_receipt_invalid");
   });
 
   it("also accepts GitHub REST projecting each static workflow name", async () => {

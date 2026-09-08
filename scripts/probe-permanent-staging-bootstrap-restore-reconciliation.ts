@@ -23,6 +23,15 @@ import {
   type BoundaryEvidence,
 } from "./lib/permanent-staging-cold-recovery.js";
 import {
+  parseRailwayMultiRegionReplicaTopology,
+  type RailwayRegionReplicaCount,
+} from "./lib/railway-multi-region-replica-topology.js";
+import {
+  workerFenceTopologyEvidence,
+  workerFenceTopologyEvidenceExact,
+  type WorkerFenceTopologySource,
+} from "./lib/worker-fence-topology-evidence.js";
+import {
   parseStagingWorkerBootstrapPrerequisitesVerification,
   type BootstrapConsumerOperation,
   type BootstrapPath,
@@ -30,7 +39,7 @@ import {
 } from "./verify-permanent-staging-worker-bootstrap-prerequisites.js";
 
 export const STAGING_BOOTSTRAP_RESTORE_RECONCILIATION_SCHEMA =
-  "pintpath-permanent-staging-bootstrap-restore-reconciliation/v1" as const;
+  "pintpath-permanent-staging-bootstrap-restore-reconciliation/v2" as const;
 
 const REPOSITORY = "blackmagic30/Beer";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
@@ -51,6 +60,8 @@ const MAXIMUM_PROVIDER_ROUNDS = 61;
 const MAXIMUM_RUNTIME_ROUNDS = 61;
 const RECONCILIATION_INTERVAL_MS = 5_000;
 const RUNTIME_ROUTES = ["/health", "/startup", "/ready"] as const;
+const PRIMARY_REGION = "asia-southeast1-eqsg3a";
+const OPTIONAL_ZERO_REGION = "europe-west4-drams3a";
 
 export const STAGING_BOOTSTRAP_RESTORE_EMPTY_PATCH_QUERY =
   `query PintPathStagingBootstrapRestoreEmptyPatch(
@@ -76,10 +87,15 @@ export const STAGING_BOOTSTRAP_RESTORE_DISCOVERY_QUERY =
 
 export const STAGING_BOOTSTRAP_RESTORE_SNAPSHOT_QUERY =
   `query PintPathStagingBootstrapRestoreSnapshot(
+  $projectId: String!
   $environmentId: String!
   $serviceId: String!
   $deploymentId: String!
 ) {
+  environment(id:$environmentId,projectId:$projectId) {
+    id
+    config(decryptVariables:false)
+  }
   serviceInstance(environmentId:$environmentId,serviceId:$serviceId) {
     id
     serviceId
@@ -117,6 +133,8 @@ interface Arguments {
 interface RestoreState {
   readonly patchEmpty: true;
   readonly snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot;
+  readonly configuredReplicas: number;
+  readonly configuredRegions: readonly RailwayRegionReplicaCount[];
 }
 
 interface RuntimeProof {
@@ -148,6 +166,7 @@ interface Checks {
   deploymentAndTopologyUnchanged: boolean;
   runtimeAfterExact: boolean;
   boundaryPostflightExact: boolean;
+  configuredTopologyEvidenceExact: boolean;
   terminalEvidenceExact: boolean;
 }
 
@@ -215,6 +234,7 @@ function emptyChecks(): Checks {
     deploymentAndTopologyUnchanged: false,
     runtimeAfterExact: false,
     boundaryPostflightExact: false,
+    configuredTopologyEvidenceExact: false,
     terminalEvidenceExact: false,
   };
 }
@@ -343,7 +363,7 @@ function stateExact(
   const active = snapshot.activeDeployments[0];
   return snapshot.serviceId === SERVICE_ID &&
     snapshot.environmentId === ENVIRONMENT_ID &&
-    snapshot.numReplicas === 1 &&
+    configuredOneExact(state.configuredReplicas, state.configuredRegions) &&
     snapshot.latestDeployment.id === snapshot.deployment.id &&
     snapshot.latestDeployment.status === "SUCCESS" &&
     snapshot.latestDeployment.deploymentStopped === false &&
@@ -363,8 +383,34 @@ function stateExact(
     domain.targetPort === APPLICATION_TARGET_PORT;
 }
 
+function configuredOneExact(
+  configuredReplicas: unknown,
+  configuredRegions: unknown,
+): boolean {
+  if (configuredReplicas !== 1 || !Array.isArray(configuredRegions) ||
+    (configuredRegions.length !== 1 && configuredRegions.length !== 2)) {
+    return false;
+  }
+  if (!configuredRegions.every((entry) =>
+    record(entry) && typeof entry.region === "string" &&
+    typeof entry.numReplicas === "number")) return false;
+  const primary = configuredRegions.filter((entry) =>
+    entry.region === PRIMARY_REGION && entry.numReplicas === 1);
+  const optional = configuredRegions.filter((entry) =>
+    entry.region === OPTIONAL_ZERO_REGION && entry.numReplicas === 0);
+  return primary.length === 1 &&
+    optional.length === configuredRegions.length - 1;
+}
+
 function stateCanonical(state: RestoreState): string {
-  return canonical(state);
+  const { numReplicas: legacyNumReplicas, ...snapshot } = state.snapshot;
+  void legacyNumReplicas;
+  return canonical({
+    patchEmpty: state.patchEmpty,
+    configuredReplicas: state.configuredReplicas,
+    configuredRegions: state.configuredRegions,
+    snapshot,
+  });
 }
 
 function topologyCanonical(state: RestoreState): string {
@@ -372,12 +418,54 @@ function topologyCanonical(state: RestoreState): string {
     serviceInstanceId: state.snapshot.serviceInstanceId,
     serviceId: state.snapshot.serviceId,
     environmentId: state.snapshot.environmentId,
-    numReplicas: state.snapshot.numReplicas,
+    configuredReplicas: state.configuredReplicas,
+    configuredRegions: state.configuredRegions,
     latestDeployment: state.snapshot.latestDeployment,
     activeDeployments: state.snapshot.activeDeployments,
     domains: state.snapshot.domains,
     deployment: state.snapshot.deployment,
   });
+}
+
+function topologySource(state: RestoreState): WorkerFenceTopologySource {
+  return {
+    configuredTopology: {
+      configuredReplicas: state.configuredReplicas,
+      regions: state.configuredRegions,
+    },
+    numReplicas: state.snapshot.numReplicas,
+  };
+}
+
+function parseRestoreStateSnapshot(
+  value: unknown,
+): Omit<RestoreState, "patchEmpty"> | null {
+  if (!record(value) || !record(value.data) ||
+    !record(value.data.environment) ||
+    value.data.environment.id !== ENVIRONMENT_ID) return null;
+  const configured = parseRailwayMultiRegionReplicaTopology(
+    value.data.environment.config,
+    SERVICE_ID,
+  );
+  if (configured.kind !== "configured" ||
+    !configuredOneExact(configured.configuredTotal, configured.regions)) {
+    return null;
+  }
+  const snapshot = parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
+    JSON.stringify({
+      data: {
+        serviceInstance: value.data.serviceInstance,
+        deployment: value.data.deployment,
+      },
+    }),
+  );
+  return snapshot
+    ? {
+      snapshot,
+      configuredReplicas: configured.configuredTotal,
+      configuredRegions: configured.regions,
+    }
+    : null;
 }
 
 function parseDiscovery(value: unknown): string | null {
@@ -407,19 +495,18 @@ async function readState(
       { environmentId: ENVIRONMENT_ID, serviceId: SERVICE_ID },
     ));
     if (!patch || patch.environmentId !== ENVIRONMENT_ID || !deploymentId) return null;
-    const snapshot = parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
-      JSON.stringify(await railwayCall(
-        fetchImpl,
-        token,
-        STAGING_BOOTSTRAP_RESTORE_SNAPSHOT_QUERY,
-        {
-          environmentId: ENVIRONMENT_ID,
-          serviceId: SERVICE_ID,
-          deploymentId,
-        },
-      )),
-    );
-    return snapshot ? { patchEmpty: true, snapshot } : null;
+    const snapshot = parseRestoreStateSnapshot(await railwayCall(
+      fetchImpl,
+      token,
+      STAGING_BOOTSTRAP_RESTORE_SNAPSHOT_QUERY,
+      {
+        projectId: PROJECT_ID,
+        environmentId: ENVIRONMENT_ID,
+        serviceId: SERVICE_ID,
+        deploymentId,
+      },
+    ));
+    return snapshot ? { patchEmpty: true, ...snapshot } : null;
   } catch {
     return null;
   }
@@ -655,7 +742,10 @@ export async function runPermanentStagingBootstrapRestoreReconciliationProbe(
       environmentId: ENVIRONMENT_ID,
       serviceId: SERVICE_ID,
       deploymentIdSha256: liveDeploymentIdSha256,
-      replicasObserved: 1,
+      replicasObserved: before.configuredReplicas,
+      configuredReplicasObserved: before.configuredReplicas,
+      configuredRegionsObserved: before.configuredRegions,
+      legacyReplicasObserved: before.snapshot.numReplicas,
       providerBeforeSha256: sha256(stateCanonical(before)),
       boundaryPreflightReceiptSha256: boundaryBefore.receiptSha256,
       providerMutationAllowed: false,
@@ -698,6 +788,22 @@ export async function runPermanentStagingBootstrapRestoreReconciliationProbe(
     checks.repositoryReasserted = checks.repositoryBeforeExact &&
       checks.repositoryAfterExact;
     if (!checks.repositoryReasserted) throw new Error("repository_drift");
+    checks.configuredTopologyEvidenceExact = workerFenceTopologyEvidenceExact(
+      workerFenceTopologyEvidence(
+        "permanent-staging",
+        topologySource(before),
+        null,
+        topologySource(after),
+      ),
+      {
+        target: "permanent-staging",
+        operation: "restore",
+        writeAttempted: false,
+      },
+    );
+    if (!checks.configuredTopologyEvidenceExact) {
+      throw new Error("configured_topology_evidence_invalid");
+    }
     outcome = "reconciled_one_after_runner_loss";
   } catch (error) {
     failureCode = error instanceof Error ? error.message : "unexpected_failure";
@@ -721,8 +827,8 @@ export async function runPermanentStagingBootstrapRestoreReconciliationProbe(
       bootstrapPath: args.bootstrapPath,
       startedAt,
       completedAt: new Date(dependencies.now()).toISOString(),
-      replicasBefore: 1,
-      replicasAfter: 1,
+      replicasBefore: before.configuredReplicas,
+      replicasAfter: after.configuredReplicas,
       attempts: 0,
       retryAllowed: false,
       observationSha256,
@@ -746,6 +852,12 @@ export async function runPermanentStagingBootstrapRestoreReconciliationProbe(
         stateAfterSha256: sha256(stateCanonical(after)),
         topologyBeforeSha256: sha256(topologyCanonical(before)),
         topologyAfterSha256: sha256(topologyCanonical(after)),
+        configuredTopologyEvidence: workerFenceTopologyEvidence(
+          "permanent-staging",
+          topologySource(before),
+          null,
+          topologySource(after),
+        ),
         stagedPatchEmptyBefore: before.patchEmpty,
         stagedPatchEmptyAfter: after.patchEmpty,
       },
@@ -798,8 +910,12 @@ export async function runPermanentStagingBootstrapRestoreReconciliationProbe(
     failureCode,
     candidateSha: args?.candidateSha ?? null,
     bootstrapPath: args?.bootstrapPath ?? null,
-    replicasBefore: before?.snapshot.numReplicas ?? null,
-    replicasAfter: after?.snapshot.numReplicas ?? null,
+    replicasBefore: before?.configuredReplicas ?? null,
+    replicasAfter: after?.configuredReplicas ?? null,
+    configuredRegionsBefore: before?.configuredRegions ?? null,
+    configuredRegionsAfter: after?.configuredRegions ?? null,
+    legacyReplicasBefore: before?.snapshot.numReplicas ?? null,
+    legacyReplicasAfter: after?.snapshot.numReplicas ?? null,
     attempts: 0,
     priorAmbiguousRestoreRunId: args?.priorRestoreRunId ?? null,
     reviewedAuthoritySha256,
@@ -812,10 +928,14 @@ export async function runPermanentStagingBootstrapRestoreReconciliationProbe(
 }
 
 export const stagingBootstrapRestoreReconciliationInternals = {
+  configuredOneExact,
   githubAuthorityExact,
   parseArguments,
+  parseRestoreStateSnapshot,
   parseReviewedAuthority,
   stateExact,
+  stateCanonical,
+  topologyCanonical,
 };
 
 if (process.argv[1] &&

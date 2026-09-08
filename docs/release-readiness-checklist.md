@@ -11,8 +11,13 @@ the exact deploy-suppressed production Postgres source re-pin recovery,
 Postgres HA/PITR enable-and-verify, exact disposable-restore teardown, the
 four-job post-promotion recovery activation, and the one canonical production
 `pintpath.au` close/open state machine.
-Each is executable only after its own protected approval, exact current-`main`
-authority, and immediate `readiness:railway:mutation-boundary` preflight. The
+Each is executable only with its environment-scoped credentials, exact
+current-`main` automated authority, and immediate
+`readiness:railway:mutation-boundary` preflight. Every operator GitHub
+Environment uses **zero required reviewers, zero wait timers, and protected
+`main` only**; Environment entry is not human authorization. Reviewed-candidate
+history, independent cryptographic signatures, signed change references, and
+the workflow's fail-closed checks remain mandatory. The
 source-lock repair alone requires the documented exact mutable/armed baseline
 and permits only `sourceImageExact`, `autoUpdatesDisabledExact`, and
 `sourceReferenceImmutable` to be false before its reviewed no-deploy write; its
@@ -186,13 +191,18 @@ there against disposable Postgres, Redis, Supabase Auth, and private Storage.
 No raw recovery byte crosses a GitHub artifact. Require exactly 18 evidence
 leaves and exactly 20 final activation files.
 
-Before approving capture, dispatch and hold the protected activation, record
-its assigned `GITHUB_RUN_ID`, then create, sign, independently verify, and
-install the singleton emergency arm plus both exact-run teardown authorities
-in the non-interactive cleanup environment, then publish the arm through the
-protected manager's dedicated-ref compare-and-swap. An OPEN state mechanically
-rejects a second run; same-target linked renewal prevents expiry from stranding
-cleanup. Both provider cleanup steps remain independent. Supabase
+The current activation workflow selects only the two static base labels. It
+does not implement an authoritative exact-run hold, and it cannot exclude a
+standing runner with either base label from claiming a job. This is an
+explicit hard NO-GO: do not dispatch activation until a separately reviewed
+successor updates the workflow, controller, tests, and evidence contract to
+enforce exact-run eligibility. A human GitHub Environment approval is not a
+workaround. The future exact-run control must still bind the singleton
+emergency arm plus both independently verified teardown authorities in the
+non-interactive cleanup environment and publish the arm through the protected
+manager's dedicated-ref compare-and-swap. An OPEN state mechanically rejects a
+second run; same-target linked renewal prevents expiry from stranding cleanup.
+Both provider cleanup steps remain independent. Supabase
 `cleanupMode=orderly` must bind the exact Storage purge receipt for green;
 emergency cleanup never greens the chain. Use standard cancel only, and forbid
 force-cancel until independent observations prove Railway and Supabase absent.
@@ -233,7 +243,10 @@ authentic observations and independent approval exist.
 
 Use the [external launch evidence checklist](external-launch-signoffs.md) for the ordered owner, command, pass/fail, stop-condition, and evidence checklist for all 13 required IDs.
 
-Create a canonical, protected GitHub environment named `production`, then configure these environment secrets for both hourly user/venue monitoring and the manual gate:
+Create a canonical, protected GitHub environment named `production` with zero
+required reviewers, zero wait timers, and deployment branches and tags limited
+to protected `main` only. Configure these environment secrets for both hourly
+user/venue monitoring and the manual gate:
 
 ```text
 PINTPATH_SMOKE_USER_EMAIL

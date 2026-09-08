@@ -33,7 +33,7 @@ import {
 } from "./lib/permanent-staging-cold-recovery.js";
 
 export const COLD_PREPARE_RECONCILIATION_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-prepare-reconciliation/v1" as const;
+  "pintpath-permanent-staging-cold-prepare-reconciliation/v2" as const;
 
 interface Checks {
   policyExact: boolean;
@@ -128,7 +128,7 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
     readState: () => readColdRecoveryState(
       dependencies.fetchImpl,
       dependencies.env.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN ?? "",
-      null,
+      1,
     ),
     readPrivateEvidence,
     reassertRepositoryState,
@@ -203,7 +203,7 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
     if (!checks.boundaryPreflightExact) throw new Error("boundary_invalid");
     before = await dependencies.readState();
     checks.exactPreparedDeadStateBefore = before !== null &&
-      before.numReplicas === null;
+      before.numReplicas === null && before.configuredReplicas === 1;
     checks.maintenanceRowsBeforeExact = before !== null &&
       maintenanceRowsAfterExact(before.rows);
     checks.serviceRoleSealedBefore = before !== null &&
@@ -228,6 +228,8 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
       environmentId: COLD_RECOVERY_LOCK.environmentId,
       serviceId: COLD_RECOVERY_LOCK.serviceId,
       replicasObserved: null,
+      configuredReplicasObserved: 1,
+      configuredRegionsObserved: before!.configuredRegions,
       providerBeforeSha256: sha256(fullStateCanonical(before!)),
       boundaryPreflightReceiptSha256: boundaryBefore.receiptSha256,
       providerMutationAllowed: false,
@@ -257,13 +259,14 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
     checks.postflightAttempted = true;
     after = await dependencies.readState();
     checks.exactPreparedDeadStateAfter = after !== null &&
-      after.numReplicas === null;
+      after.numReplicas === null && after.configuredReplicas === 1;
     checks.maintenanceRowsAfterExact = after !== null &&
       maintenanceRowsAfterExact(after.rows);
     checks.serviceRoleSealedAfter = after !== null &&
       serviceRoleSealedExact(after.rows);
     checks.deploymentSourceAndTopologyUnchanged = after !== null &&
-      coldIdentityCanonical(after) === coldIdentityCanonical(before!);
+      coldIdentityCanonical(after) === coldIdentityCanonical(before!) &&
+      canonical(after.configuredRegions) === canonical(before!.configuredRegions);
     checks.collateralVariablesUnchanged = after !== null &&
       canonical(nonMaintenanceRows(after.rows)) ===
         canonical(nonMaintenanceRows(before!.rows));
@@ -293,6 +296,10 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
       completedAt: new Date(dependencies.now()).toISOString(),
       replicasBefore: null,
       replicasAfter: null,
+      configuredReplicasBefore: before.configuredReplicas,
+      configuredReplicasAfter: after.configuredReplicas,
+      configuredRegionsBefore: before.configuredRegions,
+      configuredRegionsAfter: after.configuredRegions,
       attempts: 0,
       retryAllowed: false,
       observationSha256,
@@ -316,6 +323,8 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
         stateAfterSha256: sha256(fullStateCanonical(after)),
         topologyBeforeSha256: sha256(coldIdentityCanonical(before)),
         topologyAfterSha256: sha256(coldIdentityCanonical(after)),
+        configuredTopologyBeforeSha256: sha256(canonical(before.configuredRegions)),
+        configuredTopologyAfterSha256: sha256(canonical(after.configuredRegions)),
         collateralVariablesBeforeSha256: sha256(canonical(
           nonMaintenanceRows(before.rows),
         )),
@@ -332,7 +341,7 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
         postflightReceiptSha256: boundaryAfter.receiptSha256,
       },
       checks: { ...checks, terminalEvidenceExact: true },
-      nextRequiredProof: "EXACT_COLD_NULL_TO_ZERO_QUIESCENCE_PROOF",
+      nextRequiredProof: "EXACT_CONFIGURED_ONE_TO_ZERO_QUIESCENCE_PROOF",
       normalPrepareMutationReceiptClaimed: false,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
@@ -362,6 +371,8 @@ export async function runPermanentStagingColdPrepareReconciliationProbe(
     sourceSha: args?.expectedDeploymentSha ?? null,
     replicasBefore: before?.numReplicas ?? null,
     replicasAfter: after?.numReplicas ?? null,
+    configuredReplicasBefore: before?.configuredReplicas ?? null,
+    configuredReplicasAfter: after?.configuredReplicas ?? null,
     attempts: 0,
     priorAmbiguousPrepareRunId: args?.priorPrepareRunId ?? null,
     replacementTerminalSha256,

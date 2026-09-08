@@ -17,6 +17,14 @@ import {
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 import { parseProductionApplicationDeploymentReceipt } from
   "./lib/production-application-deployment-receipt.js";
+import {
+  PROTECTED_SCALE_RECEIPT_SCHEMA,
+  protectedScaleReplicaTopologyExact,
+} from "./lib/protected-scale-receipt-topology.js";
+import {
+  PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA,
+  productionRouteReplicaTopologyExact,
+} from "./execute-protected-production-route-mutation.js";
 
 export const PRODUCTION_POST_PROMOTION_PITR_OBSERVATION_SCHEMA =
   "pintpath-production-post-promotion-pitr-observation/v1" as const;
@@ -110,14 +118,15 @@ function readPrivate(filename: string, uid: number): Buffer {
   }
 }
 
-function parseCanonical(source: Buffer): Json {
+function parseProducerReceipt(source: Buffer): Json {
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(source));
   } catch {
     fail("evidence_invalid");
   }
-  if (!isObject(value) || canonicalPostgresBackupJson(value) !== source.toString("utf8")) {
+  if (!isObject(value)
+    || `${JSON.stringify(value, null, 2)}\n` !== source.toString("utf8")) {
     fail("evidence_invalid");
   }
   return value;
@@ -149,7 +158,8 @@ function finalDeploymentFromScale(
     "durableIntentExact", "repositoryPrewriteReasserted",
     "writeAttemptedAtMostOnce", "acknowledgementExact", "postflightAttempted",
     "targetPostflightExact", "runtimePostflightExact", "candidateUnchanged",
-    "deploymentUnchanged", "boundaryPostflightExact", "terminalEvidenceExact",
+    "deploymentUnchanged", "replicaTopologyEvidenceExact",
+    "boundaryPostflightExact", "terminalEvidenceExact",
     "finalReceiptEvidenceExact",
   ];
   if (
@@ -158,9 +168,9 @@ function finalDeploymentFromScale(
       "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256",
       "attempts", "retryAllowed", "intentSha256", "terminalEvidenceSha256",
       "commandStdoutSha256", "commandStderrSha256",
-      "productionActivationPrerequisite", "checks",
+      "productionActivationPrerequisite", "replicaTopology", "checks",
     ])
-    || value.schemaVersion !== "pintpath-permanent-staging-scale-operation/v2"
+    || value.schemaVersion !== PROTECTED_SCALE_RECEIPT_SCHEMA
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.direction !== "converge-production-two"
     || !["scaled", "already_converged"].includes(String(value.outcome))
@@ -194,6 +204,12 @@ function finalDeploymentFromScale(
     || prerequisite.deploymentBeforeIdSha256 !== deploymentIdSha256
     || prerequisite.deploymentAfterIdSha256 !== value.deploymentIdSha256
     || prerequisite.deploymentAfterIdSha256 === prerequisite.deploymentBeforeIdSha256
+    || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
+      direction: "converge-production-two",
+      attempts: attempts === 0 ? 0 : 1,
+      desiredReplicas: 2,
+      target: "production",
+    })
     || !exactKeys(checks, checkKeys)
     || Object.entries(checks).some(([name, entry]) => (
       name === "durableIntentExact" ? entry !== (attempts === 1) : entry !== true
@@ -227,7 +243,8 @@ function verifyClosedRouteForCapture(
     "boundaryPreflightExact", "durableIntentExact", "repositoryPrewriteReasserted",
     "providerPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
     "postflightAttempted", "patchPostflightEmpty", "inventoryTransitionExact",
-    "candidateDeploymentPostflightExact", "boundaryPostflightExact",
+    "candidateDeploymentPostflightExact", "replicaTopologyEvidenceExact",
+    "boundaryPostflightExact",
     "publicRuntimePostflightExact", "terminalEvidenceExact", "finalReceiptEvidenceExact",
   ];
   if (
@@ -242,9 +259,9 @@ function verifyClosedRouteForCapture(
       "promotionRecoveryReceiptSha256", "productionDeploymentReceiptSha256",
       "productionScaleReceiptSha256", "closedRouteReceiptSha256", "attempts",
       "retryAllowed", "intentSha256", "terminalEvidenceSha256",
-      "beforeInventorySha256", "afterInventorySha256", "checks",
+      "beforeInventorySha256", "afterInventorySha256", "replicaTopology", "checks",
     ])
-    || value.schemaVersion !== "pintpath-protected-production-route-mutation/v1"
+    || value.schemaVersion !== PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || !["closed", "closed_reconciled_after_lost_ack"].includes(String(value.outcome))
     || value.operation !== "close"
@@ -273,6 +290,7 @@ function verifyClosedRouteForCapture(
     || value.closedRouteReceiptSha256 !== null
     || value.attempts !== 1
     || value.retryAllowed !== false
+    || !productionRouteReplicaTopologyExact(value.replicaTopology)
     || !exactKeys(checks, checkKeys)
     || checks.publicRuntimePostflightExact !== false
     || Object.entries(checks).some(([name, entry]) => (
@@ -382,13 +400,13 @@ export async function observeProductionPostPromotionPitr(
   const closeSource = readPrivate(args.get("--closed-route-receipt")!, Number(uid));
   const manifestSource = readPrivate(args.get("--logical-backup-manifest")!, Number(uid));
   try {
-    const deployment = parseCanonical(deploymentSource);
+    const deployment = parseProducerReceipt(deploymentSource);
     const deploymentReceipt = parseProductionApplicationDeploymentReceipt(
       deployment,
       candidateSha,
     );
     if (!deploymentReceipt) fail("deployment_invalid");
-    const scale = parseCanonical(scaleSource);
+    const scale = parseProducerReceipt(scaleSource);
     const finalDeploymentIdSha256 = finalDeploymentFromScale(
       scale,
       candidateSha,
@@ -396,7 +414,7 @@ export async function observeProductionPostPromotionPitr(
       deploymentReceipt.completedAt,
     );
     verifyClosedRouteForCapture(
-      parseCanonical(closeSource),
+      parseProducerReceipt(closeSource),
       candidateSha,
       finalDeploymentIdSha256,
       sha256(deploymentSource),

@@ -936,7 +936,10 @@ describe("protected provider mutation workflows", () => {
       },
     });
     expect(executor).toContain(
-      '"service", "scale", `${REGION}=${desiredReplicas}`',
+      'commandAssignments = scaleAssignments(before, desiredReplicas!)',
+    );
+    expect(executor).toContain(
+      '"service", "scale", ...commandAssignments',
     );
     expect(executor).toContain("attempts = 1");
     expect(executor).toContain("checks.postflightAttempted = true");
@@ -957,6 +960,9 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain('--expected-deployment-sha "$CANDIDATE_SHA"');
     expect(workflow).not.toContain("inputs.expected_deployed_sha");
     expect(workflow).toContain("PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN");
+    expect(workflow).toContain(
+      "PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}",
+    );
     expect(workflow).not.toContain("converge-production-one");
     expect(workflow).not.toMatch(/pull_request:|push:|schedule:/);
   });

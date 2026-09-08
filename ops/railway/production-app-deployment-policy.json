@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-railway-application-deployment-policy/v5",
+  "schemaVersion": "pintpath-railway-application-deployment-policy/v6",
   "policyId": "pintpath-production-app-source-upload",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -84,6 +84,21 @@
     "automaticMaintenanceCandidateBindingRequired": true,
     "maximumObservationSeconds": 900,
     "pollIntervalSeconds": 10
+  },
+  "configuredTopologyContract": {
+    "authoritativeSource": "environment.config(decryptVariables:false)",
+    "configuredReplicaCounts": [
+      1,
+      2
+    ],
+    "allowedConfiguredRegions": [
+      "asia-southeast1-eqsg3a"
+    ],
+    "solePositiveRegion": "asia-southeast1-eqsg3a",
+    "zeroOnlyRegions": [],
+    "legacyReplicaCountRole": "nullable-observation-only",
+    "immediateProviderReassertionRequired": true,
+    "postflightProviderReassertionRequired": true
   },
   "prerequisite": {
     "target": "permanent-staging",

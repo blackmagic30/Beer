@@ -8,6 +8,12 @@ import { parseProductionApplicationDeploymentReceipt } from
 import {
   PROTECTED_STAGING_SCALE_SCHEMA,
 } from "./execute-protected-permanent-staging-scale.js";
+import { protectedScaleReplicaTopologyExact } from
+  "./lib/protected-scale-receipt-topology.js";
+import {
+  PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA,
+  productionRouteReplicaTopologyExact,
+} from "./execute-protected-production-route-mutation.js";
 import {
   postgresReviewedPriceOperationAuthorizationReceiptSchema,
   postgresReviewedPriceOperationReceiptSchema,
@@ -50,7 +56,7 @@ import { parseStrictArguments } from "./lib/strict-arguments.js";
 export const PRODUCTION_PROMOTION_RECOVERY_POLICY_SHA256 =
   "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988" as const;
 const POLICY_PATH = "ops/railway/production-promotion-recovery-policy.json";
-const ROUTE_SCHEMA = "pintpath-protected-production-route-mutation/v1";
+const ROUTE_SCHEMA = PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA;
 const PICTURE_PITR_SCHEMA = "pintpath-production-post-promotion-pitr-observation/v1";
 const STOCK_LOCALHOST_PROFILE = "railway-stock-localhost-ca-v1";
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -208,6 +214,20 @@ function parseCanonicalJson(file: HeldFile): Json {
   return value;
 }
 
+function parseProducerReceiptJson(file: HeldFile): Json {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.source));
+  } catch {
+    fail("evidence_invalid");
+  }
+  if (!isObject(value)
+    || `${JSON.stringify(value, null, 2)}\n` !== file.source.toString("utf8")) {
+    fail("evidence_not_producer_canonical");
+  }
+  return value;
+}
+
 function allTrue(value: unknown): boolean {
   return isObject(value)
     && Object.keys(value).length > 0
@@ -305,7 +325,8 @@ function verifyClosedRoute(
     "boundaryPreflightExact", "durableIntentExact", "repositoryPrewriteReasserted",
     "providerPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
     "postflightAttempted", "patchPostflightEmpty", "inventoryTransitionExact",
-    "candidateDeploymentPostflightExact", "boundaryPostflightExact",
+    "candidateDeploymentPostflightExact", "replicaTopologyEvidenceExact",
+    "boundaryPostflightExact",
     "publicRuntimePostflightExact", "terminalEvidenceExact", "finalReceiptEvidenceExact",
   ];
   const checksExact = isObject(checks)
@@ -331,6 +352,7 @@ function verifyClosedRoute(
     || value.productionDeploymentReceiptSha256 !== deploymentReceiptSha256
     || value.productionScaleReceiptSha256 !== scaleReceiptSha256
     || value.closedRouteReceiptSha256 !== null
+    || !productionRouteReplicaTopologyExact(value.replicaTopology)
     || !checksExact
     || (value.outcome === "closed" && checks.acknowledgementExact !== true)
     || (value.outcome === "closed_reconciled_after_lost_ack"
@@ -359,7 +381,8 @@ function verifyScale(
     "durableIntentExact", "repositoryPrewriteReasserted",
     "writeAttemptedAtMostOnce", "acknowledgementExact", "postflightAttempted",
     "targetPostflightExact", "runtimePostflightExact", "candidateUnchanged",
-    "deploymentUnchanged", "boundaryPostflightExact", "terminalEvidenceExact",
+    "deploymentUnchanged", "replicaTopologyEvidenceExact",
+    "boundaryPostflightExact", "terminalEvidenceExact",
     "finalReceiptEvidenceExact",
   ];
   if (
@@ -368,7 +391,7 @@ function verifyScale(
       "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256",
       "attempts", "retryAllowed", "intentSha256", "terminalEvidenceSha256",
       "commandStdoutSha256", "commandStderrSha256",
-      "productionActivationPrerequisite", "checks",
+      "productionActivationPrerequisite", "replicaTopology", "checks",
     ])
     || value.schemaVersion !== PROTECTED_STAGING_SCALE_SCHEMA
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
@@ -405,6 +428,12 @@ function verifyScale(
     || prerequisite.deploymentBeforeIdSha256 !== deploymentBeforeActivationIdSha256
     || prerequisite.deploymentAfterIdSha256 !== value.deploymentIdSha256
     || prerequisite.deploymentAfterIdSha256 === prerequisite.deploymentBeforeIdSha256
+    || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
+      direction: "converge-production-two",
+      attempts: attempts === 0 ? 0 : 1,
+      desiredReplicas: 2,
+      target: "production",
+    })
     || !isObject(checks)
     || !exactKeys(checks, checkKeys)
     || Object.entries(checks).some(([name, entry]) => (
@@ -427,14 +456,16 @@ function verifyClosedRouteTerminal(
   deploymentIdSha256: string,
 ): void {
   if (
-    value.schemaVersion !== "pintpath-protected-production-route-terminal/v1"
+    value.schemaVersion !== "pintpath-protected-production-route-terminal/v2"
     || !isObject(value.receipt)
     || value.receipt.schemaVersion !== ROUTE_SCHEMA
     || value.receipt.operation !== "close"
     || value.receipt.candidateSha !== candidateSha
     || value.receipt.deploymentIdSha256 !== deploymentIdSha256
     || value.receipt.terminalEvidenceSha256 !== null
+    || !productionRouteReplicaTopologyExact(value.receipt.replicaTopology)
     || !isObject(value.receipt.checks)
+    || value.receipt.checks.replicaTopologyEvidenceExact !== true
     || value.receipt.checks.terminalEvidenceExact !== false
     || value.receipt.checks.finalReceiptEvidenceExact !== false
   ) fail("closed_route_terminal_invalid");
@@ -1036,6 +1067,7 @@ export async function attestProductionPromotionRecovery(
       ));
     }
   const json = (name: string) => parseCanonicalJson(files.get(name)!);
+  const producerJson = (name: string) => parseProducerReceiptJson(files.get(name)!);
   const authorityFile = files.get("authority")!;
   if (authorityFile.sha256 !== args.get("--authority-sha256")) fail("authority_hash_mismatch");
   const authority = productionPromotionRecoveryAuthoritySchema.parse(json("authority"));
@@ -1104,16 +1136,19 @@ export async function attestProductionPromotionRecovery(
     fail("activation_authority_binding_invalid");
   }
 
-  const deployment = verifyDeployment(json("production-deployment-receipt"), candidateSha);
+  const deployment = verifyDeployment(
+    producerJson("production-deployment-receipt"),
+    candidateSha,
+  );
   const scale = verifyScale(
-    json("production-scale-receipt"), candidateSha,
+    producerJson("production-scale-receipt"), candidateSha,
     deployment.deploymentIdSha256, deployment.completedAt,
   );
   if (scale.deploymentIdSha256 !== authority.productionDeploymentIdSha256) {
     fail("production_scale_invalid");
   }
   const closedRoute = verifyClosedRoute(
-    json("closed-route-receipt"), candidateSha, scale.deploymentIdSha256,
+    producerJson("closed-route-receipt"), candidateSha, scale.deploymentIdSha256,
     authority.productionDeploymentReceiptSha256,
     authority.productionScaleReceiptSha256,
   );
@@ -1121,7 +1156,7 @@ export async function attestProductionPromotionRecovery(
     fail("closed_route_invalid");
   }
   verifyClosedRouteTerminal(
-    json("closed-route-terminal"), candidateSha, scale.deploymentIdSha256,
+    producerJson("closed-route-terminal"), candidateSha, scale.deploymentIdSha256,
   );
 
   const authorization = postgresReviewedPriceOperationAuthorizationReceiptSchema.parse(

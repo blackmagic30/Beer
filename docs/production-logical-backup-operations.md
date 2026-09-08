@@ -145,12 +145,17 @@ or address.
 
 Create these GitHub environments:
 
-1. `production-backup`: require an independent reviewer, restrict it to
-   protected `main`, and store only backup-specific secrets and reviewed pins.
-2. `production-restore-drill`: require an independent recovery reviewer and a
-   newly provisioned, isolated target for the current UTC month.
+1. `production-backup`: zero required reviewers, zero wait timers, protected
+   `main` only, and only backup-specific secrets and reviewed pins.
+2. `production-restore-drill`: zero required reviewers, zero wait timers,
+   protected `main` only, and a newly provisioned, isolated target for the
+   current UTC month.
 3. `production-backup-alerts`: no database/provider secret; expose only the
-   paging webhook. Environment approval must not delay failure paging.
+   paging webhook. No Environment gate may delay failure paging.
+
+Environment entry scopes credentials; it does not replace the independently
+reviewed immutable egress policy, distinct backup/recovery principals,
+authenticated receipts, or signed change reference.
 
 Provision the distinct private Supabase operational-copy project/bucket and
 the separately administered Melbourne S3 Object-Lock authority described in

@@ -10,13 +10,21 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
+import { COLD_QUIESCE_SUCCESSOR_BINDING } from
+  "./lib/permanent-staging-cold-recovery.js";
+import {
+  PROTECTED_SCALE_RECEIPT_SCHEMA,
+  protectedScaleReplicaTopologyExact,
+} from "./lib/protected-scale-receipt-topology.js";
+import { workerFenceTopologyEvidenceExact } from
+  "./lib/worker-fence-topology-evidence.js";
 
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
-  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v4" as const;
+  "pintpath-permanent-staging-worker-bootstrap-prerequisites/v5" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "a7fe6184aa6849cc9b4f8f4652cf02608a21685153144812e9de0e2567bbb548" as const;
+  "b329d08110047897743d4acf7d55e2e7c4aac59c4d16b5e632380bde6079416d" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -34,29 +42,29 @@ const SCALE_POLICY_SHA256 =
 const FENCED_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-fenced-app-deployment-policy.json";
 const FENCED_DEPLOYMENT_POLICY_SHA256 =
-  "a46ee1af6d8b3afcfe38d595767e28fcae53a9716730e4cff33b9da39e0ff7df";
+  "9cea6cacfd33a2f4500532ecf2d4564c1dbc9595eb6835e2935ff9e2df5186f5";
 const ACTIVE_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-app-deployment-policy.json";
 const ACTIVE_DEPLOYMENT_POLICY_SHA256 =
-  "c73fe315f98c5736f4ac31963e11361b059881d7ec5774292e7e8048ff6f8986";
+  "49367b816eb1ad86e32aa85dd9bd1e2297743760e113a23c882b3776b5afad77";
 const COLD_RECOVERY_POLICY_PATH =
   "ops/railway/permanent-staging-cold-recovery-policy.json";
 const COLD_RECOVERY_POLICY_SHA256 =
-  "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd";
+  "83d3c01669719a2e061b120b5337f2b6119782357a1b68f5537352b0e8e15666";
 const VENUE_DIRECTORY_POLICY_PATH =
   "ops/supabase/permanent-staging-venue-directory-policy.json";
 const VENUE_DIRECTORY_POLICY_SHA256 =
-  "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f";
+  "3474e28c413e908b7dac76190709553e753fed39df753a1cd273b29f161bfcef";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const COLD_SOURCE_SHA = "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba";
 const WORKER_RECEIPT_SCHEMA =
-  "pintpath-automatic-maintenance-worker-fence-terminal/v1";
+  "pintpath-automatic-maintenance-worker-fence-terminal/v2";
 const SCALE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-scale-operation/v2";
+  PROTECTED_SCALE_RECEIPT_SCHEMA;
 const DEPLOYMENT_RECEIPT_SCHEMA =
-  "pintpath-railway-application-deployment-executor/v5";
+  "pintpath-railway-application-deployment-executor/v6";
 const VENUE_DIRECTORY_RECEIPT_SCHEMA =
   "pintpath-permanent-staging-venue-directory-terminal/v1";
 const VENUE_DIRECTORY_PLAN_SCHEMA =
@@ -72,15 +80,15 @@ const VENUE_DIRECTORY_MIGRATION_APPLY_SCHEMA =
 const VENUE_DIRECTORY_CONSTRAINT_POSTFLIGHT_SCHEMA =
   "pintpath-permanent-staging-venue-constraint-postflight/v1";
 const COLD_PREPARE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-prepare/v1";
+  "pintpath-permanent-staging-cold-prepare/v2";
 const COLD_PREPARE_RECONCILIATION_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-prepare-reconciliation/v1";
+  "pintpath-permanent-staging-cold-prepare-reconciliation/v2";
 const RESTORE_RECONCILIATION_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-bootstrap-restore-reconciliation/v1";
+  "pintpath-permanent-staging-bootstrap-restore-reconciliation/v2";
 const ACTIVATE_RECONCILIATION_RECEIPT_SCHEMA =
-  "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v1";
+  "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v2";
 const COLD_QUIESCE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce/v2";
+  "pintpath-permanent-staging-cold-quiesce/v4";
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -1072,6 +1080,7 @@ const WORKER_CHECK_KEYS = [
   "postflightAttempted",
   "targetPostflightExact",
   "postflightDeploymentExact",
+  "configuredTopologyEvidenceExact",
   "runtimeRoutesPolledExact",
   "runtimeMaintenanceStateExact",
   "boundaryPostflightExact",
@@ -1100,6 +1109,7 @@ const ACTIVATE_RECONCILIATION_CHECK_KEYS = [
   "collateralVariablesUnchanged",
   "runtimeActivatedAfter",
   "boundaryPostflightExact",
+  "configuredTopologyEvidenceExact",
   "terminalEvidenceExact",
 ] as const;
 
@@ -1198,6 +1208,7 @@ function validateWorkerReceipt(
         "sourceAfterSha",
         "topologyBeforeSha256",
         "topologyAfterSha256",
+        "configuredTopologyEvidence",
         "collateralVariablesBeforeSha256",
         "collateralVariablesAfterSha256",
       ]) ||
@@ -1209,6 +1220,14 @@ function validateWorkerReceipt(
       provider.sourceAfterSha !== candidateSha ||
       !SHA256_PATTERN.test(String(provider.topologyBeforeSha256)) ||
       provider.topologyAfterSha256 !== provider.topologyBeforeSha256 ||
+      !workerFenceTopologyEvidenceExact(
+        provider.configuredTopologyEvidence,
+        {
+          target: "permanent-staging",
+          operation: "activate",
+          writeAttempted: false,
+        },
+      ) ||
       !SHA256_PATTERN.test(String(provider.collateralVariablesBeforeSha256)) ||
       provider.collateralVariablesAfterSha256 !==
         provider.collateralVariablesBeforeSha256 ||
@@ -1321,6 +1340,7 @@ function validateWorkerReceipt(
       "mutationCallCount",
       "acknowledgementExact",
       "providerBeforeSha256",
+      "providerImmediatelyBeforeWriteSha256",
       "providerAfterSha256",
       "deploymentBeforeIdSha256",
       "deploymentAfterIdSha256",
@@ -1329,7 +1349,9 @@ function validateWorkerReceipt(
       "sourcePreservedExact",
       "deploymentIdChanged",
       "topologyBeforeSha256",
+      "topologyImmediatelyBeforeWriteSha256",
       "topologyAfterSha256",
+      "configuredTopologyEvidence",
       "collateralVariablesBeforeSha256",
       "collateralVariablesAfterSha256",
     ])
@@ -1337,6 +1359,8 @@ function validateWorkerReceipt(
     || provider.mutationCallCount !== 1
     || provider.acknowledgementExact !== true
     || !SHA256_PATTERN.test(String(provider.providerBeforeSha256))
+    || provider.providerImmediatelyBeforeWriteSha256
+      !== provider.providerBeforeSha256
     || !SHA256_PATTERN.test(String(provider.providerAfterSha256))
     || !SHA256_PATTERN.test(String(provider.deploymentBeforeIdSha256))
     || !SHA256_PATTERN.test(String(provider.deploymentAfterIdSha256))
@@ -1345,7 +1369,18 @@ function validateWorkerReceipt(
     || provider.sourcePreservedExact !== true
     || provider.deploymentIdChanged !== enabled
     || !SHA256_PATTERN.test(String(provider.topologyBeforeSha256))
+    || provider.topologyImmediatelyBeforeWriteSha256
+      !== provider.topologyBeforeSha256
     || !SHA256_PATTERN.test(String(provider.topologyAfterSha256))
+    || provider.topologyAfterSha256 !== provider.topologyBeforeSha256
+    || !workerFenceTopologyEvidenceExact(
+      provider.configuredTopologyEvidence,
+      {
+        target: "permanent-staging",
+        operation,
+        writeAttempted: true,
+      },
+    )
     || !SHA256_PATTERN.test(String(provider.collateralVariablesBeforeSha256))
     || provider.collateralVariablesAfterSha256
       !== provider.collateralVariablesBeforeSha256
@@ -1494,6 +1529,9 @@ const COLD_PREPARE_RECONCILIATION_CHECK_KEYS = [
 const COLD_QUIESCE_CHECK_KEYS = [
   "policyExact",
   "githubAuthorityExact",
+  "successorBridgeExact",
+  "successorBridgeTopologyExact",
+  "successorBridgePrewriteReasserted",
   "preparePrerequisiteExact",
   "tokenScopesExact",
   "cliExact",
@@ -1509,6 +1547,7 @@ const COLD_QUIESCE_CHECK_KEYS = [
   "acknowledgementExact",
   "postflightAttempted",
   "exactZeroStateAfter",
+  "configuredTopologyTransitionExact",
   "maintenanceRowsAfterExact",
   "deploymentSourceAndTopologyUnchanged",
   "collateralVariablesUnchanged",
@@ -1521,6 +1560,7 @@ const COLD_RECONCILE_QUIESCE_CHECK_KEYS = [
   "policyExact",
   "githubAuthorityExact",
   "reviewedAuthorityExact",
+  "successorBridgeExact",
   "preparePrerequisiteExact",
   "tokenScopeExact",
   "scaleCredentialAbsent",
@@ -1543,6 +1583,47 @@ const COLD_RECONCILE_QUIESCE_CHECK_KEYS = [
   "terminalEvidenceExact",
 ] as const;
 
+const COLD_CONFIGURED_REGION_BEFORE = "europe-west4-drams3a" as const;
+const COLD_DEPLOYMENT_REGION = "asia-southeast1-eqsg3a" as const;
+const COLD_ALLOWED_QUIESCE_REGIONS = new Set<string>([
+  COLD_CONFIGURED_REGION_BEFORE,
+  COLD_DEPLOYMENT_REGION,
+]);
+
+interface ColdConfiguredRegion {
+  readonly region: string;
+  readonly numReplicas: number;
+}
+
+function coldConfiguredRegions(
+  value: unknown,
+  expected: "one" | "zero",
+): readonly ColdConfiguredRegion[] | null {
+  if (!Array.isArray(value) || value.length > COLD_ALLOWED_QUIESCE_REGIONS.size) {
+    return null;
+  }
+  const regions: ColdConfiguredRegion[] = [];
+  for (const entry of value) {
+    if (!exactKeys(entry, ["region", "numReplicas"]) ||
+      typeof entry.region !== "string" ||
+      !COLD_ALLOWED_QUIESCE_REGIONS.has(entry.region) ||
+      typeof entry.numReplicas !== "number" ||
+      !Number.isSafeInteger(entry.numReplicas) ||
+      entry.numReplicas < 0 || entry.numReplicas > 1) return null;
+    regions.push({ region: entry.region, numReplicas: entry.numReplicas });
+  }
+  if (new Set(regions.map((entry) => entry.region)).size !== regions.length ||
+    regions.some((entry, index) =>
+      index > 0 && regions[index - 1]!.region >= entry.region)) return null;
+  if (expected === "one") {
+    return canonical(regions) === canonical([{
+      region: COLD_CONFIGURED_REGION_BEFORE,
+      numReplicas: 1,
+    }]) ? regions : null;
+  }
+  return regions.every((entry) => entry.numReplicas === 0) ? regions : null;
+}
+
 function validateColdProviderEvidence(
   value: unknown,
   prepare: boolean,
@@ -1554,6 +1635,8 @@ function validateColdProviderEvidence(
     "stateAfterSha256",
     "topologyBeforeSha256",
     "topologyAfterSha256",
+    "configuredTopologyBeforeSha256",
+    "configuredTopologyAfterSha256",
     "collateralVariablesBeforeSha256",
     "collateralVariablesAfterSha256",
     "sourceDisconnectedBefore",
@@ -1573,6 +1656,8 @@ function validateColdProviderEvidence(
     value.stateAfterSha256,
     value.topologyBeforeSha256,
     value.topologyAfterSha256,
+    value.configuredTopologyBeforeSha256,
+    value.configuredTopologyAfterSha256,
     value.collateralVariablesBeforeSha256,
     value.collateralVariablesAfterSha256,
   ].some((item) => !SHA256_PATTERN.test(String(item)))
@@ -1606,6 +1691,10 @@ function validateColdPrepareReceipt(
       "completedAt",
       "replicasBefore",
       "replicasAfter",
+      "configuredReplicasBefore",
+      "configuredReplicasAfter",
+      "configuredRegionsBefore",
+      "configuredRegionsAfter",
       "attempts",
       "retryAllowed",
       "observationSha256",
@@ -1631,6 +1720,14 @@ function validateColdPrepareReceipt(
     const boundary = record(value.mutationBoundaryEvidence)
       ? value.mutationBoundaryEvidence
       : null;
+    const configuredBefore = coldConfiguredRegions(
+      value.configuredRegionsBefore,
+      "one",
+    );
+    const configuredAfter = coldConfiguredRegions(
+      value.configuredRegionsAfter,
+      "one",
+    );
     if (value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED" ||
       value.operation !== "cold-prepare" ||
       value.target !== "permanent-staging" ||
@@ -1639,6 +1736,14 @@ function validateColdPrepareReceipt(
       value.sourceSha !== COLD_SOURCE_SHA ||
       completed.milliseconds < started.milliseconds ||
       value.replicasBefore !== null || value.replicasAfter !== null ||
+      value.configuredReplicasBefore !== 1 ||
+      value.configuredReplicasAfter !== 1 ||
+      configuredBefore === null || configuredAfter === null ||
+      canonical(configuredBefore) !== canonical(configuredAfter) ||
+      provider.configuredTopologyBeforeSha256 !==
+        sha256(canonical(configuredBefore)) ||
+      provider.configuredTopologyAfterSha256 !==
+        sha256(canonical(configuredAfter)) ||
       value.attempts !== 0 || value.retryAllowed !== false ||
       !SHA256_PATTERN.test(String(value.observationSha256)) ||
       !exactKeys(replacement, ["runId", "terminalSha256"]) ||
@@ -1658,7 +1763,8 @@ function validateColdPrepareReceipt(
       !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256)) ||
       !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256)) ||
       !exactTrueChecks(value.checks, COLD_PREPARE_RECONCILIATION_CHECK_KEYS) ||
-      value.nextRequiredProof !== "EXACT_COLD_NULL_TO_ZERO_QUIESCENCE_PROOF" ||
+      value.nextRequiredProof !==
+        "EXACT_CONFIGURED_ONE_TO_ZERO_QUIESCENCE_PROOF" ||
       value.normalPrepareMutationReceiptClaimed !== false ||
       value.secretMaterialIncluded !== false ||
       value.secretDerivedCommitmentsIncluded !== false) fail("receipt_invalid");
@@ -1670,8 +1776,8 @@ function validateColdPrepareReceipt(
       candidateSha,
       sourceSha: COLD_SOURCE_SHA,
       deploymentIdSha256: String(provider.deploymentIdSha256),
-      replicasBefore: null,
-      replicasAfter: null,
+      replicasBefore: 1,
+      replicasAfter: 1,
       startedAtMs: started.milliseconds,
       completedAtMs: completed.milliseconds,
     };
@@ -1689,6 +1795,10 @@ function validateColdPrepareReceipt(
     "completedAt",
     "replicasBefore",
     "replicasAfter",
+    "configuredReplicasBefore",
+    "configuredReplicasAfter",
+    "configuredRegionsBefore",
+    "configuredRegionsAfter",
     "attempts",
     "retryAllowed",
     "intentSha256",
@@ -1710,6 +1820,14 @@ function validateColdPrepareReceipt(
   const boundary = record(value.mutationBoundaryEvidence)
     ? value.mutationBoundaryEvidence
     : null;
+  const configuredBefore = coldConfiguredRegions(
+    value.configuredRegionsBefore,
+    "one",
+  );
+  const configuredAfter = coldConfiguredRegions(
+    value.configuredRegionsAfter,
+    "one",
+  );
   if (
     value.schemaVersion !== COLD_PREPARE_RECEIPT_SCHEMA
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
@@ -1722,6 +1840,15 @@ function validateColdPrepareReceipt(
     || completed.milliseconds < started.milliseconds
     || value.replicasBefore !== null
     || value.replicasAfter !== null
+    || value.configuredReplicasBefore !== 1
+    || value.configuredReplicasAfter !== 1
+    || configuredBefore === null
+    || configuredAfter === null
+    || canonical(configuredBefore) !== canonical(configuredAfter)
+    || provider.configuredTopologyBeforeSha256 !==
+      sha256(canonical(configuredBefore))
+    || provider.configuredTopologyAfterSha256 !==
+      sha256(canonical(configuredAfter))
     || value.attempts !== 1
     || value.retryAllowed !== false
     || !SHA256_PATTERN.test(String(value.intentSha256))
@@ -1732,7 +1859,8 @@ function validateColdPrepareReceipt(
     || !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256))
     || !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256))
     || !exactTrueChecks(value.checks, COLD_PREPARE_CHECK_KEYS)
-    || value.nextRequiredProof !== "EXACT_COLD_NULL_TO_ZERO_QUIESCENCE_PROOF"
+    || value.nextRequiredProof !==
+      "EXACT_CONFIGURED_ONE_TO_ZERO_QUIESCENCE_PROOF"
     || value.normalOneToZeroReceiptClaimed !== false
     || value.secretMaterialIncluded !== false
     || value.secretDerivedCommitmentsIncluded !== false
@@ -1745,8 +1873,8 @@ function validateColdPrepareReceipt(
     candidateSha,
     sourceSha: COLD_SOURCE_SHA,
     deploymentIdSha256: String(provider.deploymentIdSha256),
-    replicasBefore: null,
-    replicasAfter: null,
+    replicasBefore: 1,
+    replicasAfter: 1,
     startedAtMs: started.milliseconds,
     completedAtMs: completed.milliseconds,
   };
@@ -1768,19 +1896,24 @@ function validateColdQuiesceReceipt(
     "sourceSha",
     "startedAt",
     "completedAt",
-    "replicasBefore",
-    "replicasAfter",
+    "configuredReplicasBefore",
+    "configuredReplicasAfter",
+    "configuredRegionsBefore",
+    "configuredRegionsAfter",
+    "legacyReplicasBefore",
+    "legacyReplicasAfter",
     "attempts",
     "retryAllowed",
     "intentSha256",
     "preparePrerequisite",
+    "successorBridge",
     "runnerLossReconciliation",
     "commandEvidence",
     "providerEvidence",
     "mutationBoundaryEvidence",
     "checks",
     "nextRequiredProof",
-    "normalOneToZeroReceiptClaimed",
+    "configuredOneToZeroReceiptClaimed",
     "secretMaterialIncluded",
     "secretDerivedCommitmentsIncluded",
   ])) fail("receipt_invalid");
@@ -1790,6 +1923,9 @@ function validateColdQuiesceReceipt(
     ? value.preparePrerequisite
     : null;
   const command = record(value.commandEvidence) ? value.commandEvidence : null;
+  const successorBridge = record(value.successorBridge)
+    ? value.successorBridge
+    : null;
   const runnerLoss = record(value.runnerLossReconciliation)
     ? value.runnerLossReconciliation
     : null;
@@ -1797,17 +1933,25 @@ function validateColdQuiesceReceipt(
   const boundary = record(value.mutationBoundaryEvidence)
     ? value.mutationBoundaryEvidence
     : null;
-  const reconciled = value.outcome === "reconciled_success";
-  const initialized = value.outcome === "initialized_zero";
+  const reconciled = value.outcome === "reconciled_configured_zero";
+  const configuredZero = value.outcome === "configured_zero";
   const runnerLossReconciled =
-    value.outcome === "reconciled_zero_after_runner_loss";
+    value.outcome === "reconciled_configured_zero_after_runner_loss";
+  const configuredBefore = coldConfiguredRegions(
+    value.configuredRegionsBefore,
+    runnerLossReconciled ? "zero" : "one",
+  );
+  const configuredAfter = coldConfiguredRegions(
+    value.configuredRegionsAfter,
+    "zero",
+  );
   const checks = record(value.checks) ? value.checks : null;
   const commonChecks = COLD_QUIESCE_CHECK_KEYS.filter(
     (key) => key !== "acknowledgementExact",
   );
   const checkRelationExact = exactKeys(checks, COLD_QUIESCE_CHECK_KEYS) &&
     commonChecks.every((key) => checks[key] === true) &&
-    checks.acknowledgementExact === initialized;
+    checks.acknowledgementExact === configuredZero;
   const runnerLossChecksExact = exactTrueChecks(
     checks,
     COLD_RECONCILE_QUIESCE_CHECK_KEYS,
@@ -1816,7 +1960,7 @@ function validateColdQuiesceReceipt(
     (SHA256_PATTERN.test(String(command?.stdoutSha256)) &&
       SHA256_PATTERN.test(String(command?.stderrSha256))) ||
     (command?.stdoutSha256 === null && command?.stderrSha256 === null);
-  const commandRelationExact = initialized
+  const commandRelationExact = configuredZero
     ? command?.exitCode === 0 && command?.timedOut === false && commandHashesExact &&
       command?.stdoutSha256 !== null && command?.stderrSha256 !== null
     : reconciled &&
@@ -1826,8 +1970,50 @@ function validateColdQuiesceReceipt(
       typeof command?.timedOut === "boolean" &&
       !(command?.exitCode === 0 && command?.timedOut === false) &&
       commandHashesExact;
+  const successorVerifiedAt = timestamp(
+    successorBridge?.verifiedAt,
+    "receipt_invalid",
+  );
+  const successorBridgeRelationExact = exactKeys(successorBridge, [
+    "bridgeSha256",
+    "reviewedAuthoritySha256",
+    "currentRunId",
+    "currentPrepareRunId",
+    "priorCandidateSha",
+    "priorQuiesceRunId",
+    "priorArtifactId",
+    "priorArtifactDigest",
+    "liveStateSha256",
+    "verifiedAt",
+    "deadline",
+  ]) &&
+    SHA256_PATTERN.test(String(successorBridge.bridgeSha256)) &&
+    SHA256_PATTERN.test(String(successorBridge.reviewedAuthoritySha256)) &&
+    RUN_ID_PATTERN.test(String(successorBridge.currentRunId)) &&
+    RUN_ID_PATTERN.test(String(successorBridge.currentPrepareRunId)) &&
+    successorBridge.priorCandidateSha ===
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorCandidateSha &&
+    successorBridge.priorQuiesceRunId ===
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorQuiesceRunId &&
+    successorBridge.priorArtifactId ===
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactId &&
+    successorBridge.priorArtifactDigest ===
+      COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactDigest &&
+    SHA256_PATTERN.test(String(successorBridge.liveStateSha256)) &&
+    successorBridge.deadline === COLD_QUIESCE_SUCCESSOR_BINDING.deadline &&
+    successorVerifiedAt.milliseconds >=
+      Date.parse(COLD_QUIESCE_SUCCESSOR_BINDING.priorCompletedAt) &&
+    successorVerifiedAt.milliseconds <
+      Date.parse(COLD_QUIESCE_SUCCESSOR_BINDING.deadline) &&
+    successorVerifiedAt.milliseconds <= started.milliseconds &&
+    (runnerLossReconciled || successorBridge.liveStateSha256 ===
+      provider.stateBeforeSha256);
   const runnerLossRelationExact = runnerLossReconciled &&
-    value.replicasBefore === 0 && value.replicasAfter === 0 &&
+    value.configuredReplicasBefore === 0 &&
+    value.configuredReplicasAfter === 0 &&
+    configuredBefore !== null && configuredAfter !== null &&
+    canonical(configuredBefore) === canonical(configuredAfter) &&
+    value.legacyReplicasBefore === value.legacyReplicasAfter &&
     value.attempts === 0 &&
     exactKeys(runnerLoss, [
       "priorAmbiguousQuiesceRunId",
@@ -1836,6 +2022,7 @@ function validateColdQuiesceReceipt(
       "providerWriteAttempted",
     ]) &&
     RUN_ID_PATTERN.test(String(runnerLoss.priorAmbiguousQuiesceRunId)) &&
+    successorBridge?.currentRunId === runnerLoss.priorAmbiguousQuiesceRunId &&
     SHA256_PATTERN.test(String(runnerLoss.reviewedAuthoritySha256)) &&
     runnerLoss.scaleCredentialPresent === false &&
     runnerLoss.providerWriteAttempted === false &&
@@ -1847,28 +2034,39 @@ function validateColdQuiesceReceipt(
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.operation !== "cold-quiesce"
     || value.target !== "permanent-staging"
-    || (!initialized && !reconciled && !runnerLossReconciled)
+    || (!configuredZero && !reconciled && !runnerLossReconciled)
     || value.failureCode !== null
     || value.candidateSha !== candidateSha
     || value.sourceSha !== COLD_SOURCE_SHA
     || completed.milliseconds < started.milliseconds
-    || (!runnerLossReconciled && value.replicasBefore !== null)
-    || value.replicasAfter !== 0
+    || (!runnerLossReconciled && value.configuredReplicasBefore !== 1)
+    || value.configuredReplicasAfter !== 0
+    || configuredBefore === null
+    || configuredAfter === null
+    || !(value.legacyReplicasBefore === null || value.legacyReplicasBefore === 0)
+    || !(value.legacyReplicasAfter === null || value.legacyReplicasAfter === 0)
+    || (!runnerLossReconciled && value.legacyReplicasBefore !== null)
+    || provider.configuredTopologyBeforeSha256 !==
+      sha256(canonical(configuredBefore))
+    || provider.configuredTopologyAfterSha256 !==
+      sha256(canonical(configuredAfter))
     || (!runnerLossReconciled && value.attempts !== 1)
     || value.retryAllowed !== false
     || !SHA256_PATTERN.test(String(value.intentSha256))
     || !exactKeys(prerequisite, ["runId", "verificationSha256"])
     || !RUN_ID_PATTERN.test(String(prerequisite.runId))
+    || successorBridge?.currentPrepareRunId !== prerequisite.runId
     || !SHA256_PATTERN.test(String(prerequisite.verificationSha256))
     || !exactKeys(command, ["exitCode", "timedOut", "stdoutSha256", "stderrSha256"])
+    || !successorBridgeRelationExact
     || (runnerLossReconciled
       ? !runnerLossRelationExact
       : runnerLoss !== null || !commandRelationExact || !checkRelationExact)
     || !exactKeys(boundary, ["preflightReceiptSha256", "postflightReceiptSha256"])
     || !SHA256_PATTERN.test(String(boundary.preflightReceiptSha256))
     || !SHA256_PATTERN.test(String(boundary.postflightReceiptSha256))
-    || value.nextRequiredProof !== "EXACT_CANDIDATE_UPLOAD_AT_EXPLICIT_ZERO"
-    || value.normalOneToZeroReceiptClaimed !== false
+    || value.nextRequiredProof !== "EXACT_CANDIDATE_UPLOAD_AT_CONFIGURED_ZERO"
+    || value.configuredOneToZeroReceiptClaimed !== !runnerLossReconciled
     || value.secretMaterialIncluded !== false
     || value.secretDerivedCommitmentsIncluded !== false
   ) fail("receipt_invalid");
@@ -1877,14 +2075,14 @@ function validateColdQuiesceReceipt(
     schemaVersion: COLD_QUIESCE_RECEIPT_SCHEMA,
     sha256: sha256(source),
     outcome: runnerLossReconciled
-      ? "reconciled_zero_after_runner_loss"
-      : initialized
-      ? "initialized_zero"
-      : "reconciled_success",
+      ? "reconciled_configured_zero_after_runner_loss"
+      : configuredZero
+      ? "configured_zero"
+      : "reconciled_configured_zero",
     candidateSha,
     sourceSha: COLD_SOURCE_SHA,
     deploymentIdSha256: String(provider.deploymentIdSha256),
-    replicasBefore: runnerLossReconciled ? 0 : null,
+    replicasBefore: runnerLossReconciled ? 0 : 1,
     replicasAfter: 0,
     startedAtMs: started.milliseconds,
     completedAtMs: completed.milliseconds,
@@ -1910,6 +2108,7 @@ const SCALE_CHECK_KEYS = [
   "runtimePostflightExact",
   "candidateUnchanged",
   "deploymentUnchanged",
+  "replicaTopologyEvidenceExact",
   "boundaryPostflightExact",
   "terminalEvidenceExact",
   "finalReceiptEvidenceExact",
@@ -1938,6 +2137,7 @@ const RESTORE_RECONCILIATION_CHECK_KEYS = [
   "deploymentAndTopologyUnchanged",
   "runtimeAfterExact",
   "boundaryPostflightExact",
+  "configuredTopologyEvidenceExact",
   "terminalEvidenceExact",
 ] as const;
 
@@ -2031,6 +2231,7 @@ function validateScaleReceipt(
         "stateAfterSha256",
         "topologyBeforeSha256",
         "topologyAfterSha256",
+        "configuredTopologyEvidence",
         "stagedPatchEmptyBefore",
         "stagedPatchEmptyAfter",
       ]) ||
@@ -2040,6 +2241,14 @@ function validateScaleReceipt(
         .some((item) => !SHA256_PATTERN.test(String(item))) ||
       provider.stateAfterSha256 !== provider.stateBeforeSha256 ||
       provider.topologyAfterSha256 !== provider.topologyBeforeSha256 ||
+      !workerFenceTopologyEvidenceExact(
+        provider.configuredTopologyEvidence,
+        {
+          target: "permanent-staging",
+          operation: "restore",
+          writeAttempted: false,
+        },
+      ) ||
       provider.stagedPatchEmptyBefore !== true ||
       provider.stagedPatchEmptyAfter !== true ||
       !exactKeys(runtime, [
@@ -2102,6 +2311,7 @@ function validateScaleReceipt(
     "commandStdoutSha256",
     "commandStderrSha256",
     "productionActivationPrerequisite",
+    "replicaTopology",
     "checks",
   ])) fail("receipt_invalid");
   const started = timestamp(value.startedAt, "receipt_invalid");
@@ -2125,6 +2335,14 @@ function validateScaleReceipt(
     || !SHA256_PATTERN.test(String(value.commandStdoutSha256))
     || !SHA256_PATTERN.test(String(value.commandStderrSha256))
     || value.productionActivationPrerequisite !== null
+    || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
+      direction: quiesce
+        ? "quiesce-staging-zero"
+        : "bootstrap-staging-one",
+      attempts: 1,
+      desiredReplicas: quiesce ? 0 : 1,
+      target: "staging",
+    })
     || !exactTrueChecks(value.checks, SCALE_CHECK_KEYS)
   ) fail("receipt_invalid");
   return {
@@ -2151,6 +2369,7 @@ const DEPLOYMENT_CHECK_KEYS = [
   "cliExact",
   "writeTokenScopeExact",
   "costPolicyExact",
+  "configuredTopologyExact",
   "prerequisiteExact",
   "workerFencePrerequisiteExact",
   "workerFenceDeploymentContinuityExact",
@@ -2159,6 +2378,7 @@ const DEPLOYMENT_CHECK_KEYS = [
   "gitAutodeployAbsent",
   "collateralInventoryExact",
   "durableIntentExact",
+  "immediatePrewriteExact",
   "sourceReasserted",
   "writeAttemptedAtMostOnce",
   "targetPostflightAttempted",
@@ -2169,10 +2389,86 @@ const DEPLOYMENT_CHECK_KEYS = [
   "runtimeHealthExact",
   "runtimeStartupExact",
   "runtimeReadinessExact",
+  "fencedRuntimeAbsentBeforeWrite",
+  "fencedRuntimeAbsentPostflight",
   "collateralStateUnchanged",
   "boundaryPostflightExact",
   "terminalEvidenceExact",
 ] as const;
+
+function nullableLegacyReplicaCount(value: unknown): boolean {
+  return value === null || (
+    typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= 50
+  );
+}
+
+function stagingTopologyEvidence(
+  value: unknown,
+  expectedReplicas: 0 | 1,
+): value is JsonRecord {
+  if (!exactKeys(value, [
+    "configuredReplicas",
+    "configuredRegions",
+    "configuredTopologySha256",
+  ]) || value.configuredReplicas !== expectedReplicas
+    || !Array.isArray(value.configuredRegions)) return false;
+  let previousRegion = "";
+  const seen = new Set<string>();
+  let asiaCount: number | null = null;
+  let total = 0;
+  for (const entry of value.configuredRegions) {
+    if (!exactKeys(entry, ["region", "numReplicas"])
+      || typeof entry.region !== "string"
+      || ![
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ].includes(entry.region)
+      || seen.has(entry.region)
+      || entry.region <= previousRegion
+      || typeof entry.numReplicas !== "number"
+      || !Number.isSafeInteger(entry.numReplicas)
+      || entry.numReplicas < 0 || entry.numReplicas > 50) return false;
+    if (entry.region === "asia-southeast1-eqsg3a") asiaCount = entry.numReplicas;
+    if (entry.region === "europe-west4-drams3a" && entry.numReplicas !== 0) {
+      return false;
+    }
+    total += entry.numReplicas;
+    seen.add(entry.region);
+    previousRegion = entry.region;
+  }
+  if (total !== expectedReplicas
+    || (expectedReplicas === 1 && asiaCount !== 1)) return false;
+  return value.configuredTopologySha256 === sha256(`${JSON.stringify(
+    canonicalCompactValue({
+    configuredReplicas: value.configuredReplicas,
+    configuredRegions: value.configuredRegions,
+    }),
+    null,
+    2,
+  )}\n`);
+}
+
+function stagingTopologyChain(
+  value: unknown,
+  expectedReplicas: 0 | 1,
+): boolean {
+  if (!exactKeys(value, [
+    "authoritativeSource",
+    "before",
+    "immediatelyBeforeWrite",
+    "after",
+  ]) || value.authoritativeSource !==
+    "environment.config(decryptVariables:false)"
+    || !stagingTopologyEvidence(value.before, expectedReplicas)
+    || !stagingTopologyEvidence(value.immediatelyBeforeWrite, expectedReplicas)
+    || !stagingTopologyEvidence(value.after, expectedReplicas)) return false;
+  return canonicalCompact(value.before)
+      === canonicalCompact(value.immediatelyBeforeWrite)
+    && canonicalCompact(value.before) === canonicalCompact(value.after);
+}
 
 function validateDeploymentReceipt(
   source: string,
@@ -2200,6 +2496,9 @@ function validateDeploymentReceipt(
     "boundaryPostflightSha256",
     "collateralSnapshotSha256s",
     "replicaCounts",
+    "legacyReplicaCounts",
+    "configuredTopology",
+    "runtimeAbsence",
     "runtimeResponseSha256s",
     "workerFencePrerequisite",
     "checks",
@@ -2208,6 +2507,11 @@ function validateDeploymentReceipt(
     ? value.collateralSnapshotSha256s
     : null;
   const replicas = record(value.replicaCounts) ? value.replicaCounts : null;
+  const legacyReplicas = record(value.legacyReplicaCounts)
+    ? value.legacyReplicaCounts
+    : null;
+  const configuredTopology = value.configuredTopology;
+  const runtimeAbsence = record(value.runtimeAbsence) ? value.runtimeAbsence : null;
   const runtime = record(value.runtimeResponseSha256s)
     ? value.runtimeResponseSha256s
     : null;
@@ -2249,6 +2553,20 @@ function validateDeploymentReceipt(
     || !exactKeys(replicas, ["before", "after"])
     || replicas.before !== expectedReplicas
     || replicas.after !== expectedReplicas
+    || !exactKeys(legacyReplicas, ["before", "immediatelyBeforeWrite", "after"])
+    || Object.values(legacyReplicas).some((item) =>
+      !nullableLegacyReplicaCount(item))
+    || !stagingTopologyChain(configuredTopology, expectedReplicas)
+    || !exactKeys(runtimeAbsence, [
+      "required", "immediatelyBeforeWrite", "postflight",
+    ])
+    || (kind === "fenced-deployment"
+      ? runtimeAbsence.required !== true
+        || runtimeAbsence.immediatelyBeforeWrite !== true
+        || runtimeAbsence.postflight !== true
+      : runtimeAbsence.required !== false
+        || runtimeAbsence.immediatelyBeforeWrite !== null
+        || runtimeAbsence.postflight !== null)
     || !exactKeys(runtime, ["health", "startup", "ready"])
     || (kind === "fenced-deployment"
       ? runtime.health !== null
@@ -3141,7 +3459,27 @@ async function verify(
       const boundPrepare = record(receiptInput.value.preparePrerequisite)
         ? receiptInput.value.preparePrerequisite
         : null;
-      if (!coldPrepare || boundPrepare?.runId !== coldPrepare.runId) {
+      const boundSuccessorBridge = record(receiptInput.value.successorBridge)
+        ? receiptInput.value.successorBridge
+        : null;
+      const bridgeVerifiedAtMs = Date.parse(
+        String(boundSuccessorBridge?.verifiedAt ?? ""),
+      );
+      const runnerLoss = record(receiptInput.value.runnerLossReconciliation)
+        ? receiptInput.value.runnerLossReconciliation
+        : null;
+      const runnerLossReconciled = receipt.outcome ===
+        "reconciled_configured_zero_after_runner_loss";
+      const bridgeRunAndChronologyExact = runnerLossReconciled
+        ? boundSuccessorBridge?.currentRunId ===
+            runnerLoss?.priorAmbiguousQuiesceRunId &&
+          bridgeVerifiedAtMs < run.startedAtMs
+        : boundSuccessorBridge?.currentRunId === input.runId &&
+          bridgeVerifiedAtMs >= run.startedAtMs &&
+          bridgeVerifiedAtMs <= run.completedAtMs;
+      if (!coldPrepare || boundPrepare?.runId !== coldPrepare.runId ||
+        !Number.isFinite(bridgeVerifiedAtMs) ||
+        !bridgeRunAndChronologyExact) {
         fail("receipt_invalid");
       }
     }

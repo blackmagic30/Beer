@@ -1,0 +1,204 @@
+{
+  "schemaVersion": "pintpath-github-operational-environment-policy/v1",
+  "repository": "blackmagic30/Beer",
+  "scope": "all-repository-environments",
+  "policy": {
+    "wait_timer": 0,
+    "prevent_self_review": false,
+    "reviewers": [],
+    "deployment_branch_policy": {
+      "protected_branches": false,
+      "custom_branch_policies": true
+    },
+    "deployment_branch_policies": [
+      {
+        "name": "main",
+        "type": "branch"
+      }
+    ]
+  },
+  "environments": [
+    {
+      "name": "disposable-restore-teardown",
+      "origin": "workflow"
+    },
+    {
+      "name": "permanent-staging-deployment",
+      "origin": "workflow"
+    },
+    {
+      "name": "permanent-staging-postgres-build-canary",
+      "origin": "workflow"
+    },
+    {
+      "name": "permanent-staging-postgres-migration-verifier-authority",
+      "origin": "workflow"
+    },
+    {
+      "name": "permanent-staging-provider-mutation",
+      "origin": "workflow"
+    },
+    {
+      "name": "permanent-staging-scale-evidence",
+      "origin": "workflow"
+    },
+    {
+      "name": "permanent-staging-supabase-legacy-disable",
+      "origin": "workflow"
+    },
+    {
+      "name": "permanent-staging-venue-directory",
+      "origin": "workflow"
+    },
+    {
+      "name": "postgres-ha-pitr-permanent-staging",
+      "origin": "workflow"
+    },
+    {
+      "name": "postgres-ha-pitr-production",
+      "origin": "workflow"
+    },
+    {
+      "name": "production",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-backup",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-backup-alerts",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-deployment",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-monitoring",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-monitoring-alerts",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-postgres-maintenance-role-limit",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-postgres-migration-verifier-authority",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-postgres-source-repin",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-promotion-recovery",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-promotion-recovery-activation",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-promotion-recovery-cleanup",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-restore-drill",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-route-close",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-route-open",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-runtime-configuration",
+      "origin": "workflow"
+    },
+    {
+      "name": "production-topology-configuration",
+      "origin": "workflow"
+    },
+    {
+      "name": "sublime-acceptance / production",
+      "origin": "live-unreferenced"
+    },
+    {
+      "name": "sublime-acceptance / staging",
+      "origin": "live-unreferenced"
+    }
+  ],
+  "dynamicWorkflowBindings": [
+    {
+      "workflow": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+      "expression": "${{ inputs.target == 'production' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}",
+      "resolvesTo": [
+        "permanent-staging-provider-mutation",
+        "production-runtime-configuration"
+      ],
+      "inputAuthority": {
+        "kind": "workflow-dispatch-choice",
+        "input": "target",
+        "values": [
+          "permanent-staging",
+          "production"
+        ]
+      }
+    },
+    {
+      "workflow": ".github/workflows/enable-postgres-ha-pitr.yml",
+      "expression": "postgres-ha-pitr-${{ inputs.target_environment }}",
+      "resolvesTo": [
+        "postgres-ha-pitr-permanent-staging",
+        "postgres-ha-pitr-production"
+      ],
+      "inputAuthority": {
+        "kind": "workflow-dispatch-choice",
+        "input": "target_environment",
+        "values": [
+          "permanent-staging",
+          "production"
+        ]
+      }
+    },
+    {
+      "workflow": ".github/workflows/provision-postgres-migration-verifier-authority.yml",
+      "expression": "${{ inputs.target_environment == 'production' && 'production-postgres-migration-verifier-authority' || 'permanent-staging-postgres-migration-verifier-authority' }}",
+      "resolvesTo": [
+        "permanent-staging-postgres-migration-verifier-authority",
+        "production-postgres-migration-verifier-authority"
+      ],
+      "inputAuthority": {
+        "kind": "workflow-dispatch-choice",
+        "input": "target_environment",
+        "values": [
+          "permanent-staging",
+          "production"
+        ]
+      }
+    },
+    {
+      "workflow": ".github/workflows/runtime-variable-worker.yml",
+      "expression": "${{ inputs.protected_environment == 'production-runtime-configuration' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}",
+      "resolvesTo": [
+        "permanent-staging-provider-mutation",
+        "production-runtime-configuration"
+      ],
+      "inputAuthority": {
+        "kind": "local-reusable-workflow-callers",
+        "input": "protected_environment",
+        "values": [
+          "permanent-staging-provider-mutation",
+          "production-runtime-configuration"
+        ]
+      }
+    }
+  ]
+}

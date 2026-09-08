@@ -10,6 +10,7 @@ import {
   STAGING_BOOTSTRAP_RESTORE_EMPTY_PATCH_QUERY,
   STAGING_BOOTSTRAP_RESTORE_RECONCILIATION_SCHEMA,
   STAGING_BOOTSTRAP_RESTORE_SNAPSHOT_QUERY,
+  stagingBootstrapRestoreReconciliationInternals,
 } from "../scripts/probe-permanent-staging-bootstrap-restore-reconciliation.js";
 import type { RailwayApplicationDeploymentAttestationProviderSnapshot } from
   "../src/lib/railway-application-deployment-attestation.js";
@@ -33,6 +34,12 @@ const CURRENT_RUN_ID = "714";
 const AUTHORITY_FILE = "/private/reviewed-authority.json";
 const PREREQUISITES_FILE = "/private/prerequisites-verification.json";
 const EVIDENCE_DIRECTORY = "/private/evidence";
+const PRIMARY_REGION = "asia-southeast1-eqsg3a";
+const OPTIONAL_ZERO_REGION = "europe-west4-drams3a";
+const CONFIGURED_ONE_REGIONS = Object.freeze([
+  Object.freeze({ region: PRIMARY_REGION, numReplicas: 1 }),
+  Object.freeze({ region: OPTIONAL_ZERO_REGION, numReplicas: 0 }),
+]);
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -40,12 +47,13 @@ function sha256(value: string): string {
 
 function snapshot(
   deploymentId = DEPLOYMENT_ID,
+  legacyNumReplicas: number | null = 1,
 ): RailwayApplicationDeploymentAttestationProviderSnapshot {
   return {
     serviceInstanceId: INSTANCE_ID,
     serviceId: SERVICE_ID,
     environmentId: ENVIRONMENT_ID,
-    numReplicas: 1,
+    numReplicas: legacyNumReplicas,
     latestDeployment: {
       id: deploymentId,
       status: "SUCCESS",
@@ -72,6 +80,50 @@ function snapshot(
       commitHash: CANDIDATE,
       imageDigest: `sha256:${"b".repeat(64)}`,
       patchId: null,
+    },
+  };
+}
+
+function configuredEnvironment(multiRegionConfig: unknown): Record<string, unknown> {
+  return {
+    services: {
+      [SERVICE_ID]: { deploy: { multiRegionConfig } },
+    },
+  };
+}
+
+function snapshotResponse(
+  config: unknown,
+  legacyNumReplicas: number | null = 1,
+): Record<string, unknown> {
+  const value = snapshot(DEPLOYMENT_ID, legacyNumReplicas);
+  return {
+    data: {
+      environment: { id: ENVIRONMENT_ID, config },
+      serviceInstance: {
+        id: value.serviceInstanceId,
+        serviceId: value.serviceId,
+        environmentId: value.environmentId,
+        numReplicas: value.numReplicas,
+        latestDeployment: value.latestDeployment,
+        activeDeployments: value.activeDeployments,
+        domains: {
+          serviceDomains: value.domains.map(({ kind: _kind, ...domain }) => domain),
+          customDomains: [],
+        },
+      },
+      deployment: {
+        id: value.deployment.id,
+        projectId: value.deployment.projectId,
+        environmentId: value.deployment.environmentId,
+        serviceId: value.deployment.serviceId,
+        snapshotId: value.deployment.snapshotId,
+        meta: {
+          commitHash: value.deployment.commitHash,
+          imageDigest: value.deployment.imageDigest,
+          patchId: value.deployment.patchId,
+        },
+      },
     },
   };
 }
@@ -181,6 +233,10 @@ function harness(options: {
   env?: Record<string, string | undefined>;
   authority?: string;
   states?: RailwayApplicationDeploymentAttestationProviderSnapshot[];
+  configuredRegions?: readonly {
+    readonly region: string;
+    readonly numReplicas: number;
+  }[];
   runtimeObserved?: boolean;
   repositoryStates?: boolean[];
 } = {}) {
@@ -189,7 +245,18 @@ function harness(options: {
   const states = options.states ?? [snapshot(), snapshot()];
   const readState = vi.fn(async () => {
     const next = states.shift();
-    return next ? { patchEmpty: true as const, snapshot: next } : null;
+    const configuredRegions = options.configuredRegions ?? CONFIGURED_ONE_REGIONS;
+    return next
+      ? {
+        patchEmpty: true as const,
+        snapshot: next,
+        configuredReplicas: configuredRegions.reduce(
+          (total, entry) => total + entry.numReplicas,
+          0,
+        ),
+        configuredRegions,
+      }
+      : null;
   });
   const parsePrerequisites = vi.fn(() => prerequisites());
   const probeRuntime = vi.fn().mockResolvedValue(
@@ -251,6 +318,12 @@ describe("permanent-staging bootstrap restore runner-loss reconciliation", () =>
       "bootstrap-staging-one-receipt.json",
     ]);
     const receipt = JSON.parse(fixture.writes[1]!.source) as Record<string, unknown>;
+    const observation = JSON.parse(fixture.writes[0]!.source) as Record<string, unknown>;
+    expect(observation).toMatchObject({
+      configuredReplicasObserved: 1,
+      configuredRegionsObserved: CONFIGURED_ONE_REGIONS,
+      legacyReplicasObserved: 1,
+    });
     expect(receipt).toMatchObject({
       schemaVersion: STAGING_BOOTSTRAP_RESTORE_RECONCILIATION_SCHEMA,
       operation: "restore",
@@ -301,6 +374,100 @@ describe("permanent-staging bootstrap restore runner-loss reconciliation", () =>
       replicasBefore: 1,
       replicasAfter: 1,
     });
+  });
+
+  it("accepts null legacy replica evidence when configured topology is exactly one", async () => {
+    const fixture = harness({
+      states: [snapshot(DEPLOYMENT_ID, null), snapshot(DEPLOYMENT_ID, null)],
+    });
+    await expect(fixture.result).resolves.toBe(0);
+
+    const observation = JSON.parse(fixture.writes[0]!.source) as Record<string, unknown>;
+    const receipt = JSON.parse(fixture.writes[1]!.source) as Record<string, unknown>;
+    expect(observation).toMatchObject({
+      configuredReplicasObserved: 1,
+      configuredRegionsObserved: CONFIGURED_ONE_REGIONS,
+      legacyReplicasObserved: null,
+    });
+    expect(receipt).toMatchObject({ replicasBefore: 1, replicasAfter: 1 });
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      replicasBefore: 1,
+      replicasAfter: 1,
+      legacyReplicasBefore: null,
+      legacyReplicasAfter: null,
+    });
+  });
+
+  it("does not treat benign legacy replica drift as authoritative provider drift", async () => {
+    const fixture = harness({
+      states: [snapshot(DEPLOYMENT_ID, 1), snapshot(DEPLOYMENT_ID, null)],
+    });
+    await expect(fixture.result).resolves.toBe(0);
+
+    const receipt = JSON.parse(fixture.writes[1]!.source) as {
+      providerEvidence: {
+        stateBeforeSha256: string;
+        stateAfterSha256: string;
+        topologyBeforeSha256: string;
+        topologyAfterSha256: string;
+      };
+    };
+    expect(receipt.providerEvidence.stateAfterSha256)
+      .toBe(receipt.providerEvidence.stateBeforeSha256);
+    expect(receipt.providerEvidence.topologyAfterSha256)
+      .toBe(receipt.providerEvidence.topologyBeforeSha256);
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      legacyReplicasBefore: 1,
+      legacyReplicasAfter: null,
+    });
+  });
+
+  it.each([
+    [
+      "wrong positive region",
+      [{ region: OPTIONAL_ZERO_REGION, numReplicas: 1 }],
+    ],
+    [
+      "unknown extra zero region",
+      [
+        { region: PRIMARY_REGION, numReplicas: 1 },
+        { region: "us-west2", numReplicas: 0 },
+      ],
+    ],
+  ])("rejects a %s", async (_label, configuredRegions) => {
+    const fixture = harness({ configuredRegions });
+    await expect(fixture.result).resolves.toBe(1);
+    expect(fixture.writes).toEqual([]);
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      outcome: "probe_failed",
+      failureCode: "provider_state_invalid",
+      checks: { exactCandidateOneBefore: false },
+    });
+  });
+
+  it("rejects missing or malformed configured topology", () => {
+    const exact = stagingBootstrapRestoreReconciliationInternals.configuredOneExact;
+    const parse = stagingBootstrapRestoreReconciliationInternals
+      .parseRestoreStateSnapshot;
+    expect(exact(1, [{ region: PRIMARY_REGION, numReplicas: 1 }])).toBe(true);
+    expect(exact(1, [])).toBe(false);
+    expect(exact(1, [{ region: PRIMARY_REGION, numReplicas: 0 }])).toBe(false);
+    expect(exact(0, CONFIGURED_ONE_REGIONS)).toBe(false);
+    expect(parse(snapshotResponse(configuredEnvironment({
+      [PRIMARY_REGION]: { numReplicas: 1 },
+      [OPTIONAL_ZERO_REGION]: { numReplicas: 0 },
+    }), null))).toMatchObject({
+      snapshot: { numReplicas: null },
+      configuredReplicas: 1,
+      configuredRegions: CONFIGURED_ONE_REGIONS,
+    });
+    expect(parse(snapshotResponse({}, null))).toBeNull();
+    expect(parse(snapshotResponse(configuredEnvironment("malformed"), null)))
+      .toBeNull();
+    expect(parse(snapshotResponse(configuredEnvironment({
+      [PRIMARY_REGION]: { numReplicas: 1 },
+      "unknown-region": { numReplicas: 0 },
+    }), null))).toBeNull();
   });
 
   it("rejects an authority artifact bound to another ambiguous restore", async () => {
@@ -378,6 +545,12 @@ describe("permanent-staging bootstrap restore runner-loss reconciliation", () =>
     expect(STAGING_BOOTSTRAP_RESTORE_EMPTY_PATCH_QUERY).not.toMatch(/mutation\s/i);
     expect(STAGING_BOOTSTRAP_RESTORE_DISCOVERY_QUERY).not.toMatch(/mutation\s/i);
     expect(STAGING_BOOTSTRAP_RESTORE_SNAPSHOT_QUERY).not.toMatch(/mutation\s/i);
+    expect(STAGING_BOOTSTRAP_RESTORE_SNAPSHOT_QUERY).toContain(
+      "environment(id:$environmentId,projectId:$projectId)",
+    );
+    expect(STAGING_BOOTSTRAP_RESTORE_SNAPSHOT_QUERY).toContain(
+      "config(decryptVariables:false)",
+    );
     const workflow = fs.readFileSync(
       path.resolve(".github/workflows/bootstrap-permanent-staging-worker-fence.yml"),
       "utf8",

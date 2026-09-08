@@ -9,11 +9,15 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./trusted-filesystem.js";
+import {
+  parseRailwayMultiRegionReplicaTopology,
+  type RailwayRegionReplicaCount,
+} from "./railway-multi-region-replica-topology.js";
 
 export const COLD_RECOVERY_POLICY_PATH =
   "ops/railway/permanent-staging-cold-recovery-policy.json" as const;
 export const COLD_RECOVERY_POLICY_SHA256 =
-  "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd" as const;
+  "83d3c01669719a2e061b120b5337f2b6119782357a1b68f5537352b0e8e15666" as const;
 export const COLD_RECOVERY_BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json" as const;
 export const COLD_RECOVERY_BOUNDARY_POLICY_SHA256 =
@@ -35,6 +39,11 @@ export const COLD_RECOVERY_LOCK = Object.freeze({
   domain: "beer-staging.up.railway.app",
   targetPort: 8_080,
   region: "asia-southeast1-eqsg3a",
+  configuredRegionBefore: "europe-west4-drams3a",
+  quiesceRegions: Object.freeze([
+    "europe-west4-drams3a",
+    "asia-southeast1-eqsg3a",
+  ] as const),
 } as const);
 
 export const COLD_RECOVERY_SCOPE_QUERY =
@@ -48,6 +57,7 @@ export const COLD_RECOVERY_STATE_QUERY =
 ) {
   environment(id:$environmentId,projectId:$projectId) {
     id
+    config(decryptVariables:false)
     variables(first:100) {
       edges { node { id name environmentId serviceId isSealed references } }
       pageInfo { hasNextPage endCursor }
@@ -154,6 +164,9 @@ export interface ColdRecoveryState {
   readonly serviceInstanceId: string;
   readonly serviceId: string;
   readonly numReplicas: null | 0;
+  readonly configuredReplicas: 0 | 1;
+  readonly configuredRegions: readonly RailwayRegionReplicaCount[];
+  readonly deploymentRegions: readonly RailwayRegionReplicaCount[];
   readonly source: { readonly repo: null; readonly image: null };
   readonly latestDeployment: {
     readonly id: string;
@@ -205,6 +218,63 @@ export interface ColdPrepareReconcileReviewedAuthority {
   readonly replacementRunId: string;
 }
 
+export const COLD_QUIESCE_SUCCESSOR_BINDING = Object.freeze({
+  authorityOperation: "cold-recovery-successor-quiesce",
+  bridgeOperation: "cold-quiesce-successor-bridge",
+  bridgeSchema:
+    "pintpath-permanent-staging-cold-quiesce-successor-bridge/v1",
+  priorCandidateSha: "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  priorReviewedHeadSha: "cc2c5311d47f3e895173cb11ef094ef856e0cf07",
+  priorTreeSha: "9da75485e85addfec7096b1c04c52f6780d17b64",
+  priorPullRequestNumber: 90,
+  priorMergedAt: "2026-09-07T18:18:58Z",
+  priorPrepareRunId: "34152745186",
+  priorQuiesceRunId: "34153306935",
+  priorReadOnlyReconcileRunId: "34154020478",
+  priorArtifactId: "10030213299",
+  priorArtifactName:
+    "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  priorArtifactDigest:
+    "sha256:3f830a7376e604a46e0d8cfe3521fc8eb4e1db444ab73bec4063c22442c42fbe",
+  priorReceiptSha256:
+    "e9fa51ae3a56f405ba091417299cf6b4c3d0ad19d9ed8ff8601a7f51a450e0fd",
+  priorIntentSha256:
+    "7f37309fd87088b2333067387ba234622e4f24f8a9bcf2029ccb698b6ca12421",
+  priorPrerequisitesSha256:
+    "b17e6b115d6331ba63b7abdd8a130d39ae2008f652480bbc167de4e9bb84b8bb",
+  priorReviewedAuthoritySha256:
+    "f45df8c1260857eddbe1e326064ba822169d800392c4bf8fc95f6591df5c0d41",
+  priorCliStderrSha256:
+    "5df1ca8f5b08f53475635a850aaab5837e482d4096e9f6b319c4f962f4400930",
+  commandProducerGitBlobSha: "beb1eb9ac760101b3b477fe9960dfbe6f7332d7a",
+  commandProducerSha256:
+    "3f761dd08c8a08f872fc9e37d626aac64614092aa0de548deeaf1b890952450c",
+  railwayCliTagCommitSha: "5a8c5065b5cb929d7a1cadf7e168c2eed9453999",
+  railwayCliMainGitBlobSha: "e4516626d224e239ef3d74f9f85e33ea84b50d47",
+  railwayCliMainSha256:
+    "09f30a5fa1ee19df3a352796ab9bf6a4ca599145bc08972717c3c4fb8147754d",
+  railwayCliScaleGitBlobSha: "8d5530d85f2d5ce8771610417eb47787752b633c",
+  railwayCliScaleSha256:
+    "f015a7aa1cd9a90d75d6f9bd4903faed28569b942b61dfc5fe7e2638360b86f9",
+  priorCompletedAt: "2026-09-07T18:57:20.000Z",
+  deadline: "2026-09-08T18:57:20.000Z",
+  maximumBridgeAgeMs: 5 * 60 * 1_000,
+  maximumClockSkewMs: 30 * 1_000,
+} as const);
+
+export interface ColdQuiesceSuccessorBinding {
+  readonly bridgeSha256: string;
+  readonly reviewedAuthoritySha256: string;
+  readonly currentRunId: string;
+  readonly currentPrepareRunId: string;
+  readonly priorCandidateSha: string;
+  readonly priorQuiesceRunId: string;
+  readonly priorArtifactId: string;
+  readonly priorArtifactDigest: string;
+  readonly liveStateSha256: string;
+  readonly verifiedAt: string;
+}
+
 export function sha256(value: string | Buffer): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -229,6 +299,243 @@ function exactKeys(value: unknown, keys: readonly string[]): value is Record<str
     keys.every((key) => Object.hasOwn(value, key));
 }
 
+export function parseColdQuiesceSuccessorBinding(
+  bridgeSource: string,
+  reviewedAuthoritySource: string,
+  candidateSha: string,
+  currentRunId: string,
+  currentPrepareRunId: string,
+  nowMs: number,
+  enforceCurrentDeadline = true,
+): ColdQuiesceSuccessorBinding | null {
+  try {
+    const bridge = JSON.parse(bridgeSource) as unknown;
+    const authority = JSON.parse(reviewedAuthoritySource) as unknown;
+    const expected = COLD_QUIESCE_SUCCESSOR_BINDING;
+    const verifiedAtMs = record(bridge) && canonicalIsoTimestamp(bridge.verifiedAt)
+      ? Date.parse(String(bridge.verifiedAt))
+      : Number.NaN;
+    const deadlineMs = Date.parse(expected.deadline);
+    const priorCompletedAtMs = Date.parse(expected.priorCompletedAt);
+    const priorArtifact = record(bridge) && record(bridge.priorArtifact)
+      ? bridge.priorArtifact
+      : null;
+    const priorCliFailure = record(bridge) && record(bridge.priorCliFailure)
+      ? bridge.priorCliFailure
+      : null;
+    const liveTopology = record(bridge) && record(bridge.liveTopology)
+      ? bridge.liveTopology
+      : null;
+    const sourceProof = record(bridge) && record(bridge.sourceProof)
+      ? bridge.sourceProof
+      : null;
+    const commandProducer = sourceProof && record(sourceProof.commandProducer)
+      ? sourceProof.commandProducer
+      : null;
+    const railwayCliProof = sourceProof && record(sourceProof.railwayCli)
+      ? sourceProof.railwayCli
+      : null;
+    const railwayCliMain = railwayCliProof && record(railwayCliProof.main)
+      ? railwayCliProof.main
+      : null;
+    const railwayCliScale = railwayCliProof && record(railwayCliProof.scale)
+      ? railwayCliProof.scale
+      : null;
+    const checks = record(bridge) && record(bridge.checks)
+      ? bridge.checks
+      : null;
+    const expectedConfiguredRegions = [{
+      region: COLD_RECOVERY_LOCK.configuredRegionBefore,
+      numReplicas: 1,
+    }];
+    const expectedDeploymentRegions = [{
+      region: COLD_RECOVERY_LOCK.region,
+      numReplicas: 1,
+    }];
+    if (
+      !record(bridge) || canonical(bridge) !== bridgeSource ||
+      !record(authority) || `${JSON.stringify(authority)}\n` !== reviewedAuthoritySource ||
+      !Number.isFinite(nowMs) || !Number.isFinite(verifiedAtMs) ||
+      verifiedAtMs < priorCompletedAtMs ||
+      verifiedAtMs >= deadlineMs ||
+      (enforceCurrentDeadline && (
+        nowMs >= deadlineMs ||
+        verifiedAtMs > nowMs + expected.maximumClockSkewMs ||
+        nowMs - verifiedAtMs > expected.maximumBridgeAgeMs
+      )) ||
+      bridge.schemaVersion !== expected.bridgeSchema ||
+      bridge.operation !== expected.bridgeOperation ||
+      bridge.candidateSha !== candidateSha ||
+      bridge.currentRunId !== currentRunId ||
+      !/^[1-9][0-9]{0,19}$/.test(currentPrepareRunId) ||
+      currentPrepareRunId === currentRunId ||
+      bridge.currentPrepareRunId !== currentPrepareRunId ||
+      bridge.sourceSha !== COLD_RECOVERY_LOCK.sourceSha ||
+      bridge.priorCandidateSha !== expected.priorCandidateSha ||
+      bridge.priorQuiesceRunId !== expected.priorQuiesceRunId ||
+      bridge.priorReadOnlyReconcileRunId !== expected.priorReadOnlyReconcileRunId ||
+      !exactKeys(priorArtifact, [
+        "id",
+        "name",
+        "digest",
+        "receiptSha256",
+        "intentSha256",
+        "prerequisitesSha256",
+        "priorReviewedAuthoritySha256",
+      ]) ||
+      priorArtifact.id !== expected.priorArtifactId ||
+      priorArtifact.name !== expected.priorArtifactName ||
+      priorArtifact.digest !== expected.priorArtifactDigest ||
+      priorArtifact.receiptSha256 !== expected.priorReceiptSha256 ||
+      priorArtifact.intentSha256 !== expected.priorIntentSha256 ||
+      priorArtifact.prerequisitesSha256 !== expected.priorPrerequisitesSha256 ||
+      priorArtifact.priorReviewedAuthoritySha256 !==
+        expected.priorReviewedAuthoritySha256 ||
+      !exactKeys(priorCliFailure, [
+        "cliVersion",
+        "cliSha256",
+        "stderrSha256",
+        "normalizedReplicaAssignment",
+        "deterministicPrecommitBarrier",
+        "scaleMutationPathReachable",
+        "providerWriteCommitted",
+      ]) ||
+      priorCliFailure.cliVersion !== "5.32.0" ||
+      priorCliFailure.cliSha256 !== COLD_RECOVERY_CLI_SHA256 ||
+      priorCliFailure.stderrSha256 !== expected.priorCliStderrSha256 ||
+      priorCliFailure.normalizedReplicaAssignment !==
+        `project=${COLD_RECOVERY_LOCK.projectId}` ||
+      priorCliFailure.deterministicPrecommitBarrier !==
+        "replica-u64-parse-before-commit_scale_patch" ||
+      priorCliFailure.scaleMutationPathReachable !== false ||
+      priorCliFailure.providerWriteCommitted !== false ||
+      !exactKeys(sourceProof, ["commandProducer", "railwayCli"]) ||
+      !exactKeys(commandProducer, [
+        "repository", "candidateSha", "path", "gitBlobSha", "sha256",
+      ]) ||
+      commandProducer.repository !== COLD_RECOVERY_LOCK.repository ||
+      commandProducer.candidateSha !== expected.priorCandidateSha ||
+      commandProducer.path !==
+        "scripts/lib/permanent-staging-cold-recovery.ts" ||
+      commandProducer.gitBlobSha !== expected.commandProducerGitBlobSha ||
+      commandProducer.sha256 !== expected.commandProducerSha256 ||
+      !exactKeys(railwayCliProof, [
+        "repository", "version", "tag", "tagCommitSha", "main", "scale",
+      ]) ||
+      railwayCliProof.repository !== "railwayapp/cli" ||
+      railwayCliProof.version !== "5.32.0" ||
+      railwayCliProof.tag !== "v5.32.0" ||
+      railwayCliProof.tagCommitSha !== expected.railwayCliTagCommitSha ||
+      !exactKeys(railwayCliMain, ["path", "gitBlobSha", "sha256"]) ||
+      railwayCliMain.path !== "src/main.rs" ||
+      railwayCliMain.gitBlobSha !== expected.railwayCliMainGitBlobSha ||
+      railwayCliMain.sha256 !== expected.railwayCliMainSha256 ||
+      !exactKeys(railwayCliScale, ["path", "gitBlobSha", "sha256"]) ||
+      railwayCliScale.path !== "src/commands/scale.rs" ||
+      railwayCliScale.gitBlobSha !== expected.railwayCliScaleGitBlobSha ||
+      railwayCliScale.sha256 !== expected.railwayCliScaleSha256 ||
+      !exactKeys(liveTopology, [
+        "configuredReplicas",
+        "configuredRegions",
+        "legacyAggregateReplicas",
+        "deploymentManifestRegions",
+        "liveStateSha256",
+      ]) ||
+      liveTopology.configuredReplicas !== 1 ||
+      canonical(liveTopology.configuredRegions) !==
+        canonical(expectedConfiguredRegions) ||
+      liveTopology.legacyAggregateReplicas !== null ||
+      canonical(liveTopology.deploymentManifestRegions) !==
+        canonical(expectedDeploymentRegions) ||
+      !SHA256_PATTERN.test(String(liveTopology.liveStateSha256)) ||
+      !exactKeys(checks, [
+        "reviewedSuccessorAuthorityExact",
+        "directSuccessorLineageExact",
+        "priorColdHistoryExact",
+        "priorArtifactMetadataExact",
+        "priorArtifactContentsExact",
+        "sourceAnchorsExact",
+        "priorCliDeterministicPrecommitBarrierExact",
+        "readOnlyTokenScopeExact",
+        "configuredLiveTopologyExact",
+        "deploymentManifestIdentityExact",
+        "noSecondScaleWritePerformed",
+      ]) ||
+      Object.values(checks).some((value) => value !== true) ||
+      bridge.reviewedAuthoritySha256 !== sha256(reviewedAuthoritySource) ||
+      bridge.nextRequiredProof !==
+        "FRESH_REVIEWED_SUCCESSOR_CONFIGURED_ONE_TO_ZERO" ||
+      bridge.secretMaterialIncluded !== false ||
+      bridge.secretDerivedCommitmentsIncluded !== false ||
+      authority.command !== "verify-github-reviewed-candidate-authority" ||
+      authority.ok !== true || authority.schemaVersion !== 1 ||
+      authority.kind !== "pintpath-github-reviewed-candidate-authority" ||
+      authority.repository !== COLD_RECOVERY_LOCK.repository ||
+      authority.candidateSha !== candidateSha ||
+      authority.operation !== expected.authorityOperation ||
+      authority.workflowPath !==
+        ".github/workflows/recover-permanent-staging-cold-zero.yml" ||
+      authority.workflowRunId !== currentRunId ||
+      authority.workflowRunAttempt !== 1 ||
+      authority.selectedColdPrepareRunId !== currentPrepareRunId ||
+      authority.priorAmbiguousColdQuiesceCandidateSha !==
+        expected.priorCandidateSha ||
+      authority.priorAmbiguousColdQuiesceReviewedHeadSha !==
+        expected.priorReviewedHeadSha ||
+      authority.priorAmbiguousColdQuiesceTreeSha !== expected.priorTreeSha ||
+      authority.priorAmbiguousColdQuiescePullRequestNumber !==
+        expected.priorPullRequestNumber ||
+      authority.priorAmbiguousColdQuiesceCandidateMergedAt !==
+        expected.priorMergedAt ||
+      authority.priorColdPrepareRunId !== expected.priorPrepareRunId ||
+      authority.priorAmbiguousColdQuiesceRunId !==
+        expected.priorQuiesceRunId ||
+      authority.priorFailedReadOnlyColdQuiesceReconcileRunId !==
+        expected.priorReadOnlyReconcileRunId ||
+      authority.priorAmbiguousColdQuiesceArtifactId !==
+        expected.priorArtifactId ||
+      authority.priorAmbiguousColdQuiesceArtifactName !==
+        expected.priorArtifactName ||
+      authority.priorAmbiguousColdQuiesceArtifactDigest !==
+        expected.priorArtifactDigest ||
+      authority.priorAmbiguousColdQuiesceRunCompletedAt !==
+        expected.priorCompletedAt ||
+      authority.coldQuiesceSuccessorGraceHours !== 24 ||
+      authority.coldQuiesceSuccessorDeadline !== expected.deadline ||
+      authority.coldQuiesceSuccessorWithinGraceExact !== true ||
+      authority.coldQuiesceSuccessorDirectParentExact !== true ||
+      authority.coldQuiesceSuccessorPriorHistoryExact !== true ||
+      authority.coldQuiesceSuccessorAllRefsHistoryExact !== true ||
+      authority.coldQuiesceSuccessorCurrentPrepareExact !== true ||
+      authority.coldQuiesceSuccessorArtifactMetadataExact !== true ||
+      authority.coldQuiesceSuccessorBridgeRequired !== true ||
+      authority.completeRetainedHistoryExact !== true ||
+      authority.stagingLifecycleSealed !== false ||
+      authority.reviewedAuthorityExact !== true ||
+      authority.freshDispatchWriteGuardExact !== true ||
+      bridge.priorAmbiguousColdQuiesceRunCompletedAt !==
+        expected.priorCompletedAt ||
+      bridge.coldQuiesceSuccessorGraceHours !== 24 ||
+      bridge.coldQuiesceSuccessorDeadline !== expected.deadline ||
+      bridge.coldQuiesceSuccessorWithinGraceExact !== true
+    ) return null;
+    return Object.freeze({
+      bridgeSha256: sha256(bridgeSource),
+      reviewedAuthoritySha256: sha256(reviewedAuthoritySource),
+      currentRunId,
+      currentPrepareRunId,
+      priorCandidateSha: expected.priorCandidateSha,
+      priorQuiesceRunId: expected.priorQuiesceRunId,
+      priorArtifactId: expected.priorArtifactId,
+      priorArtifactDigest: expected.priorArtifactDigest,
+      liveStateSha256: String(liveTopology.liveStateSha256),
+      verifiedAt: String(bridge.verifiedAt),
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function policyExact(cwd: string): boolean {
   try {
     const policy = fs.readFileSync(path.resolve(cwd, COLD_RECOVERY_POLICY_PATH));
@@ -242,7 +549,7 @@ export function policyExact(cwd: string): boolean {
     ) return false;
     const value = JSON.parse(policy.toString("utf8")) as unknown;
     return record(value) &&
-      value.schemaVersion === "pintpath-permanent-staging-cold-recovery-policy/v1" &&
+      value.schemaVersion === "pintpath-permanent-staging-cold-recovery-policy/v2" &&
       value.policyId === "pintpath-permanent-staging-one-time-cold-recovery" &&
       value.activationState === "GITHUB_ENVIRONMENT_PROTECTED" &&
       value.repository === COLD_RECOVERY_LOCK.repository &&
@@ -253,8 +560,19 @@ export function policyExact(cwd: string): boolean {
         COLD_RECOVERY_LOCK.forbiddenProductionEnvironmentId &&
       value.target.serviceId === COLD_RECOVERY_LOCK.serviceId &&
       value.target.serviceInstanceId === COLD_RECOVERY_LOCK.serviceInstanceId &&
+      value.target.configuredRegionBefore ===
+        COLD_RECOVERY_LOCK.configuredRegionBefore &&
+      canonical(value.target.quiesceRegions) ===
+        canonical(COLD_RECOVERY_LOCK.quiesceRegions) &&
       record(value.deadState) &&
       value.deadState.replicas === null &&
+      value.deadState.configuredReplicas === 1 &&
+      canonical(value.deadState.configuredRegions) === canonical({
+        [COLD_RECOVERY_LOCK.configuredRegionBefore]: 1,
+      }) &&
+      canonical(value.deadState.deploymentManifestRegions) === canonical({
+        [COLD_RECOVERY_LOCK.region]: 1,
+      }) &&
       value.deadState.latestDeploymentId === COLD_RECOVERY_LOCK.deploymentId &&
       value.deadState.snapshotId === COLD_RECOVERY_LOCK.snapshotId &&
       value.deadState.sourceSha === COLD_RECOVERY_LOCK.sourceSha &&
@@ -275,18 +593,32 @@ export function policyExact(cwd: string): boolean {
       value.operations.reconcilePrepare.providerMutationAllowed === false &&
       value.operations.reconcilePrepare.variableMutationCredentialAllowed === false &&
       record(value.operations.quiesce) &&
+      canonical(value.operations.quiesce.configuredReplicasBeforeAllowed) ===
+        canonical([1]) &&
+      value.operations.quiesce.configuredReplicasAfter === 0 &&
+      canonical(value.operations.quiesce.legacyReplicasBeforeAllowed) ===
+        canonical([null]) &&
+      canonical(value.operations.quiesce.legacyReplicasAfterAllowed) ===
+        canonical([null, 0]) &&
+      canonical(value.operations.quiesce.singleCommandRegions) ===
+        canonical(COLD_RECOVERY_LOCK.quiesceRegions) &&
+      value.operations.quiesce.maximumAttempts === 1 &&
+      value.operations.quiesce.configuredOneToZeroReceiptClaimed === true &&
       value.operations.quiesce
-          .lostAcknowledgementMayReconcileOnlyFromExactNullToZeroPostflight === true &&
+          .lostAcknowledgementMayReconcileOnlyFromExactConfiguredZeroPostflight === true &&
       record(value.operations.reconcileQuiesce) &&
-      value.operations.reconcileQuiesce.replicasBefore === 0 &&
-      value.operations.reconcileQuiesce.replicasAfter === 0 &&
+      value.operations.reconcileQuiesce.configuredReplicasBefore === 0 &&
+      value.operations.reconcileQuiesce.configuredReplicasAfter === 0 &&
+      value.operations.reconcileQuiesce
+          .configuredOneToZeroReceiptClaimed === false &&
       value.operations.reconcileQuiesce.priorAmbiguousQuiesceRunRequired === true &&
       value.operations.reconcileQuiesce.providerMutationAllowed === false &&
       value.operations.reconcileQuiesce.scaleCredentialAllowed === false &&
       record(value.evidence) &&
       value.evidence.supabaseReplacementReceiptHashBindingRequired === true &&
-      value.evidence.truthfulNullToZeroReplicaBindingRequired === true &&
-      value.evidence.normalOneToZeroReceiptImpersonationForbidden === true &&
+      value.evidence.truthfulConfiguredReplicaTopologyBindingRequired === true &&
+      value.evidence.legacyAggregateMustNotImpersonateConfiguredTopology === true &&
+      value.evidence.configuredOneToZeroReceiptRequired === true &&
       value.evidence.readOnlyRunnerLossReconciliationMustBindPriorRun === true;
   } catch {
     return false;
@@ -454,7 +786,7 @@ function nameAsTarget(name: string): (typeof TARGET_VARIABLES)[number] {
 
 export function parseColdRecoveryState(
   value: unknown,
-  replicas: null | 0,
+  expectedConfiguredReplicas: 0 | 1 | "any",
 ): ColdRecoveryState | null {
   if (
     !exactKeys(value, ["data"]) ||
@@ -465,7 +797,7 @@ export function parseColdRecoveryState(
   const instance = value.data.serviceInstance;
   const deployment = value.data.deployment;
   if (
-    !exactKeys(environment, ["id", "variables"]) ||
+    !exactKeys(environment, ["id", "config", "variables"]) ||
     environment.id !== COLD_RECOVERY_LOCK.environmentId ||
     !exactKeys(environment.variables, ["edges", "pageInfo"]) ||
     !Array.isArray(environment.variables.edges) ||
@@ -489,7 +821,7 @@ export function parseColdRecoveryState(
     instance.id !== COLD_RECOVERY_LOCK.serviceInstanceId ||
     instance.serviceId !== COLD_RECOVERY_LOCK.serviceId ||
     instance.environmentId !== COLD_RECOVERY_LOCK.environmentId ||
-    instance.numReplicas !== replicas ||
+    !(instance.numReplicas === null || instance.numReplicas === 0) ||
     !exactKeys(instance.source, ["repo", "image"]) ||
     instance.source.repo !== null ||
     instance.source.image !== null ||
@@ -532,6 +864,47 @@ export function parseColdRecoveryState(
     (deployment.meta.imageDigest ?? null) !== null ||
     (deployment.meta.patchId ?? null) !== null
   ) return null;
+  const configuredTopology = parseRailwayMultiRegionReplicaTopology(
+    environment.config,
+    COLD_RECOVERY_LOCK.serviceId,
+  );
+  const manifestDeploy = record(deployment.meta.serviceManifest) &&
+      record(deployment.meta.serviceManifest.deploy)
+    ? deployment.meta.serviceManifest.deploy
+    : null;
+  const deploymentTopology = parseRailwayMultiRegionReplicaTopology({
+    services: {
+      [COLD_RECOVERY_LOCK.serviceId]: { deploy: manifestDeploy },
+    },
+  }, COLD_RECOVERY_LOCK.serviceId);
+  const configuredReplicas = configuredTopology.kind === "configured" &&
+      (configuredTopology.configuredTotal === 0 ||
+        configuredTopology.configuredTotal === 1)
+    ? configuredTopology.configuredTotal
+    : null;
+  if (
+    configuredTopology.kind !== "configured" ||
+    configuredReplicas === null ||
+    (expectedConfiguredReplicas !== "any" &&
+      configuredReplicas !== expectedConfiguredReplicas) ||
+    (configuredReplicas === 1 && instance.numReplicas !== null) ||
+    (configuredReplicas === 1
+      ? canonical(configuredTopology.regions) !== canonical([{
+        region: COLD_RECOVERY_LOCK.configuredRegionBefore,
+        numReplicas: 1,
+      }])
+      : configuredTopology.effectiveZero !== true ||
+        configuredTopology.regions.some((entry) =>
+          !COLD_RECOVERY_LOCK.quiesceRegions.includes(
+            entry.region as (typeof COLD_RECOVERY_LOCK.quiesceRegions)[number],
+          ) || entry.numReplicas !== 0)) ||
+    deploymentTopology.kind !== "configured" ||
+    deploymentTopology.configuredTotal !== 1 ||
+    canonical(deploymentTopology.regions) !== canonical([{
+      region: COLD_RECOVERY_LOCK.region,
+      numReplicas: 1,
+    }])
+  ) return null;
   const rows: ColdRecoveryVariableRow[] = [];
   for (const edge of environment.variables.edges) {
     if (!exactKeys(edge, ["node"])) return null;
@@ -552,7 +925,10 @@ export function parseColdRecoveryState(
     environmentId: COLD_RECOVERY_LOCK.environmentId,
     serviceInstanceId: COLD_RECOVERY_LOCK.serviceInstanceId,
     serviceId: COLD_RECOVERY_LOCK.serviceId,
-    numReplicas: replicas,
+    numReplicas: instance.numReplicas as null | 0,
+    configuredReplicas,
+    configuredRegions: configuredTopology.regions,
+    deploymentRegions: deploymentTopology.regions,
     source: { repo: null, image: null },
     latestDeployment: {
       id: COLD_RECOVERY_LOCK.deploymentId,
@@ -584,7 +960,7 @@ export function parseColdRecoveryState(
 export async function readColdRecoveryState(
   fetchImpl: typeof fetch,
   token: string,
-  replicas: null | 0,
+  configuredReplicas: 0 | 1 | "any",
 ): Promise<ColdRecoveryState | null> {
   try {
     return parseColdRecoveryState(await railwayCall(
@@ -597,7 +973,7 @@ export async function readColdRecoveryState(
         serviceId: COLD_RECOVERY_LOCK.serviceId,
         deploymentId: COLD_RECOVERY_LOCK.deploymentId,
       },
-    ), replicas);
+    ), configuredReplicas);
   } catch {
     return null;
   }
@@ -608,6 +984,7 @@ export function coldIdentityCanonical(state: ColdRecoveryState): string {
     environmentId: state.environmentId,
     serviceInstanceId: state.serviceInstanceId,
     serviceId: state.serviceId,
+    deploymentRegions: state.deploymentRegions,
     source: state.source,
     latestDeployment: state.latestDeployment,
     activeDeployments: state.activeDeployments,
@@ -965,12 +1342,12 @@ export function runScaleCommand(
     const child = spawn(executable, [
       "service",
       "scale",
-      `${COLD_RECOVERY_LOCK.region}=0`,
-      "--project",
+      ...COLD_RECOVERY_LOCK.quiesceRegions.map((region) => `${region}=0`),
+      "-p",
       COLD_RECOVERY_LOCK.projectId,
-      "--environment",
+      "-e",
       COLD_RECOVERY_LOCK.environmentId,
-      "--service",
+      "-s",
       COLD_RECOVERY_LOCK.serviceId,
       "--json",
     ], {
@@ -1032,8 +1409,10 @@ export function argumentsExact(
   readonly replacementTerminalFile: string | null;
   readonly prepareRunId: string | null;
   readonly prepareVerificationFile: string | null;
+  readonly successorBridgeFile: string | null;
+  readonly reviewedAuthorityFile: string | null;
 } | null {
-  const expectedLength = 10;
+  const expectedLength = includePrepareEvidence ? 14 : 10;
   if (argv.length !== expectedLength) return null;
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
@@ -1049,6 +1428,8 @@ export function argumentsExact(
       "--evidence-dir",
       "--prepare-run-id",
       "--prepare-verification-file",
+      "--successor-bridge-file",
+      "--reviewed-authority-file",
     ]
     : [
       "--candidate-sha",
@@ -1066,6 +1447,8 @@ export function argumentsExact(
     values.get("--replacement-terminal-file") ?? null;
   const prepareRunId = values.get("--prepare-run-id") ?? null;
   const prepareVerificationFile = values.get("--prepare-verification-file") ?? null;
+  const successorBridgeFile = values.get("--successor-bridge-file") ?? null;
+  const reviewedAuthorityFile = values.get("--reviewed-authority-file") ?? null;
   if (
     !SHA_PATTERN.test(candidateSha) ||
     expectedDeploymentSha !== COLD_RECOVERY_LOCK.sourceSha ||
@@ -1078,9 +1461,17 @@ export function argumentsExact(
         path.basename(replacementTerminalFile) !== "terminal.json")) ||
     (includePrepareEvidence &&
       (!prepareRunId || !/^[1-9][0-9]{0,19}$/.test(prepareRunId) ||
-        !prepareVerificationFile || !path.isAbsolute(prepareVerificationFile))) ||
+        !prepareVerificationFile || !path.isAbsolute(prepareVerificationFile) ||
+        !successorBridgeFile || !path.isAbsolute(successorBridgeFile) ||
+        path.resolve(successorBridgeFile) !== successorBridgeFile ||
+        path.basename(successorBridgeFile) !==
+          "cold-quiesce-successor-bridge.json" ||
+        !reviewedAuthorityFile || !path.isAbsolute(reviewedAuthorityFile) ||
+        path.resolve(reviewedAuthorityFile) !== reviewedAuthorityFile ||
+        path.basename(reviewedAuthorityFile) !== "reviewed-authority.json")) ||
     (!includePrepareEvidence &&
-      (prepareRunId !== null || prepareVerificationFile !== null))
+      (prepareRunId !== null || prepareVerificationFile !== null ||
+        successorBridgeFile !== null || reviewedAuthorityFile !== null))
   ) return null;
   return {
     candidateSha,
@@ -1090,6 +1481,8 @@ export function argumentsExact(
     replacementTerminalFile,
     prepareRunId,
     prepareVerificationFile,
+    successorBridgeFile,
+    reviewedAuthorityFile,
   };
 }
 
@@ -1101,8 +1494,10 @@ export function reconcileArgumentsExact(argv: readonly string[]): {
   readonly prepareVerificationFile: string;
   readonly priorQuiesceRunId: string;
   readonly reviewedAuthorityFile: string;
+  readonly successorBridgeFile: string;
+  readonly successorReviewedAuthorityFile: string;
 } | null {
-  if (argv.length !== 14) return null;
+  if (argv.length !== 18) return null;
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -1118,6 +1513,8 @@ export function reconcileArgumentsExact(argv: readonly string[]): {
     "--prepare-verification-file",
     "--prior-quiesce-run-id",
     "--reviewed-authority-file",
+    "--successor-bridge-file",
+    "--successor-reviewed-authority-file",
   ];
   if ([...values.keys()].some((key) => !allowed.includes(key))) return null;
   const candidateSha = values.get("--candidate-sha") ?? "";
@@ -1127,6 +1524,9 @@ export function reconcileArgumentsExact(argv: readonly string[]): {
   const prepareVerificationFile = values.get("--prepare-verification-file") ?? "";
   const priorQuiesceRunId = values.get("--prior-quiesce-run-id") ?? "";
   const reviewedAuthorityFile = values.get("--reviewed-authority-file") ?? "";
+  const successorBridgeFile = values.get("--successor-bridge-file") ?? "";
+  const successorReviewedAuthorityFile =
+    values.get("--successor-reviewed-authority-file") ?? "";
   if (!SHA_PATTERN.test(candidateSha) ||
     expectedDeploymentSha !== COLD_RECOVERY_LOCK.sourceSha ||
     candidateSha === expectedDeploymentSha ||
@@ -1137,7 +1537,17 @@ export function reconcileArgumentsExact(argv: readonly string[]): {
     !path.isAbsolute(prepareVerificationFile) ||
     path.basename(prepareVerificationFile) !== "prerequisites-verification.json" ||
     !path.isAbsolute(reviewedAuthorityFile) ||
-    path.basename(reviewedAuthorityFile) !== "reviewed-authority.json") return null;
+    path.basename(reviewedAuthorityFile) !== "reviewed-authority.json" ||
+    !path.isAbsolute(successorBridgeFile) ||
+    path.resolve(successorBridgeFile) !== successorBridgeFile ||
+    path.basename(successorBridgeFile) !==
+      "cold-quiesce-successor-bridge.json" ||
+    !path.isAbsolute(successorReviewedAuthorityFile) ||
+    path.resolve(successorReviewedAuthorityFile) !==
+      successorReviewedAuthorityFile ||
+    path.basename(successorReviewedAuthorityFile) !== "reviewed-authority.json") {
+    return null;
+  }
   return {
     candidateSha,
     expectedDeploymentSha,
@@ -1146,6 +1556,8 @@ export function reconcileArgumentsExact(argv: readonly string[]): {
     prepareVerificationFile,
     priorQuiesceRunId,
     reviewedAuthorityFile,
+    successorBridgeFile,
+    successorReviewedAuthorityFile,
   };
 }
 
@@ -1237,11 +1649,15 @@ export function readOnlyTokensExact(
   const production = env.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN ?? "";
   const scale = env.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN ?? "";
   const variable = env.PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN ?? "";
+  const variableMutation =
+    env.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN ?? "";
   const generic = env.RAILWAY_TOKEN ?? "";
   const stagingMutation = env.PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN ?? "";
   if (!TOKEN_PATTERN.test(metadata) || !TOKEN_PATTERN.test(production) ||
     metadata === production || scale !== "" || variable !== "" ||
-    generic !== "" || stagingMutation !== "") return null;
+    variableMutation !== "" || generic !== "" || stagingMutation !== "") {
+    return null;
+  }
   return { metadata };
 }
 

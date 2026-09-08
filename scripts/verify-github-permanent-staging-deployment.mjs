@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,7 +36,7 @@ const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 20_000;
 const DEPLOYMENT_RECEIPT_SCHEMA =
-  "pintpath-railway-application-deployment-executor/v5";
+  "pintpath-railway-application-deployment-executor/v6";
 const DEPLOYMENT_RECEIPT_OPERATION =
   "pintpath-railway-application-source-upload";
 const DEPLOYMENT_RECEIPT_STATE = "GITHUB_ENVIRONMENT_PROTECTED";
@@ -46,16 +47,20 @@ const DEPLOYMENT_CHECK_KEYS = Object.freeze([
   "collateralInventoryExact",
   "collateralStateUnchanged",
   "costPolicyExact",
+  "configuredTopologyExact",
   "deploymentExact",
   "durableIntentExact",
   "gitAutodeployAbsent",
   "githubMainExact",
+  "immediatePrewriteExact",
   "policyExact",
   "prerequisiteExact",
   "reconciliationCompleted",
   "runtimeHealthExact",
   "runtimeReadinessExact",
   "runtimeStartupExact",
+  "fencedRuntimeAbsentBeforeWrite",
+  "fencedRuntimeAbsentPostflight",
   "sourceAuthorityExact",
   "sourceReasserted",
   "targetPostflightAttempted",
@@ -146,6 +151,80 @@ function exactObject(value) {
 function exactKeys(value, keys) {
   return exactObject(value) !== null &&
     JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+}
+
+function canonicalKeyOrder(value) {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (exactObject(value) === null) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [
+    key,
+    canonicalKeyOrder(value[key]),
+  ]));
+}
+
+function recursivelyEqual(left, right) {
+  return JSON.stringify(canonicalKeyOrder(left)) ===
+    JSON.stringify(canonicalKeyOrder(right));
+}
+
+function nullableReplicaCount(value) {
+  return value === null || Number.isSafeInteger(value) && value >= 0 && value <= 50;
+}
+
+function stagingTopologyEvidence(value, phase) {
+  if (!exactKeys(value, [
+    "configuredReplicas",
+    "configuredRegions",
+    "configuredTopologySha256",
+  ]) || !Array.isArray(value.configuredRegions)) return false;
+  const expectedReplicas = phase === "fenced" ? 0 : 1;
+  if (value.configuredReplicas !== expectedReplicas) return false;
+  const seen = new Set();
+  let total = 0;
+  let asiaPositive = 0;
+  let previousRegion = "";
+  for (const entry of value.configuredRegions) {
+    if (!exactKeys(entry, ["region", "numReplicas"]) ||
+      !["asia-southeast1-eqsg3a", "europe-west4-drams3a"].includes(
+        entry.region,
+      ) || seen.has(entry.region) || entry.region <= previousRegion ||
+      !Number.isSafeInteger(entry.numReplicas) || entry.numReplicas < 0 ||
+      entry.numReplicas > 50 ||
+      (entry.region === "europe-west4-drams3a" && entry.numReplicas !== 0) ||
+      (phase === "fenced" && entry.numReplicas !== 0)) return false;
+    seen.add(entry.region);
+    previousRegion = entry.region;
+    total += entry.numReplicas;
+    if (entry.region === "asia-southeast1-eqsg3a" && entry.numReplicas > 0) {
+      asiaPositive += 1;
+    }
+  }
+  if (total !== expectedReplicas ||
+    (phase === "active" && asiaPositive !== 1)) return false;
+  const expectedHash = crypto.createHash("sha256").update(`${JSON.stringify(
+    canonicalKeyOrder({
+    configuredReplicas: value.configuredReplicas,
+    configuredRegions: value.configuredRegions,
+    }),
+    null,
+    2,
+  )}\n`).digest("hex");
+  return value.configuredTopologySha256 === expectedHash;
+}
+
+function stagingTopologyChain(value, phase) {
+  return exactKeys(value, [
+    "authoritativeSource",
+    "before",
+    "immediatelyBeforeWrite",
+    "after",
+  ]) && value.authoritativeSource ===
+    "environment.config(decryptVariables:false)" &&
+    stagingTopologyEvidence(value.before, phase) &&
+    stagingTopologyEvidence(value.immediatelyBeforeWrite, phase) &&
+    stagingTopologyEvidence(value.after, phase) &&
+    recursivelyEqual(value.before, value.immediatelyBeforeWrite) &&
+    recursivelyEqual(value.before, value.after);
 }
 
 function githubTimestamp(value, failureCode) {
@@ -324,6 +403,9 @@ function validateDeploymentReceipt(value, expected) {
   const receipt = exactObject(value);
   const checks = exactObject(receipt?.checks);
   const replicaCounts = exactObject(receipt?.replicaCounts);
+  const legacyReplicaCounts = exactObject(receipt?.legacyReplicaCounts);
+  const configuredTopology = exactObject(receipt?.configuredTopology);
+  const runtimeAbsence = exactObject(receipt?.runtimeAbsence);
   const runtimeResponseSha256s = exactObject(receipt?.runtimeResponseSha256s);
   const collateralSnapshotSha256s = exactObject(
     receipt?.collateralSnapshotSha256s,
@@ -399,6 +481,9 @@ function validateDeploymentReceipt(value, expected) {
       "boundaryPostflightSha256",
       "collateralSnapshotSha256s",
       "replicaCounts",
+      "legacyReplicaCounts",
+      "configuredTopology",
+      "runtimeAbsence",
       "runtimeResponseSha256s",
       "workerFencePrerequisite",
       "checks",
@@ -416,6 +501,22 @@ function validateDeploymentReceipt(value, expected) {
     !exactKeys(replicaCounts, ["before", "after"]) ||
     replicaCounts.before !== (expected.phase === "fenced" ? 0 : 1) ||
     replicaCounts.after !== (expected.phase === "fenced" ? 0 : 1) ||
+    !exactKeys(legacyReplicaCounts, [
+      "before", "immediatelyBeforeWrite", "after",
+    ]) ||
+    Object.values(legacyReplicaCounts).some((item) =>
+      !nullableReplicaCount(item)) ||
+    !stagingTopologyChain(configuredTopology, expected.phase) ||
+    !exactKeys(runtimeAbsence, [
+      "required", "immediatelyBeforeWrite", "postflight",
+    ]) ||
+    (expected.phase === "fenced"
+      ? runtimeAbsence.required !== true ||
+        runtimeAbsence.immediatelyBeforeWrite !== true ||
+        runtimeAbsence.postflight !== true
+      : runtimeAbsence.required !== false ||
+        runtimeAbsence.immediatelyBeforeWrite !== null ||
+        runtimeAbsence.postflight !== null) ||
     !phaseRuntimeExact ||
     !exactKeys(collateralSnapshotSha256s, ["before", "after"]) ||
     hashes.some((item) =>

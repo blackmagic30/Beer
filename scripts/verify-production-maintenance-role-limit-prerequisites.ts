@@ -10,6 +10,8 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
+import { workerFenceTopologyEvidenceExact } from
+  "./lib/worker-fence-topology-evidence.js";
 
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_PREREQUISITES_SCHEMA =
   "pintpath-production-maintenance-login-limit-prerequisites/v1" as const;
@@ -32,7 +34,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "40fa0e41ae07ed96e93d56b56e8f43487d636fa94952701e96d2a57f2da3d2a8" as const;
+  "dad6b3407e820ad0896e7c28b1c869ef002af280afad1fc0fe4e83f5a97732de" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -62,9 +64,9 @@ const FENCE_POLICY_SHA256 =
 const FENCE_PRODUCER_PATH =
   "scripts/execute-protected-automatic-maintenance-worker-fence.ts" as const;
 const FENCE_PRODUCER_SHA256 =
-  "07eda07c41674731ddf470686b2a4d89f573b887782d1d3c9c0b956718315b22" as const;
+  "74e4b137234a40252a482bcb2bc3fe7563229f7c1c6d5ac58d13b50a1fffaebd" as const;
 const FENCE_TERMINAL_SCHEMA =
-  "pintpath-automatic-maintenance-worker-fence-terminal/v1" as const;
+  "pintpath-automatic-maintenance-worker-fence-terminal/v2" as const;
 const DEPLOYMENT_WORKFLOW = ".github/workflows/deploy-production.yml" as const;
 const DEPLOYMENT_WORKFLOW_ID = "deploy-production.yml" as const;
 const DEPLOYMENT_WORKFLOW_NAME =
@@ -78,7 +80,7 @@ const PRODUCTION_SCALE_WORKFLOW_ID =
 const PRODUCTION_SCALE_WORKFLOW_NAME =
   "Converge Pint Path production to two replicas" as const;
 const PRODUCTION_SCALE_WORKFLOW_SHA256 =
-  "3ceabb61fa568f8703104cbff66b84c9081d50ccc6bc3e877f9d61a6aff93917" as const;
+  "8bd7083522592ba966f1c73dd3068cff7f5b6de2dd7d629997796409cb0c5402" as const;
 const PRODUCTION_SCALE_POLICY_PATH =
   "ops/railway/permanent-staging-scale-evidence-policy.json" as const;
 const PRODUCTION_SCALE_POLICY_SHA256 =
@@ -86,17 +88,17 @@ const PRODUCTION_SCALE_POLICY_SHA256 =
 const PRODUCTION_SCALE_PRODUCER_PATH =
   "scripts/execute-protected-permanent-staging-scale.ts" as const;
 const PRODUCTION_SCALE_PRODUCER_SHA256 =
-  "352697d0868bf5c9859a5d817b30034f01e49595b1eb6ba3de7861a637b4a33d" as const;
+  "65f20bae009ea61318ae17a908a22e54080e8b9ab7e82a2f16fdda4ac4170bc9" as const;
 const DEPLOYMENT_POLICY_PATH =
   "ops/railway/production-app-deployment-policy.json" as const;
 const DEPLOYMENT_POLICY_SHA256 =
-  "e6fbbafd835a038e9bf7e803466b2519d56ffb1d4b4cc5d55a946dcda7a9c487" as const;
+  "0a6fc8332fe370729693363f4ef1a2f1acc83fea8cf598455659a587797c35a7" as const;
 const DEPLOYMENT_PRODUCER_PATH =
   "scripts/lib/permanent-staging-app-deployment-executor.ts" as const;
 const DEPLOYMENT_PRODUCER_SHA256 =
-  "051b0fb59e359985a69fda2761d330ed07d86372ba2efefc72d90cff6bd6943d" as const;
+  "d161a40dc8b2a13cb33ef30687f031f3be44a8b24e8b27d378c07edac1260f65" as const;
 const DEPLOYMENT_RECEIPT_SCHEMA =
-  "pintpath-railway-application-deployment-executor/v5" as const;
+  "pintpath-railway-application-deployment-executor/v6" as const;
 const GITHUB_API_ORIGIN = "https://api.github.com" as const;
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5" as const;
 const PRODUCTION_ENVIRONMENT_ID =
@@ -512,6 +514,20 @@ function sha256(value: string | Buffer): string {
 
 function canonical(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (!record(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [
+    key,
+    canonicalKeyOrder(value[key]),
+  ]));
+}
+
+function recursivelyEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalKeyOrder(left))
+    === JSON.stringify(canonicalKeyOrder(right));
 }
 
 function record(value: unknown): value is JsonRecord {
@@ -1712,6 +1728,7 @@ const FENCE_CHECK_KEYS = [
   "postflightAttempted",
   "targetPostflightExact",
   "postflightDeploymentExact",
+  "configuredTopologyEvidenceExact",
   "runtimeRoutesPolledExact",
   "runtimeMaintenanceStateExact",
   "boundaryPostflightExact",
@@ -1815,6 +1832,7 @@ function validateWorkerTerminal(
       "mutationCallCount",
       "acknowledgementExact",
       "providerBeforeSha256",
+      "providerImmediatelyBeforeWriteSha256",
       "providerAfterSha256",
       "deploymentBeforeIdSha256",
       "deploymentAfterIdSha256",
@@ -1823,7 +1841,9 @@ function validateWorkerTerminal(
       "sourcePreservedExact",
       "deploymentIdChanged",
       "topologyBeforeSha256",
+      "topologyImmediatelyBeforeWriteSha256",
       "topologyAfterSha256",
+      "configuredTopologyEvidence",
       "collateralVariablesBeforeSha256",
       "collateralVariablesAfterSha256",
     ])
@@ -1831,6 +1851,8 @@ function validateWorkerTerminal(
     || provider.mutationCallCount !== 1
     || provider.acknowledgementExact !== true
     || !SHA256_PATTERN.test(String(provider.providerBeforeSha256))
+    || provider.providerImmediatelyBeforeWriteSha256
+      !== provider.providerBeforeSha256
     || !SHA256_PATTERN.test(String(provider.providerAfterSha256))
     || !SHA256_PATTERN.test(String(provider.deploymentBeforeIdSha256))
     || (expectedOperation === "fence"
@@ -1845,7 +1867,17 @@ function validateWorkerTerminal(
     || provider.sourcePreservedExact !== true
     || provider.deploymentIdChanged !== (expectedOperation === "activate")
     || !SHA256_PATTERN.test(String(provider.topologyBeforeSha256))
+    || provider.topologyImmediatelyBeforeWriteSha256
+      !== provider.topologyBeforeSha256
     || provider.topologyAfterSha256 !== provider.topologyBeforeSha256
+    || !workerFenceTopologyEvidenceExact(
+      provider.configuredTopologyEvidence,
+      {
+        target: "production",
+        operation: expectedOperation,
+        writeAttempted: true,
+      },
+    )
     || !SHA256_PATTERN.test(String(provider.collateralVariablesBeforeSha256))
     || provider.collateralVariablesAfterSha256
       !== provider.collateralVariablesBeforeSha256
@@ -1960,6 +1992,7 @@ const DEPLOYMENT_CHECK_KEYS = [
   "cliExact",
   "writeTokenScopeExact",
   "costPolicyExact",
+  "configuredTopologyExact",
   "prerequisiteExact",
   "workerFencePrerequisiteExact",
   "workerFenceDeploymentContinuityExact",
@@ -1968,6 +2001,7 @@ const DEPLOYMENT_CHECK_KEYS = [
   "gitAutodeployAbsent",
   "collateralInventoryExact",
   "durableIntentExact",
+  "immediatePrewriteExact",
   "sourceReasserted",
   "writeAttemptedAtMostOnce",
   "targetPostflightAttempted",
@@ -1978,6 +2012,8 @@ const DEPLOYMENT_CHECK_KEYS = [
   "runtimeHealthExact",
   "runtimeStartupExact",
   "runtimeReadinessExact",
+  "fencedRuntimeAbsentBeforeWrite",
+  "fencedRuntimeAbsentPostflight",
   "collateralStateUnchanged",
   "boundaryPostflightExact",
   "terminalEvidenceExact",
@@ -1985,6 +2021,51 @@ const DEPLOYMENT_CHECK_KEYS = [
 
 function nullableSha256(value: unknown): boolean {
   return value === null || SHA256_PATTERN.test(String(value));
+}
+
+function nullableLegacyReplicaCount(value: unknown): boolean {
+  return value === null || (
+    typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= 50
+  );
+}
+
+function oneReplicaProductionTopology(value: unknown): value is JsonRecord {
+  if (!exactKeys(value, [
+    "configuredReplicas",
+    "configuredRegions",
+    "configuredTopologySha256",
+  ]) || value.configuredReplicas !== 1
+    || !Array.isArray(value.configuredRegions)
+    || value.configuredRegions.length !== 1
+    || !exactKeys(value.configuredRegions[0], ["region", "numReplicas"])
+    || value.configuredRegions[0].region !== "asia-southeast1-eqsg3a"
+    || value.configuredRegions[0].numReplicas !== 1) return false;
+  return value.configuredTopologySha256 === sha256(`${JSON.stringify(
+    canonicalKeyOrder({
+    configuredReplicas: value.configuredReplicas,
+    configuredRegions: value.configuredRegions,
+    }),
+    null,
+    2,
+  )}\n`);
+}
+
+function oneReplicaProductionTopologyChain(value: unknown): boolean {
+  if (!exactKeys(value, [
+    "authoritativeSource",
+    "before",
+    "immediatelyBeforeWrite",
+    "after",
+  ]) || value.authoritativeSource !==
+    "environment.config(decryptVariables:false)"
+    || !oneReplicaProductionTopology(value.before)
+    || !oneReplicaProductionTopology(value.immediatelyBeforeWrite)
+    || !oneReplicaProductionTopology(value.after)) return false;
+  return recursivelyEqual(value.before, value.immediatelyBeforeWrite)
+    && recursivelyEqual(value.before, value.after);
 }
 
 function validateDeploymentReceipt(
@@ -2023,6 +2104,9 @@ function validateDeploymentReceipt(
     "boundaryPostflightSha256",
     "collateralSnapshotSha256s",
     "replicaCounts",
+    "legacyReplicaCounts",
+    "configuredTopology",
+    "runtimeAbsence",
     "runtimeResponseSha256s",
     "workerFencePrerequisite",
     "checks",
@@ -2031,6 +2115,11 @@ function validateDeploymentReceipt(
     ? value.collateralSnapshotSha256s
     : null;
   const replicas = record(value.replicaCounts) ? value.replicaCounts : null;
+  const legacyReplicas = record(value.legacyReplicaCounts)
+    ? value.legacyReplicaCounts
+    : null;
+  const configuredTopology = value.configuredTopology;
+  const runtimeAbsence = record(value.runtimeAbsence) ? value.runtimeAbsence : null;
   const runtime = record(value.runtimeResponseSha256s)
     ? value.runtimeResponseSha256s
     : null;
@@ -2082,6 +2171,16 @@ function validateDeploymentReceipt(
     || !exactKeys(replicas, ["before", "after"])
     || replicas.before !== 1
     || replicas.after !== replicas.before
+    || !exactKeys(legacyReplicas, ["before", "immediatelyBeforeWrite", "after"])
+    || Object.values(legacyReplicas).some((item) =>
+      !nullableLegacyReplicaCount(item))
+    || !oneReplicaProductionTopologyChain(configuredTopology)
+    || !exactKeys(runtimeAbsence, [
+      "required", "immediatelyBeforeWrite", "postflight",
+    ])
+    || runtimeAbsence.required !== false
+    || runtimeAbsence.immediatelyBeforeWrite !== null
+    || runtimeAbsence.postflight !== null
     || !exactKeys(runtime, ["health", "startup", "ready"])
     || !SHA256_PATTERN.test(String(runtime.health))
     || !SHA256_PATTERN.test(String(runtime.startup))

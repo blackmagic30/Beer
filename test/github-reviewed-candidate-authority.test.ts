@@ -233,19 +233,19 @@ function jobs(run: Run, stepConclusion: string) {
       : coldPrepareReconcile
       ? "Reconcile an ambiguous cold prepare at the exact dead baseline"
       : coldQuiesce
-      ? "Initialize the exact dead baseline at explicit zero"
+      ? "Quiesce the configured Europe replica from one to zero"
       : "Reconcile an ambiguous cold quiesce at exact zero";
     const selectedStep = coldPrepare
       ? "Prepare the exact dead staging baseline once"
       : coldPrepareReconcile
       ? "Prove the ambiguous cold prepare reached the exact dead baseline without a second write"
       : coldQuiesce
-      ? "Initialize the dead baseline from null to explicit zero once"
+      ? "Quiesce the configured Europe replica from one to zero once"
       : "Prove the ambiguous cold quiesce reached exact zero without a second write";
     const names = [
       "Bind the exact replacement and prepare the dead baseline",
       "Reconcile an ambiguous cold prepare at the exact dead baseline",
-      "Initialize the exact dead baseline at explicit zero",
+      "Quiesce the configured Europe replica from one to zero",
       "Reconcile an ambiguous cold quiesce at exact zero",
     ];
     return {
@@ -1779,7 +1779,7 @@ describe("reviewed candidate mutation authority", () => {
       "name: Reconcile an ambiguous cold prepare at the exact dead baseline",
     );
     expect(workflow).toContain(
-      "name: Initialize the exact dead baseline at explicit zero",
+      "name: Quiesce the configured Europe replica from one to zero",
     );
     expect(workflow).toContain(
       "name: Reconcile an ambiguous cold quiesce at exact zero",

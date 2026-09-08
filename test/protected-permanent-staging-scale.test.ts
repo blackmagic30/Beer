@@ -11,6 +11,7 @@ import {
   PROTECTED_STAGING_SCALE_SNAPSHOT_QUERY,
   PROTECTED_STAGING_SCALE_STATE,
   PROTECTED_STAGING_SCALE_TOKEN_SCOPE_QUERY,
+  protectedPermanentStagingScaleInternals,
   runProtectedPermanentStagingScale,
 } from "../scripts/execute-protected-permanent-staging-scale.js";
 import type { ProductionScaleActivationPrerequisiteVerification } from
@@ -70,14 +71,33 @@ function snapshot(
   deploymentId = DEPLOYMENT_ID,
   snapshotId = SNAPSHOT_ID,
   targetPort = 8080,
+  configuredRegions: Readonly<Record<string, number | null>> = {
+    "asia-southeast1-eqsg3a": replicas,
+  },
+  legacyReplicas: number | null = replicas,
+  environmentConfig?: unknown,
 ): Response {
+  const multiRegionConfig = Object.fromEntries(
+    Object.entries(configuredRegions).map(([region, numReplicas]) => [
+      region,
+      { numReplicas },
+    ]),
+  );
   return response({
     data: {
+      environment: {
+        id: environmentId,
+        config: environmentConfig === undefined ? {
+          services: {
+            [SERVICE_ID]: { deploy: { multiRegionConfig } },
+          },
+        } : environmentConfig,
+      },
       serviceInstance: {
         id: INSTANCE_ID,
         serviceId: SERVICE_ID,
         environmentId,
-        numReplicas: replicas,
+        numReplicas: legacyReplicas,
         latestDeployment: {
           id: deploymentId,
           status: "SUCCESS",
@@ -168,6 +188,41 @@ describe("protected permanent-staging scale evidence operation", () => {
     expect(PROTECTED_STAGING_SCALE_TOKEN_SCOPE_QUERY).not.toMatch(/mutation\s/i);
   });
 
+  it("proves runtime absence only from repeated exact 404 responses", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response("not found", { status: 404 }),
+    );
+    await expect(protectedPermanentStagingScaleInternals.probeRuntimeAbsent(
+      fetchImpl as unknown as typeof fetch,
+      { environmentId: ENVIRONMENT_ID, domain: "beer-staging.up.railway.app" },
+      vi.fn().mockResolvedValue(undefined),
+    )).resolves.toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(9);
+  });
+
+  it.each([401, 403, 429, 500])(
+    "does not treat HTTP %i as proof that runtime is absent",
+    async (status) => {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response("", { status }));
+      await expect(protectedPermanentStagingScaleInternals.probeRuntimeAbsent(
+        fetchImpl as unknown as typeof fetch,
+        { environmentId: ENVIRONMENT_ID, domain: "beer-staging.up.railway.app" },
+        vi.fn().mockResolvedValue(undefined),
+      )).resolves.toBe(false);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not treat a network failure as proof that runtime is absent", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("network down"));
+    await expect(protectedPermanentStagingScaleInternals.probeRuntimeAbsent(
+      fetchImpl as unknown as typeof fetch,
+      { environmentId: ENVIRONMENT_ID, domain: "beer-staging.up.railway.app" },
+      vi.fn().mockResolvedValue(undefined),
+    )).resolves.toBe(false);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it("scales one reviewed candidate from one to two exactly once", async () => {
     const fetchImpl = successfulFetch(1, 2);
     const runCommand = vi.fn().mockResolvedValue({
@@ -200,9 +255,9 @@ describe("protected permanent-staging scale evidence operation", () => {
       "/private/railway",
       [
         "service", "scale", "asia-southeast1-eqsg3a=2",
-        "--project", PROJECT_ID,
-        "--environment", ENVIRONMENT_ID,
-        "--service", SERVICE_ID,
+        "-p", PROJECT_ID,
+        "-e", ENVIRONMENT_ID,
+        "-s", SERVICE_ID,
         "--json",
       ],
       "scale-token-that-is-long-enough",
@@ -236,24 +291,57 @@ describe("protected permanent-staging scale evidence operation", () => {
     });
   });
 
-  it("quiesces the exact legacy staging deployment at zero without probing old runtime code", async () => {
+  it("quiesces the exact live legacy staging deployment at zero after two identity probes", async () => {
     const legacySha = "b".repeat(40);
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(discovery())
-      .mockResolvedValueOnce(snapshot(1, ENVIRONMENT_ID, "beer-staging.up.railway.app", legacySha))
+      .mockResolvedValueOnce(snapshot(
+        1,
+        ENVIRONMENT_ID,
+        "beer-staging.up.railway.app",
+        legacySha,
+        DEPLOYMENT_ID,
+        SNAPSHOT_ID,
+        8080,
+        { "europe-west4-drams3a": 1 },
+        null,
+      ))
       .mockResolvedValueOnce(discovery())
-      .mockResolvedValueOnce(snapshot(1, ENVIRONMENT_ID, "beer-staging.up.railway.app", legacySha))
+      .mockResolvedValueOnce(snapshot(
+        1,
+        ENVIRONMENT_ID,
+        "beer-staging.up.railway.app",
+        legacySha,
+        DEPLOYMENT_ID,
+        SNAPSHOT_ID,
+        8080,
+        { "europe-west4-drams3a": 1 },
+        null,
+      ))
       .mockResolvedValueOnce(discovery())
-      .mockResolvedValueOnce(snapshot(0, ENVIRONMENT_ID, "beer-staging.up.railway.app", legacySha));
+      .mockResolvedValueOnce(snapshot(
+        0,
+        ENVIRONMENT_ID,
+        "beer-staging.up.railway.app",
+        legacySha,
+        DEPLOYMENT_ID,
+        SNAPSHOT_ID,
+        8080,
+        {
+          "asia-southeast1-eqsg3a": 0,
+          "europe-west4-drams3a": 0,
+        },
+        null,
+      ));
     const runCommand = vi.fn().mockResolvedValue({
       code: 0,
       timedOut: false,
       stdoutSha256: "c".repeat(64),
       stderrSha256: "d".repeat(64),
     });
-    const probeRuntime = vi.fn();
+    const probeRuntime = vi.fn().mockResolvedValue(true);
     const output: string[] = [];
     const result = await runProtectedPermanentStagingScale({
       argv: [
@@ -282,10 +370,32 @@ describe("protected permanent-staging scale evidence operation", () => {
     });
 
     expect(result).toBe(0);
-    expect(probeRuntime).not.toHaveBeenCalled();
+    expect(probeRuntime).toHaveBeenCalledTimes(2);
+    expect(probeRuntime).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      legacySha,
+      DEPLOYMENT_ID,
+      { legacyIdentityOnly: true },
+    );
+    expect(probeRuntime).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      legacySha,
+      DEPLOYMENT_ID,
+      { legacyIdentityOnly: true },
+    );
     expect(runCommand).toHaveBeenCalledWith(
       "/private/railway",
-      expect.arrayContaining(["asia-southeast1-eqsg3a=0"]),
+      [
+        "service", "scale",
+        "asia-southeast1-eqsg3a=0",
+        "europe-west4-drams3a=0",
+        "-p", PROJECT_ID,
+        "-e", ENVIRONMENT_ID,
+        "-s", SERVICE_ID,
+        "--json",
+      ],
       "scale-token-that-is-long-enough",
     );
     expect(JSON.parse(output[0]!)).toMatchObject({
@@ -338,6 +448,103 @@ describe("protected permanent-staging scale evidence operation", () => {
       outcome: "failed_before_attempt",
       attempts: 0,
       checks: { targetPreflightExact: false },
+    });
+  });
+
+  it("rejects an unauthorized positive configured region before any scale write", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(
+        1,
+        ENVIRONMENT_ID,
+        "beer-staging.up.railway.app",
+        CANDIDATE_SHA,
+        DEPLOYMENT_ID,
+        SNAPSHOT_ID,
+        8080,
+        { "us-west2": 1 },
+        null,
+      ));
+    const runCommand = vi.fn();
+    const output: string[] = [];
+    const result = await runProtectedPermanentStagingScale({
+      argv: argv("out"),
+      env: environment("out"),
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      runCommand,
+      probeRuntime: vi.fn(),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: { targetPreflightExact: false },
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["missing topology", {}],
+    ["malformed topology", {
+      services: {
+        [SERVICE_ID]: { deploy: { multiRegionConfig: "asia=1" } },
+      },
+    }],
+  ])("rejects %s environment configuration before any scale write", async (
+    _label,
+    environmentConfig,
+  ) => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(
+        1,
+        ENVIRONMENT_ID,
+        "beer-staging.up.railway.app",
+        CANDIDATE_SHA,
+        DEPLOYMENT_ID,
+        SNAPSHOT_ID,
+        8080,
+        { "asia-southeast1-eqsg3a": 1 },
+        null,
+        environmentConfig,
+      ));
+    const runCommand = vi.fn();
+    const output: string[] = [];
+    const result = await runProtectedPermanentStagingScale({
+      argv: argv("out"),
+      env: environment("out"),
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      runCommand,
+      probeRuntime: vi.fn(),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
     });
   });
 
@@ -433,7 +640,7 @@ describe("protected permanent-staging scale evidence operation", () => {
   });
 
   it("blocks before scaling unless the exact candidate reports an active worker fence", async () => {
-    const fetchImpl = successfulFetch(1);
+    const fetchImpl = successfulFetch(1, 1);
     const runCommand = vi.fn();
     const output: string[] = [];
     const result = await runProtectedPermanentStagingScale({
@@ -465,7 +672,7 @@ describe("protected permanent-staging scale evidence operation", () => {
   });
 
   it("makes converge-to-one idempotent and allows cleanup on a workflow rerun", async () => {
-    const fetchImpl = successfulFetch(1);
+    const fetchImpl = successfulFetch(1, 1);
     const runCommand = vi.fn();
     const boundaryCheck = vi.fn().mockResolvedValue(0);
     const output: string[] = [];
@@ -580,9 +787,9 @@ describe("protected permanent-staging scale evidence operation", () => {
       "/private/railway",
       [
         "service", "scale", "asia-southeast1-eqsg3a=2",
-        "--project", PROJECT_ID,
-        "--environment", PRODUCTION_ENVIRONMENT_ID,
-        "--service", SERVICE_ID,
+        "-p", PROJECT_ID,
+        "-e", PRODUCTION_ENVIRONMENT_ID,
+        "-s", SERVICE_ID,
         "--json",
       ],
       "production-scale-token-long-enough",

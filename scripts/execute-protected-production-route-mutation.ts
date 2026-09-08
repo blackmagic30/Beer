@@ -23,11 +23,19 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
+import {
+  PROTECTED_SCALE_RECEIPT_SCHEMA,
+  protectedScaleReplicaTopologyExact,
+} from "./lib/protected-scale-receipt-topology.js";
+import {
+  parseRailwayMultiRegionReplicaTopology,
+  type RailwayRegionReplicaCount,
+} from "./lib/railway-multi-region-replica-topology.js";
 import { parseProductionApplicationDeploymentReceipt } from
   "./lib/production-application-deployment-receipt.js";
 
 export const PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA =
-  "pintpath-protected-production-route-mutation/v1" as const;
+  "pintpath-protected-production-route-mutation/v2" as const;
 export const PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 
@@ -45,6 +53,7 @@ const STAGING_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const DOMAIN = "pintpath.au";
 const TARGET_PORT = null;
+const PRIMARY_REGION = "asia-southeast1-eqsg3a";
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA = /^[a-f0-9]{40}$/;
@@ -97,6 +106,7 @@ export const PRODUCTION_ROUTE_INVENTORY_QUERY =
   `query PintPathProductionRouteInventory($projectId:String!,$environmentId:String!){
   environment(id:$environmentId,projectId:$projectId){
     id
+    config(decryptVariables:false)
     serviceInstances(first:100){
       edges{node{
         id serviceId serviceName environmentId numReplicas
@@ -192,7 +202,7 @@ interface InventoryService {
   readonly serviceId: string;
   readonly serviceName: string;
   readonly environmentId: string;
-  readonly numReplicas: number;
+  readonly legacyAggregateReplicas: number | null;
   readonly latestDeployment: {
     readonly id: string;
     readonly status: string;
@@ -208,7 +218,25 @@ interface InventoryService {
 }
 interface Inventory {
   readonly environmentId: string;
+  readonly configuredTopology: {
+    readonly configuredReplicas: number;
+    readonly configuredRegions: readonly RailwayRegionReplicaCount[];
+  };
   readonly services: readonly InventoryService[];
+}
+interface RouteReplicaTopologySnapshot {
+  readonly configuredReplicas: number;
+  readonly configuredRegions: readonly RailwayRegionReplicaCount[];
+  readonly configuredTopologySha256: string;
+  readonly legacyAggregateReplicas: number | null;
+}
+interface RouteReplicaTopologyReceipt {
+  readonly authoritySource: "environment.config(decryptVariables:false)";
+  readonly primaryRegion: typeof PRIMARY_REGION;
+  readonly allowedRegions: readonly [typeof PRIMARY_REGION];
+  readonly before: RouteReplicaTopologySnapshot | null;
+  readonly immediatelyBeforeWrite: RouteReplicaTopologySnapshot | null;
+  readonly after: RouteReplicaTopologySnapshot | null;
 }
 interface RepositoryState {
   readonly headSha: string;
@@ -237,6 +265,7 @@ interface Checks {
   patchPostflightEmpty: boolean;
   inventoryTransitionExact: boolean;
   candidateDeploymentPostflightExact: boolean;
+  replicaTopologyEvidenceExact: boolean;
   boundaryPostflightExact: boolean;
   publicRuntimePostflightExact: boolean;
   terminalEvidenceExact: boolean;
@@ -277,6 +306,14 @@ function exact(value: unknown, names: readonly string[]): value is Record<string
   return record(value)
     && Object.keys(value).length === names.length
     && names.every((name, index) => Object.keys(value)[index] === name);
+}
+function exactMembers(
+  value: unknown,
+  names: readonly string[],
+): value is Record<string, unknown> {
+  return record(value)
+    && Object.keys(value).length === names.length
+    && names.every((name) => Object.prototype.hasOwnProperty.call(value, name));
 }
 function safeString(value: unknown, maximum: number): value is string {
   return typeof value === "string"
@@ -808,9 +845,10 @@ function parseProductionScaleReceipt(
       "schemaVersion", "executorState", "direction", "outcome", "candidateSha",
       "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256", "attempts",
       "retryAllowed", "intentSha256", "terminalEvidenceSha256", "commandStdoutSha256",
-      "commandStderrSha256", "productionActivationPrerequisite", "checks",
+      "commandStderrSha256", "productionActivationPrerequisite",
+      "replicaTopology", "checks",
     ])
-      || value.schemaVersion !== "pintpath-permanent-staging-scale-operation/v2"
+      || value.schemaVersion !== PROTECTED_SCALE_RECEIPT_SCHEMA
       || value.executorState !== PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
       || value.direction !== "converge-production-two"
       || (value.outcome !== "scaled" && value.outcome !== "already_converged")
@@ -854,9 +892,16 @@ function parseProductionScaleReceipt(
         "repositoryPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
         "postflightAttempted", "targetPostflightExact", "runtimePostflightExact",
         "candidateUnchanged",
-        "deploymentUnchanged", "boundaryPostflightExact", "terminalEvidenceExact",
+        "deploymentUnchanged", "replicaTopologyEvidenceExact",
+        "boundaryPostflightExact", "terminalEvidenceExact",
         "finalReceiptEvidenceExact",
-      ])) return null;
+      ])
+      || !protectedScaleReplicaTopologyExact(value.replicaTopology, {
+        direction: "converge-production-two",
+        attempts: value.attempts === 0 ? 0 : 1,
+        desiredReplicas: 2,
+        target: "production",
+      })) return null;
     const required = Object.entries(value.checks)
       .filter(([name]) => name !== "durableIntentExact")
       .every(([, check]) => check === true);
@@ -880,7 +925,8 @@ function closeReceiptChecksExact(value: unknown): boolean {
     "boundaryPreflightExact", "durableIntentExact", "repositoryPrewriteReasserted",
     "providerPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
     "postflightAttempted", "patchPostflightEmpty", "inventoryTransitionExact",
-    "candidateDeploymentPostflightExact", "boundaryPostflightExact",
+    "candidateDeploymentPostflightExact", "replicaTopologyEvidenceExact",
+    "boundaryPostflightExact",
     "publicRuntimePostflightExact", "terminalEvidenceExact", "finalReceiptEvidenceExact",
   ])) return false;
   return Object.entries(value).every(([name, check]) =>
@@ -917,7 +963,7 @@ function parseClosedRouteReceipt(
       "promotionRecoveryReceiptSha256", "productionDeploymentReceiptSha256",
       "productionScaleReceiptSha256", "closedRouteReceiptSha256", "attempts", "retryAllowed",
       "intentSha256", "terminalEvidenceSha256", "beforeInventorySha256",
-      "afterInventorySha256", "checks",
+      "afterInventorySha256", "replicaTopology", "checks",
     ])
       || value.schemaVersion !== PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA
       || value.executorState !== PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
@@ -952,6 +998,7 @@ function parseClosedRouteReceipt(
       || !sha256Exact(value.terminalEvidenceSha256)
       || !sha256Exact(value.beforeInventorySha256)
       || !sha256Exact(value.afterInventorySha256)
+      || !productionRouteReplicaTopologyExact(value.replicaTopology)
       || !timestampWithinStage(value.startedAt, value.completedAt, stage)
       || !closeReceiptChecksExact(value.checks)
       || (value.outcome === "closed")
@@ -1028,7 +1075,7 @@ function parseRoute(value: unknown, kind: Route["kind"]): Route | null {
 function parseInventory(value: unknown): Inventory | null {
   if (!exact(value, ["data"]) || !exact(value.data, ["environment"])) return null;
   const environment = value.data.environment;
-  if (!exact(environment, ["id", "serviceInstances"])
+  if (!exact(environment, ["id", "config", "serviceInstances"])
     || environment.id !== PRODUCTION_ENVIRONMENT_ID
     || !exact(environment.serviceInstances, ["edges", "pageInfo"])
     || !Array.isArray(environment.serviceInstances.edges)
@@ -1048,8 +1095,8 @@ function parseInventory(value: unknown): Inventory | null {
       || typeof node.serviceId !== "string" || !UUID.test(node.serviceId)
       || !safeString(node.serviceName, 256)
       || node.environmentId !== PRODUCTION_ENVIRONMENT_ID
-      || !Number.isSafeInteger(node.numReplicas)
-      || (node.numReplicas as number) < 0 || (node.numReplicas as number) > 50
+      || !(node.numReplicas === null || (Number.isSafeInteger(node.numReplicas)
+        && (node.numReplicas as number) >= 0 && (node.numReplicas as number) <= 50))
       || !exact(node.latestDeployment, ["id", "status", "deploymentStopped", "snapshotId"])
       || typeof node.latestDeployment.id !== "string" || !UUID.test(node.latestDeployment.id)
       || !safeString(node.latestDeployment.status, 32)
@@ -1090,7 +1137,7 @@ function parseInventory(value: unknown): Inventory | null {
       serviceId: node.serviceId,
       serviceName: node.serviceName,
       environmentId: node.environmentId,
-      numReplicas: node.numReplicas as number,
+      legacyAggregateReplicas: node.numReplicas as number | null,
       latestDeployment: {
         id: node.latestDeployment.id,
         status: node.latestDeployment.status,
@@ -1104,7 +1151,19 @@ function parseInventory(value: unknown): Inventory | null {
   services.sort((left, right) => left.instanceId.localeCompare(right.instanceId));
   if (new Set(services.map((service) => service.instanceId)).size !== services.length
     || new Set(services.map((service) => service.serviceId)).size !== services.length) return null;
-  return { environmentId: environment.id, services };
+  const topology = parseRailwayMultiRegionReplicaTopology(
+    environment.config,
+    SERVICE_ID,
+  );
+  if (topology.kind !== "configured") return null;
+  return {
+    environmentId: environment.id,
+    configuredTopology: {
+      configuredReplicas: topology.configuredTotal,
+      configuredRegions: topology.regions,
+    },
+    services,
+  };
 }
 function targetService(inventory: Inventory): InventoryService | null {
   const matches = inventory.services.filter((service) => service.serviceId === SERVICE_ID);
@@ -1116,9 +1175,16 @@ function canonicalRoutes(inventory: Inventory): Array<Route & { serviceId: strin
     serviceId: service.serviceId,
   }))).filter((route) => route.domain === DOMAIN);
 }
+function configuredTopologyExact(inventory: Inventory): boolean {
+  return inventory.configuredTopology.configuredReplicas === 2
+    && inventory.configuredTopology.configuredRegions.length === 1
+    && inventory.configuredTopology.configuredRegions[0]?.region === PRIMARY_REGION
+    && inventory.configuredTopology.configuredRegions[0]?.numReplicas === 2;
+}
 function candidateExact(
   snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
   candidateSha: string,
+  inventory: Inventory,
 ): boolean {
   return snapshot.deployment.projectId === PROJECT_ID
     && snapshot.environmentId === PRODUCTION_ENVIRONMENT_ID
@@ -1127,7 +1193,7 @@ function candidateExact(
     && snapshot.deployment.serviceId === SERVICE_ID
     && snapshot.deployment.commitHash === candidateSha
     && snapshot.deployment.patchId === null
-    && snapshot.numReplicas === 2
+    && configuredTopologyExact(inventory)
     && snapshot.latestDeployment.id === snapshot.deployment.id
     && snapshot.latestDeployment.snapshotId === snapshot.deployment.snapshotId
     && snapshot.latestDeployment.status === "SUCCESS"
@@ -1140,7 +1206,18 @@ function candidateExact(
 function snapshotWithoutRoutes(
   snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
 ): string {
-  return canonical({ ...snapshot, domains: [] });
+  const { numReplicas: _legacyAggregateReplicas, ...authoritative } = snapshot;
+  return canonical({ ...authoritative, domains: [] });
+}
+function inventoryAuthorityCanonical(inventory: Inventory): string {
+  return canonical({
+    environmentId: inventory.environmentId,
+    configuredTopology: inventory.configuredTopology,
+    services: inventory.services.map((service) => {
+      const { legacyAggregateReplicas: _legacyAggregateReplicas, ...authoritative } = service;
+      return authoritative;
+    }),
+  });
 }
 function inventoryTransitionExact(
   before: Inventory,
@@ -1160,7 +1237,93 @@ function inventoryTransitionExact(
     target.routes.push(expectedRoute);
     target.routes.sort((left, right) => left.id.localeCompare(right.id));
   }
-  return canonical(expected) === canonical(after);
+  return inventoryAuthorityCanonical(expected as unknown as Inventory)
+    === inventoryAuthorityCanonical(after);
+}
+
+function topologySnapshot(inventory: Inventory | null): RouteReplicaTopologySnapshot | null {
+  if (!inventory) return null;
+  const service = targetService(inventory);
+  if (!service) return null;
+  const configured = {
+    configuredReplicas: inventory.configuredTopology.configuredReplicas,
+    configuredRegions: inventory.configuredTopology.configuredRegions.map(
+      ({ region, numReplicas }) => ({ region, numReplicas }),
+    ),
+  };
+  return {
+    ...configured,
+    configuredTopologySha256: sha256(canonical(configured)),
+    legacyAggregateReplicas: service.legacyAggregateReplicas,
+  };
+}
+
+function routeReplicaTopology(
+  before: Inventory | null,
+  immediatelyBeforeWrite: Inventory | null,
+  after: Inventory | null,
+): RouteReplicaTopologyReceipt {
+  return {
+    authoritySource: "environment.config(decryptVariables:false)",
+    primaryRegion: PRIMARY_REGION,
+    allowedRegions: [PRIMARY_REGION],
+    before: topologySnapshot(before),
+    immediatelyBeforeWrite: topologySnapshot(immediatelyBeforeWrite),
+    after: topologySnapshot(after),
+  };
+}
+
+function parseRouteTopologySnapshot(value: unknown): RouteReplicaTopologySnapshot | null {
+  if (!exactMembers(value, [
+    "configuredReplicas",
+    "configuredRegions",
+    "configuredTopologySha256",
+    "legacyAggregateReplicas",
+  ]) || value.configuredReplicas !== 2
+    || !Array.isArray(value.configuredRegions)
+    || value.configuredRegions.length !== 1
+    || typeof value.configuredTopologySha256 !== "string"
+    || !SHA256.test(value.configuredTopologySha256)
+    || !(value.legacyAggregateReplicas === null
+      || Number.isSafeInteger(value.legacyAggregateReplicas)
+        && Number(value.legacyAggregateReplicas) >= 0
+        && Number(value.legacyAggregateReplicas) <= 50)) return null;
+  const region = value.configuredRegions[0];
+  if (!exactMembers(region, ["region", "numReplicas"])
+    || region.region !== PRIMARY_REGION || region.numReplicas !== 2) return null;
+  const configured = {
+    configuredReplicas: 2,
+    configuredRegions: [{ region: PRIMARY_REGION, numReplicas: 2 }],
+  };
+  if (sha256(canonical(configured)) !== value.configuredTopologySha256) return null;
+  return {
+    ...configured,
+    configuredTopologySha256: value.configuredTopologySha256,
+    legacyAggregateReplicas: value.legacyAggregateReplicas === null
+      ? null
+      : Number(value.legacyAggregateReplicas),
+  };
+}
+
+export function productionRouteReplicaTopologyExact(value: unknown): boolean {
+  if (!exactMembers(value, [
+    "authoritySource",
+    "primaryRegion",
+    "allowedRegions",
+    "before",
+    "immediatelyBeforeWrite",
+    "after",
+  ]) || value.authoritySource !== "environment.config(decryptVariables:false)"
+    || value.primaryRegion !== PRIMARY_REGION
+    || !Array.isArray(value.allowedRegions)
+    || value.allowedRegions.length !== 1
+    || value.allowedRegions[0] !== PRIMARY_REGION) return false;
+  const before = parseRouteTopologySnapshot(value.before);
+  const immediatelyBeforeWrite = parseRouteTopologySnapshot(value.immediatelyBeforeWrite);
+  const after = parseRouteTopologySnapshot(value.after);
+  return before !== null && immediatelyBeforeWrite !== null && after !== null
+    && before.configuredTopologySha256 === immediatelyBeforeWrite.configuredTopologySha256
+    && before.configuredTopologySha256 === after.configuredTopologySha256;
 }
 function parseCloseAcknowledgement(value: unknown): boolean {
   return exact(value, ["data"])
@@ -1335,6 +1498,7 @@ function emptyChecks(): Checks {
     patchPostflightEmpty: false,
     inventoryTransitionExact: false,
     candidateDeploymentPostflightExact: false,
+    replicaTopologyEvidenceExact: false,
     boundaryPostflightExact: false,
     publicRuntimePostflightExact: false,
     terminalEvidenceExact: false,
@@ -1351,6 +1515,7 @@ function receipt(
   terminalSha256: string | null,
   beforeInventorySha256: string | null,
   afterInventorySha256: string | null,
+  replicaTopology: RouteReplicaTopologyReceipt,
   routeIdSha256: string | null,
   deploymentIdSha256: string | null,
   predecessorAuthority: GithubPredecessorAuthority | null,
@@ -1397,6 +1562,7 @@ function receipt(
     terminalEvidenceSha256: terminalSha256,
     beforeInventorySha256,
     afterInventorySha256,
+    replicaTopology,
     checks,
   };
 }
@@ -1439,6 +1605,8 @@ export async function runProtectedProductionRouteMutation(
   };
   let metadataToken = "";
   let beforeInventory: Inventory | null = null;
+  let immediatelyBeforeWriteInventory: Inventory | null = null;
+  let afterInventory: Inventory | null = null;
   let beforeSnapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
   let expectedRoute: Route | null = null;
   try {
@@ -1552,7 +1720,7 @@ export async function runProtectedProductionRouteMutation(
       providerSource(targetRaw),
     );
     checks.candidateDeploymentPreflightExact = beforeSnapshot !== null
-      && candidateExact(beforeSnapshot, args.candidateSha);
+      && candidateExact(beforeSnapshot, args.candidateSha, beforeInventory);
     if (!checks.candidateDeploymentPreflightExact || !beforeSnapshot) {
       throw new Error("candidate_invalid");
     }
@@ -1629,12 +1797,13 @@ export async function runProtectedProductionRouteMutation(
       : null;
     beforeInventorySha256 = sha256(canonical(beforeInventory));
     const intent = canonical({
-      schemaVersion: "pintpath-protected-production-route-intent/v1",
+      schemaVersion: "pintpath-protected-production-route-intent/v2",
       operation: args.operation,
       candidateSha: args.candidateSha,
       githubEnvironment: `production-route-${args.operation}`,
       policySha256: POLICY_SHA256,
       beforeInventorySha256,
+      replicaTopologyBefore: topologySnapshot(beforeInventory),
       deploymentIdSha256,
       predecessorAuthoritySha256: predecessorAuthority.sourceSha256,
       orderedProductionChainSha256:
@@ -1674,6 +1843,8 @@ export async function runProtectedProductionRouteMutation(
     if (!checks.repositoryPrewriteReasserted) {
       throw new Error("repository_prewrite_drift");
     }
+    checks.boundaryPreflightExact = await dependencies.runBoundary();
+    if (!checks.boundaryPreflightExact) throw new Error("boundary_invalid");
     const prewriteVariables = {
       projectId: PROJECT_ID,
       environmentId: PRODUCTION_ENVIRONMENT_ID,
@@ -1687,8 +1858,10 @@ export async function runProtectedProductionRouteMutation(
     const prewritePatch = parseRailwayApplicationDeploymentAttestationEmptyPatchResponse(
       providerSource(prewritePatchRaw),
     );
-    const prewriteInventory = parseInventory(prewriteInventoryRaw);
-    const prewriteService = prewriteInventory ? targetService(prewriteInventory) : null;
+    immediatelyBeforeWriteInventory = parseInventory(prewriteInventoryRaw);
+    const prewriteService = immediatelyBeforeWriteInventory
+      ? targetService(immediatelyBeforeWriteInventory)
+      : null;
     let prewriteSnapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
     if (prewriteService) {
       const prewriteTargetRaw = await call(
@@ -1709,16 +1882,19 @@ export async function runProtectedProductionRouteMutation(
     checks.providerPrewriteReasserted = prewritePatch?.environmentId
         === PRODUCTION_ENVIRONMENT_ID
       && prewritePatch.patchEmpty
-      && prewriteInventory !== null
-      && canonical(prewriteInventory) === canonical(beforeInventory)
+      && immediatelyBeforeWriteInventory !== null
+      && inventoryAuthorityCanonical(immediatelyBeforeWriteInventory)
+        === inventoryAuthorityCanonical(beforeInventory)
       && prewriteSnapshot !== null
-      && canonical(prewriteSnapshot) === canonical(beforeSnapshot)
-      && candidateExact(prewriteSnapshot, args.candidateSha);
+      && snapshotWithoutRoutes(prewriteSnapshot) === snapshotWithoutRoutes(beforeSnapshot)
+      && candidateExact(
+        prewriteSnapshot,
+        args.candidateSha,
+        immediatelyBeforeWriteInventory,
+      );
     if (!checks.providerPrewriteReasserted) {
       throw new Error("provider_prewrite_drift");
     }
-    checks.boundaryPreflightExact = await dependencies.runBoundary();
-    if (!checks.boundaryPreflightExact) throw new Error("boundary_invalid");
     attempts = 1;
     try {
       if (args.operation === "close") {
@@ -1772,7 +1948,7 @@ export async function runProtectedProductionRouteMutation(
         );
         checks.patchPostflightEmpty = patch?.environmentId === PRODUCTION_ENVIRONMENT_ID
           && patch.patchEmpty;
-        const afterInventory = parseInventory(inventoryRaw);
+        afterInventory = parseInventory(inventoryRaw);
         const service = afterInventory ? targetService(afterInventory) : null;
         if (afterInventory && service) {
           afterInventorySha256 = sha256(canonical(afterInventory));
@@ -1791,7 +1967,7 @@ export async function runProtectedProductionRouteMutation(
             providerSource(afterTargetRaw),
           );
           checks.candidateDeploymentPostflightExact = afterSnapshot !== null
-            && candidateExact(afterSnapshot, args.candidateSha)
+            && candidateExact(afterSnapshot, args.candidateSha, afterInventory)
             && snapshotWithoutRoutes(beforeSnapshot) === snapshotWithoutRoutes(afterSnapshot);
           if (!expectedRoute && args.operation === "open") {
             const observed = canonicalRoutes(afterInventory);
@@ -1810,11 +1986,19 @@ export async function runProtectedProductionRouteMutation(
           checks.inventoryTransitionExact = expectedRoute !== null
             && inventoryTransitionExact(beforeInventory, afterInventory, args.operation, expectedRoute)
             && canonicalRoutes(afterInventory).length === (args.operation === "open" ? 1 : 0);
+          checks.replicaTopologyEvidenceExact = productionRouteReplicaTopologyExact(
+            routeReplicaTopology(
+              beforeInventory,
+              immediatelyBeforeWriteInventory,
+              afterInventory,
+            ),
+          );
         }
       } catch {
         checks.patchPostflightEmpty = false;
         checks.inventoryTransitionExact = false;
         checks.candidateDeploymentPostflightExact = false;
+        checks.replicaTopologyEvidenceExact = false;
       }
       try {
         checks.boundaryPostflightExact = await dependencies.runBoundary();
@@ -1824,6 +2008,7 @@ export async function runProtectedProductionRouteMutation(
       const reconciledProvider = checks.patchPostflightEmpty
         && checks.inventoryTransitionExact
         && checks.candidateDeploymentPostflightExact
+        && checks.replicaTopologyEvidenceExact
         && checks.boundaryPostflightExact;
       if (args.operation === "open" && reconciledProvider) {
         try {
@@ -1857,14 +2042,16 @@ export async function runProtectedProductionRouteMutation(
   }
   let provisional = receipt(
     args, outcome, startedAt, completedAt, attempts, intentSha256, null,
-    beforeInventorySha256, afterInventorySha256, routeIdSha256,
+    beforeInventorySha256, afterInventorySha256,
+    routeReplicaTopology(beforeInventory, immediatelyBeforeWriteInventory, afterInventory),
+    routeIdSha256,
     deploymentIdSha256, predecessorAuthority, promotionRecoveryReceiptSha256,
     operationReceiptAuthorities, checks,
   );
   if (args && checks.durableIntentExact) {
     try {
       const terminal = canonical({
-        schemaVersion: "pintpath-protected-production-route-terminal/v1",
+        schemaVersion: "pintpath-protected-production-route-terminal/v2",
         receipt: provisional,
       });
       terminalSha256 = dependencies.writeDurable(args.evidenceDir, "terminal.json", terminal);
@@ -1876,7 +2063,9 @@ export async function runProtectedProductionRouteMutation(
   }
   provisional = receipt(
     args, outcome, startedAt, completedAt, attempts, intentSha256, terminalSha256,
-    beforeInventorySha256, afterInventorySha256, routeIdSha256,
+    beforeInventorySha256, afterInventorySha256,
+    routeReplicaTopology(beforeInventory, immediatelyBeforeWriteInventory, afterInventory),
+    routeIdSha256,
     deploymentIdSha256, predecessorAuthority, promotionRecoveryReceiptSha256,
     operationReceiptAuthorities, checks,
   );
@@ -1885,7 +2074,9 @@ export async function runProtectedProductionRouteMutation(
       checks.finalReceiptEvidenceExact = true;
       provisional = receipt(
         args, outcome, startedAt, completedAt, attempts, intentSha256, terminalSha256,
-        beforeInventorySha256, afterInventorySha256, routeIdSha256,
+        beforeInventorySha256, afterInventorySha256,
+        routeReplicaTopology(beforeInventory, immediatelyBeforeWriteInventory, afterInventory),
+        routeIdSha256,
         deploymentIdSha256, predecessorAuthority, promotionRecoveryReceiptSha256,
         operationReceiptAuthorities, checks,
       );
@@ -1905,7 +2096,9 @@ export async function runProtectedProductionRouteMutation(
   }
   provisional = receipt(
     args, outcome, startedAt, completedAt, attempts, intentSha256, terminalSha256,
-    beforeInventorySha256, afterInventorySha256, routeIdSha256,
+    beforeInventorySha256, afterInventorySha256,
+    routeReplicaTopology(beforeInventory, immediatelyBeforeWriteInventory, afterInventory),
+    routeIdSha256,
     deploymentIdSha256, predecessorAuthority, promotionRecoveryReceiptSha256,
     operationReceiptAuthorities, checks,
   );
@@ -1915,6 +2108,7 @@ export async function runProtectedProductionRouteMutation(
       || outcome === "closed_reconciled_after_lost_ack"
       || outcome === "opened_reconciled_after_lost_ack")
       && checks.terminalEvidenceExact
+      && checks.replicaTopologyEvidenceExact
       && checks.finalReceiptEvidenceExact)
     ? 0
     : 1;
@@ -1927,6 +2121,7 @@ export const protectedProductionRouteMutationInternals = {
   parseCloseAcknowledgement,
   parseOpenAcknowledgement,
   inventoryTransitionExact,
+  productionRouteReplicaTopologyExact,
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

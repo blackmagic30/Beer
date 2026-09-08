@@ -14,7 +14,7 @@ import {
 export const VENUE_DIRECTORY_POLICY_PATH =
   "ops/supabase/permanent-staging-venue-directory-policy.json" as const;
 export const VENUE_DIRECTORY_POLICY_SHA256 =
-  "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f" as const;
+  "3474e28c413e908b7dac76190709553e753fed39df753a1cd273b29f161bfcef" as const;
 export const VENUE_DIRECTORY_PLAN_SCHEMA =
   "pintpath-permanent-staging-venue-import-plan/v1" as const;
 export const VENUE_DIRECTORY_IMPORT_TERMINAL_SCHEMA =
@@ -53,7 +53,7 @@ const OPERATION = "directory-discovery-and-status-refresh";
 const FREEZE_ATTESTATION =
   "I_ATTEST_EXTERNAL_PERMANENT_STAGING_VENUE_ROW_AND_SCHEMA_MIGRATION_WRITERS_ARE_FROZEN_FOR_THIS_RUN";
 const DEPLOYMENT_RECEIPT_SCHEMA =
-  "pintpath-railway-application-deployment-executor/v5";
+  "pintpath-railway-application-deployment-executor/v6";
 const DEPLOYMENT_RECEIPT_OPERATION =
   "pintpath-railway-application-source-upload";
 const DEPLOYMENT_CHECK_KEYS = Object.freeze([
@@ -63,16 +63,20 @@ const DEPLOYMENT_CHECK_KEYS = Object.freeze([
   "collateralInventoryExact",
   "collateralStateUnchanged",
   "costPolicyExact",
+  "configuredTopologyExact",
   "deploymentExact",
   "durableIntentExact",
   "gitAutodeployAbsent",
   "githubMainExact",
+  "immediatePrewriteExact",
   "policyExact",
   "prerequisiteExact",
   "reconciliationCompleted",
   "runtimeHealthExact",
   "runtimeReadinessExact",
   "runtimeStartupExact",
+  "fencedRuntimeAbsentBeforeWrite",
+  "fencedRuntimeAbsentPostflight",
   "sourceAuthorityExact",
   "sourceReasserted",
   "targetPostflightAttempted",
@@ -498,6 +502,62 @@ function workflowRunNameExact(
   return value === workflowName || value === displayTitle;
 }
 
+function nullableReplicaCount(value: unknown): boolean {
+  return value === null || (
+    typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= 50
+  );
+}
+
+function fencedTopologyEvidence(value: unknown): value is JsonRecord {
+  if (!record(value) || !exactKeys(value, [
+    "configuredReplicas",
+    "configuredRegions",
+    "configuredTopologySha256",
+  ]) || value.configuredReplicas !== 0 || !Array.isArray(value.configuredRegions)) {
+    return false;
+  }
+  let previousRegion = "";
+  const seen = new Set<string>();
+  for (const entry of value.configuredRegions) {
+    if (!record(entry) || !exactKeys(entry, ["region", "numReplicas"])
+      || ![
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ].includes(String(entry.region))
+      || seen.has(String(entry.region))
+      || String(entry.region) <= previousRegion
+      || entry.numReplicas !== 0) return false;
+    seen.add(String(entry.region));
+    previousRegion = String(entry.region);
+  }
+  return value.configuredTopologySha256 === crypto.createHash("sha256").update(
+    `${JSON.stringify(canonicalValue({
+      configuredReplicas: value.configuredReplicas,
+      configuredRegions: value.configuredRegions,
+    }), null, 2)}\n`,
+  ).digest("hex");
+}
+
+function fencedTopologyChain(value: unknown): boolean {
+  if (!record(value) || !exactKeys(value, [
+    "authoritativeSource",
+    "before",
+    "immediatelyBeforeWrite",
+    "after",
+  ]) || value.authoritativeSource !==
+    "environment.config(decryptVariables:false)"
+    || !fencedTopologyEvidence(value.before)
+    || !fencedTopologyEvidence(value.immediatelyBeforeWrite)
+    || !fencedTopologyEvidence(value.after)) return false;
+  return JSON.stringify(canonicalValue(value.before))
+      === JSON.stringify(canonicalValue(value.immediatelyBeforeWrite))
+    && JSON.stringify(canonicalValue(value.before))
+      === JSON.stringify(canonicalValue(value.after));
+}
+
 function validateDeploymentReceipt(
   source: string,
   value: JsonRecord,
@@ -511,10 +571,14 @@ function validateDeploymentReceipt(
     "writeAttempts", "acknowledgement", "previousDeploymentIdSha256",
     "deploymentIdSha256", "intentSha256", "cliOutputSha256",
     "boundaryPreflightSha256", "boundaryPostflightSha256",
-    "collateralSnapshotSha256s", "replicaCounts", "runtimeResponseSha256s",
+    "collateralSnapshotSha256s", "replicaCounts", "legacyReplicaCounts",
+    "configuredTopology", "runtimeAbsence", "runtimeResponseSha256s",
     "workerFencePrerequisite", "checks",
   ];
   const replicas = value.replicaCounts;
+  const legacyReplicas = value.legacyReplicaCounts;
+  const configuredTopology = value.configuredTopology;
+  const runtimeAbsence = value.runtimeAbsence;
   const runtime = value.runtimeResponseSha256s;
   const collateral = value.collateralSnapshotSha256s;
   const checks = value.checks;
@@ -549,6 +613,20 @@ function validateDeploymentReceipt(
     || !SHA256.test(String(collateral.before)) || collateral.after !== collateral.before
     || !exactKeys(replicas, ["before", "after"])
     || replicas.before !== 0 || replicas.after !== 0
+    || !record(legacyReplicas)
+    || !exactKeys(legacyReplicas, [
+      "before", "immediatelyBeforeWrite", "after",
+    ])
+    || Object.values(legacyReplicas).some((item) =>
+      !nullableReplicaCount(item))
+    || !fencedTopologyChain(configuredTopology)
+    || !record(runtimeAbsence)
+    || !exactKeys(runtimeAbsence, [
+      "required", "immediatelyBeforeWrite", "postflight",
+    ])
+    || runtimeAbsence.required !== true
+    || runtimeAbsence.immediatelyBeforeWrite !== true
+    || runtimeAbsence.postflight !== true
     || !exactKeys(runtime, ["health", "startup", "ready"])
     || Object.values(runtime).some((item) => item !== null)
     || value.workerFencePrerequisite !== null

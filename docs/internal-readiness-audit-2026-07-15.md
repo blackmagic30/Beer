@@ -78,7 +78,10 @@ Do not add a second active region while the application uses one attached SQLite
 - Keep database CIDRs open until Railway and emergency operator egress are known, then replace `0.0.0.0/0` and `::/0` with an evidenced allowlist.
 - Add dedicated production smoke credentials for user and venue monitoring. Use a fresh AAL2 admin token only for a manual release gate, never as a long-lived scheduled secret.
 - Require CodeQL after its first successful run and decide whether main-branch rules should apply to administrators.
-- Add a production-environment reviewer if a second trusted operator is available.
+- Keep operator GitHub Environments at zero required reviewers, zero wait
+  timers, and protected `main` only. Use separate cryptographic signer/reviewer
+  authorities and signed change references; do not add a human Environment
+  approval gate.
 
 ### 5. Close external evidence
 

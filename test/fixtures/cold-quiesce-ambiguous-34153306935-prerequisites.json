@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v4",
+  "policySha256": "a7fe6184aa6849cc9b4f8f4652cf02608a21685153144812e9de0e2567bbb548",
+  "operation": "cold-quiesce",
+  "bootstrapPath": "cold-dead",
+  "candidateSha": "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  "expectedDeploymentSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+  "repository": "blackmagic30/Beer",
+  "reviewedPullRequest": {
+    "number": 90,
+    "reviewedHeadSha": "cc2c5311d47f3e895173cb11ef094ef856e0cf07",
+    "mergeCommitSha": "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+    "treeSha": "9da75485e85addfec7096b1c04c52f6780d17b64",
+    "mergedAt": "2026-09-07T18:18:58.000Z",
+    "authorId": 29029791,
+    "mergedById": 29029791
+  },
+  "consumer": {
+    "workflowPath": ".github/workflows/recover-permanent-staging-cold-zero.yml",
+    "githubEnvironment": "permanent-staging-scale-evidence",
+    "runId": "34153306935",
+    "runAttempt": 1,
+    "startedAt": "2026-09-07T18:51:21.000Z"
+  },
+  "prerequisites": [
+    {
+      "kind": "cold-prepare",
+      "workflowPath": ".github/workflows/recover-permanent-staging-cold-zero.yml",
+      "runId": "34152745186",
+      "runAttempt": 1,
+      "startedAt": "2026-09-07T18:43:02.000Z",
+      "completedAt": "2026-09-07T18:47:32.000Z",
+      "artifactName": "pintpath-permanent-staging-cold-prepare-838e8c877dcafc0a822a12e5a26afa81c26924a3",
+      "artifactId": "10030007213",
+      "artifactDigest": "sha256:6efb2479411cedb87bb7ec458afc48c3d45aec714c98dcde153178a1025ce546",
+      "artifactSizeBytes": 3155,
+      "receipt": {
+        "filename": "cold-prepare-terminal.json",
+        "schemaVersion": "pintpath-permanent-staging-cold-prepare/v1",
+        "sha256": "0a589d835fa6d900f4efeb003f0c5f92e6744a2242d7d64fa74248466cdf91d5",
+        "outcome": "prepared_cold",
+        "candidateSha": "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+        "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+        "deploymentIdSha256": "fbfeb81e05c27cdf222cdccb5fc0707b72d29d73fb87aa817df82333bfc21422",
+        "replicasBefore": null,
+        "replicasAfter": null
+      },
+      "prerequisiteVerificationSha256": null
+    }
+  ],
+  "verifiedAt": "2026-09-07T18:55:35.366Z",
+  "expiresAt": "2026-09-07T19:10:35.366Z",
+  "checks": {
+    "policiesExact": true,
+    "currentMainExact": true,
+    "reviewedCandidateExact": true,
+    "consumerRunAuthorityExact": true,
+    "prerequisiteRunsExact": true,
+    "artifactNamesAndDigestsExact": true,
+    "receiptSchemasAndBindingsExact": true,
+    "strictChronologyExact": true,
+    "noLaterMatchingRunsExact": true,
+    "evidenceSecretFreeExact": true
+  },
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

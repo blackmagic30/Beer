@@ -23,12 +23,16 @@ import {
   parseProductionDeploymentWorkerFencePrerequisiteVerification,
   type ProductionDeploymentWorkerFencePrerequisiteVerification,
 } from "../verify-production-maintenance-role-limit-prerequisites.js";
+import {
+  parseRailwayMultiRegionReplicaTopology,
+  type RailwayRegionReplicaCount,
+} from "./railway-multi-region-replica-topology.js";
 import { readTrustedRegularFile } from "./trusted-filesystem.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
-  "pintpath-railway-application-deployment-policy/v5" as const;
+  "pintpath-railway-application-deployment-policy/v6" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA =
-  "pintpath-railway-application-deployment-executor/v5" as const;
+  "pintpath-railway-application-deployment-executor/v6" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION =
   "pintpath-railway-application-source-upload" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE =
@@ -54,6 +58,8 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES = Object.freeze([
   "provider_target_mismatch",
   "reconciliation_failed",
   "runtime_probe_failed",
+  "immediate_prewrite_failed",
+  "fenced_runtime_present",
   "source_authority_failed",
   "source_cleanup_failed",
   "source_reassertion_failed",
@@ -109,10 +115,15 @@ const RAILWAY_APPLICATION_DEPLOYMENT_DISCOVERY_QUERY =
 }` as const;
 const RAILWAY_APPLICATION_DEPLOYMENT_SNAPSHOT_QUERY =
   `query PintPathRailwayApplicationDeploymentSnapshot(
+  $projectId: String!
   $environmentId: String!
   $serviceId: String!
   $deploymentId: String!
 ) {
+  environment(id: $environmentId, projectId: $projectId) {
+    id
+    config(decryptVariables: false)
+  }
   serviceInstance(environmentId: $environmentId, serviceId: $serviceId) {
     id
     serviceId
@@ -187,6 +198,36 @@ const TARGET_LOCKS = Object.freeze({
       "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     allowedReplicaCounts: Object.freeze([1] as const),
     fencedAllowedReplicaCounts: Object.freeze([0] as const),
+    configuredTopologyContract: Object.freeze({
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      configuredReplicaCounts: Object.freeze([1] as const),
+      allowedConfiguredRegions: Object.freeze([
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ] as const),
+      solePositiveRegion: "asia-southeast1-eqsg3a",
+      zeroOnlyRegions: Object.freeze(["europe-west4-drams3a"] as const),
+      legacyReplicaCountRole: "nullable-observation-only",
+      immediateProviderReassertionRequired: true,
+      postflightProviderReassertionRequired: true,
+    }),
+    activeAutomaticMaintenanceEnabled: true,
+    fencedConfiguredTopologyContract: Object.freeze({
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      configuredReplicaCounts: Object.freeze([0] as const),
+      allowedConfiguredRegions: Object.freeze([
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ] as const),
+      solePositiveRegion: null,
+      zeroOnlyRegions: Object.freeze([
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ] as const),
+      legacyReplicaCountRole: "nullable-observation-only",
+      immediateProviderReassertionRequired: true,
+      postflightProviderReassertionRequired: true,
+    }),
     githubEnvironment: "permanent-staging-deployment",
     allowedAutomaticMaintenanceStates: Object.freeze([false, true] as const),
   }),
@@ -198,6 +239,18 @@ const TARGET_LOCKS = Object.freeze({
     publicOriginSha256:
       "a3a1a2e58fa4038b741e1c213af02708e09ae901005c7c31f919e0a4dea46e90",
     allowedReplicaCounts: Object.freeze([1, 2] as const),
+    configuredTopologyContract: Object.freeze({
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      configuredReplicaCounts: Object.freeze([1, 2] as const),
+      allowedConfiguredRegions: Object.freeze([
+        "asia-southeast1-eqsg3a",
+      ] as const),
+      solePositiveRegion: "asia-southeast1-eqsg3a",
+      zeroOnlyRegions: Object.freeze([] as const),
+      legacyReplicaCountRole: "nullable-observation-only",
+      immediateProviderReassertionRequired: true,
+      postflightProviderReassertionRequired: true,
+    }),
     githubEnvironment: "production-deployment",
     automaticMaintenanceEnabled: false,
   }),
@@ -311,6 +364,52 @@ const policySchema = z.object({
     maximumObservationSeconds: z.number().int().min(60).max(1_800),
     pollIntervalSeconds: z.number().int().min(2).max(30),
   }).strict(),
+  configuredTopologyContract: z.object({
+    authoritativeSource: z.literal(
+      "environment.config(decryptVariables:false)",
+    ),
+    configuredReplicaCounts: z.union([
+      z.tuple([z.literal(0)]),
+      z.tuple([z.literal(1)]),
+      z.tuple([z.literal(1), z.literal(2)]),
+    ]),
+    allowedConfiguredRegions: z.union([
+      z.tuple([z.literal("asia-southeast1-eqsg3a")]),
+      z.tuple([
+        z.literal("asia-southeast1-eqsg3a"),
+        z.literal("europe-west4-drams3a"),
+      ]),
+    ]),
+    solePositiveRegion: z.union([
+      z.null(),
+      z.literal("asia-southeast1-eqsg3a"),
+    ]),
+    zeroOnlyRegions: z.union([
+      z.tuple([]),
+      z.tuple([z.literal("europe-west4-drams3a")]),
+      z.tuple([
+        z.literal("asia-southeast1-eqsg3a"),
+        z.literal("europe-west4-drams3a"),
+      ]),
+    ]),
+    legacyReplicaCountRole: z.literal("nullable-observation-only"),
+    immediateProviderReassertionRequired: z.literal(true),
+    postflightProviderReassertionRequired: z.literal(true),
+  }).strict(),
+  fencedDeploymentContract: z.object({
+    configuredTopologySource: z.literal(
+      "environment.config(decryptVariables:false)",
+    ),
+    configuredReplicaCount: z.literal(0),
+    allowedConfiguredRegions: z.tuple([
+      z.literal("asia-southeast1-eqsg3a"),
+      z.literal("europe-west4-drams3a"),
+    ]),
+    legacyReplicaCountRole: z.literal("nullable-observation-only"),
+    immediateProviderReassertionRequired: z.literal(true),
+    runtimeAbsentImmediatelyBeforeWriteRequired: z.literal(true),
+    runtimeAbsentPostflightRequired: z.literal(true),
+  }).strict().optional(),
   prerequisite: z.union([
     z.null(),
     z.object({
@@ -398,6 +497,20 @@ function canonicalJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [
+    key,
+    canonicalKeyOrder(record[key]),
+  ]));
+}
+
+function canonicalTopologyJson(value: unknown): string {
+  return `${JSON.stringify(canonicalKeyOrder(value), null, 2)}\n`;
+}
+
 function sha256(value: string | Buffer): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -423,21 +536,48 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
   let policyIdExact: boolean;
   let automaticMaintenanceStateAllowed: boolean;
   let expectedReplicaCounts: readonly number[];
+  let configuredTopologyContractExact: boolean;
+  let fencedDeploymentContractExact: boolean;
   if (policy.target.name === "permanent-staging") {
     const stagingLock = TARGET_LOCKS["permanent-staging"];
+    const fenced = !policy.postflightContract.automaticMaintenanceEnabled;
     policyIdExact = policy.policyId === (
-      policy.postflightContract.automaticMaintenanceEnabled
-        ? stagingLock.policyId
-        : stagingLock.fencedPolicyId
+      fenced
+        ? stagingLock.fencedPolicyId
+        : stagingLock.policyId
     );
     automaticMaintenanceStateAllowed = (
       stagingLock.allowedAutomaticMaintenanceStates as readonly boolean[]
     ).includes(policy.postflightContract.automaticMaintenanceEnabled);
     if (policy.postflightContract.automaticMaintenanceEnabled
       !== policy.postflightContract.runtimeProbeRequired) return false;
-    expectedReplicaCounts = policy.postflightContract.automaticMaintenanceEnabled
-      ? stagingLock.allowedReplicaCounts
-      : stagingLock.fencedAllowedReplicaCounts;
+    expectedReplicaCounts = fenced
+      ? stagingLock.fencedAllowedReplicaCounts
+      : stagingLock.allowedReplicaCounts;
+    configuredTopologyContractExact = canonicalJson(
+      policy.configuredTopologyContract,
+    ) === canonicalJson(
+      fenced
+        ? stagingLock.fencedConfiguredTopologyContract
+        : stagingLock.configuredTopologyContract,
+    );
+    fencedDeploymentContractExact = fenced
+      ? policy.fencedDeploymentContract?.configuredTopologySource
+          === "environment.config(decryptVariables:false)"
+        && policy.fencedDeploymentContract.configuredReplicaCount === 0
+        && canonicalJson(policy.fencedDeploymentContract.allowedConfiguredRegions)
+          === canonicalJson(
+            stagingLock.fencedConfiguredTopologyContract
+              .allowedConfiguredRegions,
+          )
+        && policy.fencedDeploymentContract.legacyReplicaCountRole
+          === "nullable-observation-only"
+        && policy.fencedDeploymentContract.immediateProviderReassertionRequired
+          === true
+        && policy.fencedDeploymentContract
+          .runtimeAbsentImmediatelyBeforeWriteRequired === true
+        && policy.fencedDeploymentContract.runtimeAbsentPostflightRequired === true
+      : policy.fencedDeploymentContract === undefined;
   } else {
     const productionLock = TARGET_LOCKS.production;
     policyIdExact = policy.policyId === productionLock.policyId;
@@ -446,8 +586,15 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
         === productionLock.automaticMaintenanceEnabled;
     if (!policy.postflightContract.runtimeProbeRequired) return false;
     expectedReplicaCounts = productionLock.allowedReplicaCounts;
+    configuredTopologyContractExact = canonicalJson(
+      policy.configuredTopologyContract,
+    ) === canonicalJson(productionLock.configuredTopologyContract);
+    fencedDeploymentContractExact =
+      policy.fencedDeploymentContract === undefined;
   }
   return policyIdExact
+    && configuredTopologyContractExact
+    && fencedDeploymentContractExact
     && policy.projectId === PROJECT_ID
     && policy.target.environmentId === lock.environmentId
     && policy.target.forbiddenEnvironmentId === lock.forbiddenEnvironmentId
@@ -482,6 +629,13 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
         && policy.costContract.policyPath === null
         && policy.costContract.policySha256 === null
         && !policy.costContract.singleCombinedReceiptRequiredForRelease);
+}
+
+function isFencedDeploymentPolicy(
+  policy: PermanentStagingAppDeploymentPolicy,
+): boolean {
+  return policy.target.name === "permanent-staging"
+    && policy.fencedDeploymentContract !== undefined;
 }
 
 export function parsePermanentStagingAppDeploymentPolicy(
@@ -542,11 +696,18 @@ interface CliAuthority {
   readonly close: () => void;
 }
 
+interface ConfiguredTopologyEvidence {
+  readonly configuredReplicas: number;
+  readonly configuredRegions: readonly RailwayRegionReplicaCount[];
+  readonly configuredTopologySha256: string;
+}
+
 interface ProviderObservation {
   readonly tokenScopeExact: boolean;
   readonly patchEmpty: boolean;
   readonly gitAutodeployAbsent: boolean;
   readonly collateralSha256: string;
+  readonly configuredTopology: ConfiguredTopologyEvidence;
   readonly snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot;
 }
 
@@ -615,6 +776,12 @@ interface ExecutorDependencies {
     environmentId: string,
     deploymentId: string,
   ) => Promise<RuntimeObservation>;
+  readonly probeRuntimeAbsent: (
+    origin: string,
+  ) => Promise<boolean>;
+  readonly probeRuntimeAbsentImmediately: (
+    origin: string,
+  ) => Promise<boolean>;
   readonly runBoundary: (
     policy: PermanentStagingAppDeploymentPolicy,
     env: Readonly<Record<string, string | undefined>>,
@@ -634,6 +801,10 @@ export interface PermanentStagingAppDeploymentExecutorChecks {
   workerFenceDeploymentContinuityExact: boolean;
   boundaryPreflightExact: boolean;
   targetPreflightExact: boolean;
+  configuredTopologyExact: boolean;
+  immediatePrewriteExact: boolean;
+  fencedRuntimeAbsentBeforeWrite: boolean;
+  fencedRuntimeAbsentPostflight: boolean;
   gitAutodeployAbsent: boolean;
   collateralInventoryExact: boolean;
   durableIntentExact: boolean;
@@ -683,6 +854,23 @@ export interface PermanentStagingAppDeploymentExecutorReceipt {
     readonly before: number | null;
     readonly after: number | null;
   };
+  readonly legacyReplicaCounts: {
+    readonly before: number | null;
+    readonly immediatelyBeforeWrite: number | null;
+    readonly after: number | null;
+  };
+  readonly configuredTopology: {
+    readonly authoritativeSource:
+      "environment.config(decryptVariables:false)";
+    readonly before: ConfiguredTopologyEvidence | null;
+    readonly immediatelyBeforeWrite: ConfiguredTopologyEvidence | null;
+    readonly after: ConfiguredTopologyEvidence | null;
+  };
+  readonly runtimeAbsence: {
+    readonly required: boolean;
+    readonly immediatelyBeforeWrite: boolean | null;
+    readonly postflight: boolean | null;
+  };
   readonly runtimeResponseSha256s: {
     readonly health: string | null;
     readonly startup: string | null;
@@ -711,6 +899,10 @@ function emptyChecks(): PermanentStagingAppDeploymentExecutorChecks {
     workerFenceDeploymentContinuityExact: false,
     boundaryPreflightExact: false,
     targetPreflightExact: false,
+    configuredTopologyExact: false,
+    immediatePrewriteExact: false,
+    fencedRuntimeAbsentBeforeWrite: false,
+    fencedRuntimeAbsentPostflight: false,
     gitAutodeployAbsent: false,
     collateralInventoryExact: false,
     durableIntentExact: false,
@@ -1596,7 +1788,12 @@ function parseCollateralSnapshot(
         serviceId: node.serviceId,
         serviceName: node.serviceName,
         environmentId: node.environmentId,
-        numReplicas: node.numReplicas,
+        // The target service's aggregate count is a nullable legacy
+        // observation. Its authoritative topology is captured separately from
+        // environment.config(decryptVariables:false).
+        numReplicas: node.serviceId === targetServiceId
+          ? null
+          : node.numReplicas,
         source: sourceValue,
         domains: normalizedDomains,
         cronSchedule: node.cronSchedule,
@@ -1623,6 +1820,97 @@ function originHostname(origin: string): string {
   return new URL(origin).hostname;
 }
 
+function configuredTopologyEvidence(
+  environmentConfig: unknown,
+  serviceId: string,
+): ConfiguredTopologyEvidence | null {
+  const topology = parseRailwayMultiRegionReplicaTopology(
+    environmentConfig,
+    serviceId,
+  );
+  if (topology.kind !== "configured") return null;
+  const configuredRegions = Object.freeze(topology.regions.map((entry) =>
+    Object.freeze({ ...entry })));
+  const evidence = {
+    configuredReplicas: topology.configuredTotal,
+    configuredRegions,
+  } as const;
+  return Object.freeze({
+    ...evidence,
+    configuredTopologySha256: sha256(canonicalTopologyJson(evidence)),
+  });
+}
+
+function parseProviderSnapshotWithConfiguredTopology(
+  source: string,
+  policy: PermanentStagingAppDeploymentPolicy,
+  environmentId: string,
+): {
+  readonly snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot;
+  readonly configuredTopology: ConfiguredTopologyEvidence;
+} | null {
+  try {
+    const root = exactRecord(JSON.parse(source), ["data"]);
+    const data = exactRecord(root?.data, [
+      "environment",
+      "serviceInstance",
+      "deployment",
+    ]);
+    const environment = exactRecord(data?.environment, ["id", "config"]);
+    if (!data || !environment || environment.id !== environmentId) return null;
+    const topology = configuredTopologyEvidence(
+      environment.config,
+      policy.target.serviceId,
+    );
+    if (!topology) return null;
+    const snapshot =
+      parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
+        JSON.stringify({
+          data: {
+            serviceInstance: data.serviceInstance,
+            deployment: data.deployment,
+          },
+        }),
+      );
+    return snapshot ? { snapshot, configuredTopology: topology } : null;
+  } catch {
+    return null;
+  }
+}
+
+function configuredTopologyAllowed(
+  policy: PermanentStagingAppDeploymentPolicy,
+  topology: ConfiguredTopologyEvidence,
+  expectedReplicaCounts: readonly number[],
+  environmentId = policy.target.environmentId,
+): boolean {
+  const contract = environmentId === policy.target.environmentId
+    ? policy.configuredTopologyContract
+    : environmentId === TARGET_LOCKS["permanent-staging"].environmentId
+      ? TARGET_LOCKS["permanent-staging"].configuredTopologyContract
+      : null;
+  if (!contract) return false;
+  if (
+    !expectedReplicaCounts.includes(topology.configuredReplicas)
+    || !(contract.configuredReplicaCounts as readonly number[])
+      .includes(topology.configuredReplicas)
+    || topology.configuredRegions.some((entry) =>
+      !(contract.allowedConfiguredRegions as readonly string[])
+        .includes(entry.region))
+    || topology.configuredRegions.some((entry) =>
+      (contract.zeroOnlyRegions as readonly string[]).includes(entry.region)
+      && entry.numReplicas !== 0)
+  ) return false;
+  const positive = topology.configuredRegions.filter((entry) =>
+    entry.numReplicas > 0);
+  if (contract.solePositiveRegion === null) {
+    return topology.configuredReplicas === 0 && positive.length === 0;
+  }
+  return positive.length === 1
+    && positive[0]!.region === contract.solePositiveRegion
+    && positive[0]!.numReplicas === topology.configuredReplicas;
+}
+
 function validatedProviderObservation(
   policy: PermanentStagingAppDeploymentPolicy,
   environmentId: string,
@@ -1631,9 +1919,12 @@ function validatedProviderObservation(
   scope: { readonly projectId: string; readonly environmentId: string },
   patch: { readonly environmentId: string; readonly patchEmpty: true },
   snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null,
+  configuredTopology: ConfiguredTopologyEvidence | null,
   collateral: ReturnType<typeof parseCollateralSnapshot>,
 ): ProviderObservation {
-  if (!snapshot || !collateral) throw new Error("provider_query_failed");
+  if (!snapshot || !configuredTopology || !collateral) {
+    throw new Error("provider_query_failed");
+  }
   const hostname = originHostname(publicOrigin);
   const exact = scope.projectId === policy.projectId
     && scope.environmentId === environmentId
@@ -1643,7 +1934,12 @@ function validatedProviderObservation(
     && snapshot.deployment.projectId === policy.projectId
     && snapshot.deployment.environmentId === environmentId
     && snapshot.deployment.serviceId === policy.target.serviceId
-    && expectedReplicaCounts.includes(snapshot.numReplicas)
+    && configuredTopologyAllowed(
+      policy,
+      configuredTopology,
+      expectedReplicaCounts,
+      environmentId,
+    )
     && snapshot.domains.some((domain) => domain.domain === hostname);
   if (!exact) throw new Error("provider_target_mismatch");
   return {
@@ -1651,6 +1947,7 @@ function validatedProviderObservation(
     patchEmpty: patch.patchEmpty === true,
     gitAutodeployAbsent: collateral.gitAutodeployAbsent,
     collateralSha256: collateral.collateralSha256,
+    configuredTopology,
     snapshot,
   };
 }
@@ -1707,7 +2004,12 @@ async function defaultQueryTarget(
       token,
       "PintPathRailwayApplicationDeploymentSnapshot",
       RAILWAY_APPLICATION_DEPLOYMENT_SNAPSHOT_QUERY,
-      { environmentId, serviceId: policy.target.serviceId, deploymentId },
+      {
+        projectId: policy.projectId,
+        environmentId,
+        serviceId: policy.target.serviceId,
+        deploymentId,
+      },
     ),
     queryCollateralSnapshot(
       fetchImpl,
@@ -1716,10 +2018,11 @@ async function defaultQueryTarget(
       environmentId,
     ),
   ]);
-  const snapshot =
-    parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
-      snapshotSource,
-    );
+  const parsedSnapshot = parseProviderSnapshotWithConfiguredTopology(
+    snapshotSource,
+    policy,
+    environmentId,
+  );
   const collateral = parseCollateralSnapshot(
     collateralSource,
     environmentId,
@@ -1732,7 +2035,8 @@ async function defaultQueryTarget(
     publicOrigin,
     scope,
     patch,
-    snapshot,
+    parsedSnapshot?.snapshot ?? null,
+    parsedSnapshot?.configuredTopology ?? null,
     collateral,
   );
 }
@@ -1778,6 +2082,12 @@ function runtimeMatches(
   environmentId: string,
   deploymentId: string,
 ): boolean {
+  const automaticMaintenanceEnabled = environmentId === policy.target.environmentId
+    ? policy.postflightContract.automaticMaintenanceEnabled
+    : environmentId === TARGET_LOCKS["permanent-staging"].environmentId
+      ? TARGET_LOCKS["permanent-staging"].activeAutomaticMaintenanceEnabled
+      : null;
+  if (automaticMaintenanceEnabled === null) return false;
   return response.route === route
     && response.deployment.commitSha === candidateSha
     && response.deployment.projectIdSha256
@@ -1789,7 +2099,7 @@ function runtimeMatches(
     && response.deployment.deploymentIdSha256
       === railwayDeploymentIdentityIdSha256("deployment", deploymentId)
     && response.automaticMaintenance.enabled
-      === policy.postflightContract.automaticMaintenanceEnabled
+      === automaticMaintenanceEnabled
     && response.automaticMaintenance.candidateBound
       === policy.postflightContract.automaticMaintenanceCandidateBindingRequired
     && response.restoreMarkerPresent === false;
@@ -1832,6 +2142,42 @@ async function defaultProbeRuntime(
     startup: parsed[1]!,
     ready: parsed[2]!,
   };
+}
+
+async function defaultProbeRuntimeRoutesAbsentOnce(
+  fetchImpl: typeof fetch,
+  origin: string,
+): Promise<boolean> {
+  for (const route of RUNTIME_ROUTES) {
+    try {
+      const response = await fetchImpl(`${origin}${route}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+      });
+      const exactAbsentStatus = response.status === 404;
+      await response.body?.cancel().catch(() => undefined);
+      if (!exactAbsentStatus) return false;
+    } catch {
+      // A network or redirect failure cannot prove that runtime is absent.
+      return false;
+    }
+  }
+  return true;
+}
+
+async function defaultProbeRuntimeAbsent(
+  fetchImpl: typeof fetch,
+  sleep: (milliseconds: number) => Promise<void>,
+  origin: string,
+): Promise<boolean> {
+  for (let round = 0; round < 3; round += 1) {
+    if (!await defaultProbeRuntimeRoutesAbsentOnce(fetchImpl, origin)) return false;
+    if (round < 2) await sleep(5_000);
+  }
+  return true;
 }
 
 async function defaultRunBoundary(
@@ -1877,6 +2223,15 @@ const DEFAULT_DEPENDENCIES: ExecutorDependencies = {
     parseProductionDeploymentWorkerFencePrerequisiteVerification,
   queryTarget: async (...args) => defaultQueryTarget(fetch, ...args),
   probeRuntime: async (...args) => defaultProbeRuntime(fetch, ...args),
+  probeRuntimeAbsent: async (origin) =>
+    defaultProbeRuntimeAbsent(
+      fetch,
+      (milliseconds) => new Promise((resolve) =>
+        setTimeout(resolve, milliseconds)),
+      origin,
+    ),
+  probeRuntimeAbsentImmediately: async (origin) =>
+    defaultProbeRuntimeRoutesAbsentOnce(fetch, origin),
   runBoundary: defaultRunBoundary,
   writeOutput: (value) => process.stdout.write(value),
 };
@@ -2007,7 +2362,12 @@ function deploymentHealthy(
     && SHA256_PATTERN.test(observation.collateralSha256)
     && (policy.target.allowedReplicaCounts as readonly number[])
       .includes(expectedReplicaCount)
-    && snapshot.numReplicas === expectedReplicaCount
+    && configuredTopologyAllowed(
+      policy,
+      observation.configuredTopology,
+      [expectedReplicaCount],
+      snapshot.environmentId,
+    )
     && snapshot.latestDeployment.id === snapshot.deployment.id
     && snapshot.latestDeployment.status === "SUCCESS"
     && snapshot.latestDeployment.deploymentStopped === false
@@ -2034,7 +2394,8 @@ function collateralUnchanged(
   return before.snapshot.serviceInstanceId === after.snapshot.serviceInstanceId
     && before.snapshot.serviceId === after.snapshot.serviceId
     && before.snapshot.environmentId === after.snapshot.environmentId
-    && before.snapshot.numReplicas === after.snapshot.numReplicas
+    && before.configuredTopology.configuredTopologySha256
+      === after.configuredTopology.configuredTopologySha256
     && canonicalJson(domains(before)) === canonicalJson(domains(after))
     && before.collateralSha256 === after.collateralSha256;
 }
@@ -2388,6 +2749,18 @@ export async function runPermanentStagingAppDeploymentExecutor(
       environmentId,
       deploymentId,
     )),
+    probeRuntimeAbsent: overrides.probeRuntimeAbsent ?? ((origin) =>
+      defaultProbeRuntimeAbsent(
+        provisional.fetchImpl,
+        provisional.sleep,
+        origin,
+      )),
+    probeRuntimeAbsentImmediately:
+      overrides.probeRuntimeAbsentImmediately
+      ?? ((origin) => defaultProbeRuntimeRoutesAbsentOnce(
+        provisional.fetchImpl,
+        origin,
+      )),
     validateWriteToken: overrides.validateWriteToken ?? ((...args) =>
       defaultValidateWriteToken(provisional.fetchImpl, ...args)),
   };
@@ -2399,9 +2772,13 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let sourceAuthority: SourceAuthority | null = null;
   let cliAuthority: CliAuthority | null = null;
   let preflight: ProviderObservation | null = null;
+  let immediatePrewrite: ProviderObservation | null = null;
   let reconciledCandidate: ProviderObservation | null = null;
   let postflight: ProviderObservation | null = null;
   let runtime: RuntimeObservation | null = null;
+  let runtimeAbsentStableBeforeWrite: boolean | null = null;
+  let runtimeAbsentImmediatelyBeforeWrite: boolean | null = null;
+  let runtimeAbsentPostflight: boolean | null = null;
   let targetToken: string | null = null;
   let writeAttempts: 0 | 1 = 0;
   let acknowledgement: PermanentStagingAppDeploymentExecutorReceipt["acknowledgement"] =
@@ -2578,10 +2955,16 @@ export async function runPermanentStagingAppDeploymentExecutor(
       policy.target.publicOrigin,
       targetToken,
     );
-    preservedReplicaCount = preflight.snapshot.numReplicas;
+    preservedReplicaCount = preflight.configuredTopology.configuredReplicas;
+    checks.configuredTopologyExact = configuredTopologyAllowed(
+      policy,
+      preflight.configuredTopology,
+      policy.target.allowedReplicaCounts,
+    );
     checks.targetPreflightExact = preflight.tokenScopeExact
       && preflight.patchEmpty
       && SHA256_PATTERN.test(preflight.collateralSha256)
+      && checks.configuredTopologyExact
       && (policy.target.allowedReplicaCounts as readonly number[])
         .includes(preservedReplicaCount);
     checks.gitAutodeployAbsent = preflight.gitAutodeployAbsent;
@@ -2609,8 +2992,13 @@ export async function runPermanentStagingAppDeploymentExecutor(
       throw new Error("candidate_preexisting_not_healthy");
     }
 
+    if (!isFencedDeploymentPolicy(policy)) {
+      checks.fencedRuntimeAbsentBeforeWrite = true;
+      checks.fencedRuntimeAbsentPostflight = true;
+    }
+
     const intent = {
-      schemaVersion: "pintpath-railway-application-deployment-intent/v2",
+      schemaVersion: "pintpath-railway-application-deployment-intent/v3",
       operation: PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION,
       target: policy.target.name,
       candidateSha,
@@ -2623,6 +3011,19 @@ export async function runPermanentStagingAppDeploymentExecutor(
       ),
       workerFencePrerequisite,
       preservedReplicaCount,
+      legacyReplicaCountBefore: preflight.snapshot.numReplicas,
+      configuredTopology: {
+        authoritativeSource:
+          "environment.config(decryptVariables:false)",
+        before: preflight.configuredTopology,
+        immediatelyBeforeWriteRequired: true,
+        expectedImmediatelyBeforeWriteSha256:
+          preflight.configuredTopology.configuredTopologySha256,
+      },
+      runtimeAbsence: {
+        required: isFencedDeploymentPolicy(policy),
+        immediatelyBeforeWriteMustBeTrue: isFencedDeploymentPolicy(policy),
+      },
       createdAt: safeDate(dependencies.now),
       maximumWriteAttempts: 1,
       automaticRetryAllowed: false,
@@ -2636,9 +3037,50 @@ export async function runPermanentStagingAppDeploymentExecutor(
     sourceAuthority.reassert();
     checks.sourceReasserted = true;
 
+    const message = `pintpath:${policy.target.name}:${candidateSha}:${intentSha256}`;
+    cliAuthority.assertExact();
+    if (isFencedDeploymentPolicy(policy)) {
+      runtimeAbsentStableBeforeWrite =
+        await dependencies.probeRuntimeAbsent(policy.target.publicOrigin);
+      if (runtimeAbsentStableBeforeWrite !== true) {
+        throw new Error("fenced_runtime_present");
+      }
+    }
+    immediatePrewrite = await dependencies.queryTarget(
+      policy,
+      policy.target.environmentId,
+      [preservedReplicaCount],
+      policy.target.publicOrigin,
+      targetToken,
+    );
+    checks.immediatePrewriteExact =
+      immediatePrewrite.configuredTopology.configuredReplicas
+        === preservedReplicaCount
+      && immediatePrewrite.configuredTopology.configuredTopologySha256
+        === preflight.configuredTopology.configuredTopologySha256
+      && collateralUnchanged(preflight, immediatePrewrite)
+      && providerDeploymentUnchanged(preflight, immediatePrewrite);
+    if (!checks.immediatePrewriteExact) {
+      throw new Error("immediate_prewrite_failed");
+    }
+    if (isFencedDeploymentPolicy(policy)) {
+      runtimeAbsentImmediatelyBeforeWrite =
+        await dependencies.probeRuntimeAbsentImmediately(
+          policy.target.publicOrigin,
+        );
+      checks.fencedRuntimeAbsentBeforeWrite =
+        runtimeAbsentStableBeforeWrite === true
+        && runtimeAbsentImmediatelyBeforeWrite === true;
+      if (!checks.fencedRuntimeAbsentBeforeWrite) {
+        throw new Error("fenced_runtime_present");
+      }
+    }
+    checks.sourceReasserted = false;
+    sourceAuthority.reassert();
+    checks.sourceReasserted = true;
+    cliAuthority.assertExact();
+
     if (!preflightAlreadyCandidate) {
-      cliAuthority.assertExact();
-      const message = `pintpath:${policy.target.name}:${candidateSha}:${intentSha256}`;
       writeAttempts = 1;
       try {
         writeResult = await dependencies.runCommand(
@@ -2762,14 +3204,25 @@ export async function runPermanentStagingAppDeploymentExecutor(
             preservedReplicaCount,
           );
           checks.topologyPreserved =
-            postflight.snapshot.numReplicas === preflight.snapshot.numReplicas;
+            postflight.configuredTopology.configuredReplicas
+              === preflight.configuredTopology.configuredReplicas
+            && postflight.configuredTopology.configuredTopologySha256
+              === preflight.configuredTopology.configuredTopologySha256;
           checks.collateralStateUnchanged = collateralUnchanged(
             preflight,
             postflight,
           );
+          if (isFencedDeploymentPolicy(policy)) {
+            runtimeAbsentPostflight = await dependencies.probeRuntimeAbsent(
+              policy.target.publicOrigin,
+            );
+            checks.fencedRuntimeAbsentPostflight =
+              runtimeAbsentPostflight === true;
+          }
           checks.targetPostflightExact = checks.deploymentExact
             && checks.topologyPreserved
             && checks.collateralStateUnchanged
+            && checks.fencedRuntimeAbsentPostflight
             && (reconciledCandidate === null
               || providerDeploymentUnchanged(reconciledCandidate, postflight));
         } catch (error) {
@@ -2815,6 +3268,10 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.workerFenceDeploymentContinuityExact,
     checks.boundaryPreflightExact,
     checks.targetPreflightExact,
+    checks.configuredTopologyExact,
+    checks.immediatePrewriteExact,
+    checks.fencedRuntimeAbsentBeforeWrite,
+    checks.fencedRuntimeAbsentPostflight,
     checks.durableIntentExact,
     checks.sourceReasserted,
     checks.writeAttemptedAtMostOnce,
@@ -2864,8 +3321,26 @@ export async function runPermanentStagingAppDeploymentExecutor(
       after: postflight?.collateralSha256 ?? null,
     },
     replicaCounts: {
+      before: preflight?.configuredTopology?.configuredReplicas ?? null,
+      after: postflight?.configuredTopology?.configuredReplicas ?? null,
+    },
+    legacyReplicaCounts: {
       before: preflight?.snapshot.numReplicas ?? null,
+      immediatelyBeforeWrite:
+        immediatePrewrite?.snapshot.numReplicas ?? null,
       after: postflight?.snapshot.numReplicas ?? null,
+    },
+    configuredTopology: {
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      before: preflight?.configuredTopology ?? null,
+      immediatelyBeforeWrite:
+        immediatePrewrite?.configuredTopology ?? null,
+      after: postflight?.configuredTopology ?? null,
+    },
+    runtimeAbsence: {
+      required: policy ? isFencedDeploymentPolicy(policy) : false,
+      immediatelyBeforeWrite: runtimeAbsentImmediatelyBeforeWrite,
+      postflight: runtimeAbsentPostflight,
     },
     runtimeResponseSha256s: {
       health: runtime?.health.responseSha256 ?? null,
@@ -2920,12 +3395,18 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_BLOCKED_RECEIPT = Object.freeze({
 } as const);
 
 export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
+  RAILWAY_APPLICATION_DEPLOYMENT_SNAPSHOT_QUERY,
   TARGET_LOCKS,
+  configuredTopologyAllowed,
+  configuredTopologyEvidence,
   costPolicyExact,
+  defaultProbeRuntime,
+  defaultProbeRuntimeAbsent,
   deploymentHealthy,
   holdSnapshotRootDirectory,
   parseArguments,
   parseCollateralSnapshot,
+  parseProviderSnapshotWithConfiguredTopology,
   queryCollateralSnapshot,
   parseDiscoveryDeploymentId,
   policyMatchesLock,

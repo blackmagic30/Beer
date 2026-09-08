@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-cold-recovery-policy/v1",
+  "schemaVersion": "pintpath-permanent-staging-cold-recovery-policy/v2",
   "policyId": "pintpath-permanent-staging-one-time-cold-recovery",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "repository": "blackmagic30/Beer",
@@ -14,10 +14,22 @@
     "publicOrigin": "https://beer-staging.up.railway.app",
     "serviceDomainId": "afbb2417-c6df-48e3-9987-271b10ab2962",
     "targetPort": 8080,
-    "region": "asia-southeast1-eqsg3a"
+    "region": "asia-southeast1-eqsg3a",
+    "configuredRegionBefore": "europe-west4-drams3a",
+    "quiesceRegions": [
+      "europe-west4-drams3a",
+      "asia-southeast1-eqsg3a"
+    ]
   },
   "deadState": {
     "replicas": null,
+    "configuredReplicas": 1,
+    "configuredRegions": {
+      "europe-west4-drams3a": 1
+    },
+    "deploymentManifestRegions": {
+      "asia-southeast1-eqsg3a": 1
+    },
     "sourceRepo": null,
     "sourceImage": null,
     "latestDeploymentId": "c71fdb35-2be0-4031-b952-85595dfb2913",
@@ -103,20 +115,35 @@
     },
     "quiesce": {
       "githubEnvironment": "permanent-staging-scale-evidence",
-      "direction": "cold-quiesce-staging-zero",
-      "replicasBefore": null,
-      "replicasAfter": 0,
+      "direction": "cold-quiesce-staging-configured-zero",
+      "configuredReplicasBeforeAllowed": [
+        1
+      ],
+      "configuredReplicasAfter": 0,
+      "configuredOneToZeroReceiptClaimed": true,
+      "legacyReplicasBeforeAllowed": [
+        null
+      ],
+      "legacyReplicasAfterAllowed": [
+        null,
+        0
+      ],
+      "singleCommandRegions": [
+        "europe-west4-drams3a",
+        "asia-southeast1-eqsg3a"
+      ],
       "maximumAttempts": 1,
       "automaticRetryAllowed": false,
-      "lostAcknowledgementMayReconcileOnlyFromExactNullToZeroPostflight": true,
+      "lostAcknowledgementMayReconcileOnlyFromExactConfiguredZeroPostflight": true,
       "runtimeMustBeAbsentBeforeAndAfter": true,
       "deploymentSourceAndTopologyMustRemainUnchangedExceptReplicas": true
     },
     "reconcileQuiesce": {
       "githubEnvironment": "permanent-staging-scale-evidence",
-      "direction": "cold-reconcile-staging-zero-read-only",
-      "replicasBefore": 0,
-      "replicasAfter": 0,
+      "direction": "cold-reconcile-staging-configured-zero-read-only",
+      "configuredReplicasBefore": 0,
+      "configuredReplicasAfter": 0,
+      "configuredOneToZeroReceiptClaimed": false,
       "priorAmbiguousQuiesceRunRequired": true,
       "sameCandidateAndPrepareChainRequired": true,
       "providerMutationAllowed": false,
@@ -142,8 +169,9 @@
     "durableIntentRequiredBeforeWrite": true,
     "terminalReceiptRequired": true,
     "supabaseReplacementReceiptHashBindingRequired": true,
-    "truthfulNullToZeroReplicaBindingRequired": true,
-    "normalOneToZeroReceiptImpersonationForbidden": true,
+    "truthfulConfiguredReplicaTopologyBindingRequired": true,
+    "legacyAggregateMustNotImpersonateConfiguredTopology": true,
+    "configuredOneToZeroReceiptRequired": true,
     "readOnlyRunnerLossReconciliationMustBindPriorRun": true,
     "secretMaterialAllowed": false,
     "secretDerivedCommitmentsAllowed": false

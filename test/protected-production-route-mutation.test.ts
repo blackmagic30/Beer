@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PRODUCTION_ROUTE_CLOSE_MUTATION,
+  PRODUCTION_ROUTE_INVENTORY_QUERY,
   PRODUCTION_ROUTE_OPEN_MUTATION,
   PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA,
   PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE,
@@ -17,11 +18,20 @@ import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
 import { buildProductionPromotionRecoveryReceipt } from
   "../src/lib/production-promotion-recovery.js";
+import {
+  productionRouteTopologyFixture,
+  productionScaleTopologyFixture,
+} from
+  "./fixtures/protected-scale-receipt.js";
+import { productionApplicationDeploymentReceiptFixture } from
+  "./production-application-deployment-receipt.fixtures.js";
 
 const CANDIDATE = "a".repeat(40);
 const PROJECT = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const PRODUCTION = "13dab015-df74-45c6-b26f-69323daea99a";
 const SERVICE = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
+const PRIMARY_REGION = "asia-southeast1-eqsg3a";
+const OTHER_REGION = "europe-west4-drams3a";
 const INSTANCE = "11111111-1111-4111-8111-111111111111";
 const DEPLOYMENT = "22222222-2222-4222-8222-222222222222";
 const DEPLOYMENT_BEFORE_ACTIVATION = "66666666-6666-4666-8666-666666666666";
@@ -71,12 +81,26 @@ function route(id = CUSTOM_ROUTE, domain = "pintpath.au") {
 function inventory(
   routePresent: boolean,
   collateralDomain = "other.up.railway.app",
-  replicas: 1 | 2 = 2,
+  legacyAggregateReplicas: 1 | 2 | null = null,
+  configuredTopology: "exact" | "one" | "extra-positive" | "wrong-region" = "exact",
 ) {
+  const multiRegionConfig = configuredTopology === "wrong-region"
+    ? { [OTHER_REGION]: { numReplicas: 2 } }
+    : {
+        [PRIMARY_REGION]: { numReplicas: configuredTopology === "one" ? 1 : 2 },
+        ...(configuredTopology === "extra-positive"
+          ? { [OTHER_REGION]: { numReplicas: 1 } }
+          : {}),
+      };
   return {
     data: {
       environment: {
         id: PRODUCTION,
+        config: {
+          services: {
+            [SERVICE]: { deploy: { multiRegionConfig } },
+          },
+        },
         serviceInstances: {
           edges: [{
             node: {
@@ -84,7 +108,7 @@ function inventory(
               serviceId: SERVICE,
               serviceName: "Beer",
               environmentId: PRODUCTION,
-              numReplicas: replicas,
+              numReplicas: legacyAggregateReplicas,
               latestDeployment: {
                 id: DEPLOYMENT,
                 status: "SUCCESS",
@@ -108,14 +132,17 @@ function inventory(
     },
   };
 }
-function target(routePresent: boolean, replicas: 1 | 2 = 2) {
+function target(
+  routePresent: boolean,
+  legacyAggregateReplicas: 1 | 2 | null = null,
+) {
   return {
     data: {
       serviceInstance: {
         id: INSTANCE,
         serviceId: SERVICE,
         environmentId: PRODUCTION,
-        numReplicas: replicas,
+        numReplicas: legacyAggregateReplicas,
         latestDeployment: {
           id: DEPLOYMENT,
           status: "SUCCESS",
@@ -291,72 +318,17 @@ function writePredecessorAuthority(
     "deployment",
     DEPLOYMENT_BEFORE_ACTIVATION,
   )!;
-  const deploymentValue = {
-    schemaVersion: "pintpath-railway-application-deployment-executor/v5",
-    operation: "pintpath-railway-application-source-upload",
-    executorState: "GITHUB_ENVIRONMENT_PROTECTED",
-    target: "production",
-    outcome: "deployed",
-    failureCode: null,
+  const deploymentValue = productionApplicationDeploymentReceiptFixture({
     candidateSha: CANDIDATE,
-    startedAt: "1970-01-01T00:12:05.000Z",
-    completedAt: "1970-01-01T00:12:20.000Z",
-    writeAttempts: 1,
-    acknowledgement: "received",
     previousDeploymentIdSha256: "1".repeat(64),
     deploymentIdSha256: deploymentBeforeActivationIdSha256,
-    intentSha256: "2".repeat(64),
-    cliOutputSha256: "3".repeat(64),
-    boundaryPreflightSha256: "4".repeat(64),
-    boundaryPostflightSha256: "5".repeat(64),
-    collateralSnapshotSha256s: { before: "6".repeat(64), after: "6".repeat(64) },
-    replicaCounts: { before: 1, after: 1 },
-    runtimeResponseSha256s: {
-      health: "7".repeat(64),
-      startup: "8".repeat(64),
-      ready: "9".repeat(64),
-    },
-    workerFencePrerequisite: {
-      runId: "7777",
-      verificationSha256: "a".repeat(64),
-      bindingSha256: "b".repeat(64),
-      terminalSha256: "c".repeat(64),
-      deploymentIdSha256: "1".repeat(64),
-    },
-    checks: {
-      policyExact: true,
-      githubMainExact: true,
-      sourceAuthorityExact: true,
-      cliExact: true,
-      writeTokenScopeExact: true,
-      costPolicyExact: true,
-      prerequisiteExact: true,
-      workerFencePrerequisiteExact: true,
-      workerFenceDeploymentContinuityExact: true,
-      boundaryPreflightExact: true,
-      targetPreflightExact: true,
-      gitAutodeployAbsent: true,
-      collateralInventoryExact: true,
-      durableIntentExact: true,
-      sourceReasserted: true,
-      writeAttemptedAtMostOnce: true,
-      targetPostflightAttempted: true,
-      targetPostflightExact: true,
-      reconciliationCompleted: true,
-      topologyPreserved: true,
-      deploymentExact: true,
-      runtimeHealthExact: true,
-      runtimeStartupExact: true,
-      runtimeReadinessExact: true,
-      collateralStateUnchanged: true,
-      boundaryPostflightExact: true,
-      terminalEvidenceExact: true,
-    },
-  };
+    startedAt: "1970-01-01T00:12:05.000Z",
+    completedAt: "1970-01-01T00:12:20.000Z",
+  });
   const deploymentReceipt = path.join(root, "deployment-receipt.json");
   fs.writeFileSync(deploymentReceipt, canonical(deploymentValue), { mode: 0o600 });
   const scaleValue = {
-    schemaVersion: "pintpath-permanent-staging-scale-operation/v2",
+    schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     direction: "converge-production-two",
     outcome: "scaled",
@@ -379,6 +351,7 @@ function writePredecessorAuthority(
       deploymentBeforeIdSha256: deploymentBeforeActivationIdSha256,
       deploymentAfterIdSha256: deploymentIdSha256,
     },
+    replicaTopology: productionScaleTopologyFixture(),
     checks: {
       policyExact: true,
       githubAuthorityExact: true,
@@ -398,6 +371,7 @@ function writePredecessorAuthority(
       runtimePostflightExact: true,
       candidateUnchanged: true,
       deploymentUnchanged: true,
+      replicaTopologyEvidenceExact: true,
       boundaryPostflightExact: true,
       terminalEvidenceExact: true,
       finalReceiptEvidenceExact: true,
@@ -415,7 +389,7 @@ function writePredecessorAuthority(
     };
   }
   const closeValue = {
-    schemaVersion: "pintpath-protected-production-route-mutation/v1",
+    schemaVersion: "pintpath-protected-production-route-mutation/v2",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     outcome: "closed",
     operation: "close",
@@ -449,6 +423,7 @@ function writePredecessorAuthority(
     terminalEvidenceSha256: "2".repeat(64),
     beforeInventorySha256: "3".repeat(64),
     afterInventorySha256: "4".repeat(64),
+    replicaTopology: productionRouteTopologyFixture(),
     checks: {
       policyExact: true,
       githubAuthorityExact: true,
@@ -471,6 +446,7 @@ function writePredecessorAuthority(
       patchPostflightEmpty: true,
       inventoryTransitionExact: true,
       candidateDeploymentPostflightExact: true,
+      replicaTopologyEvidenceExact: true,
       boundaryPostflightExact: true,
       publicRuntimePostflightExact: false,
       terminalEvidenceExact: true,
@@ -607,7 +583,9 @@ function harness(operation: "close" | "open", options: {
   runtimeCandidateDrift?: boolean;
   duplicateCanonicalRoute?: boolean;
   providerPrewriteDrift?: boolean;
-  providerReplicas?: 1 | 2;
+  boundaryTopologyDrift?: boolean;
+  legacyAggregateReplicas?: 1 | 2 | null;
+  configuredTopology?: "exact" | "one" | "extra-positive" | "wrong-region";
   authorityExtraKey?: boolean;
   reviewedPullRequestDrift?: boolean;
   predecessorAuthorityContractDrift?:
@@ -687,7 +665,9 @@ function harness(operation: "close" | "open", options: {
   let routePresent = operation === "close";
   let mutated = false;
   let inventoryReads = 0;
+  let configuredTopology = options.configuredTopology ?? "exact";
   const calls: Array<{ operationName: string; variables: unknown; url: string }> = [];
+  const events: string[] = [];
   const output: string[] = [];
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -704,6 +684,7 @@ function harness(operation: "close" | "open", options: {
       variables: Record<string, unknown>;
     };
     calls.push({ operationName: body.operationName, variables: body.variables, url });
+    events.push(body.operationName);
     if (body.operationName === "PintPathProductionRouteTokenScope") return json(scope());
     if (body.operationName === "PintPathProductionRouteEmptyPatch") return json(patchEmpty());
     if (body.operationName === "PintPathProductionRouteInventory") {
@@ -714,7 +695,8 @@ function harness(operation: "close" | "open", options: {
             || (options.providerPrewriteDrift && inventoryReads === 2)
           ? "collateral-drift.up.railway.app"
           : "other.up.railway.app",
-        options.providerReplicas ?? 2,
+        options.legacyAggregateReplicas ?? null,
+        configuredTopology,
       );
       if (options.duplicateCanonicalRoute && !mutated) {
         const domains = value.data.environment.serviceInstances.edges[0]!.node.domains;
@@ -723,7 +705,7 @@ function harness(operation: "close" | "open", options: {
       return json(value);
     }
     if (body.operationName === "PintPathProductionRouteTarget") {
-      return json(target(routePresent, options.providerReplicas ?? 2));
+      return json(target(routePresent, options.legacyAggregateReplicas ?? null));
     }
     if (body.operationName === "PintPathCloseProductionRoute") {
       mutated = true;
@@ -757,6 +739,7 @@ function harness(operation: "close" | "open", options: {
   };
   return {
     calls,
+    events,
     evidenceDir,
     fetchImpl,
     output,
@@ -801,7 +784,11 @@ function harness(operation: "close" | "open", options: {
       reassertRepositoryState: vi.fn(() => options.prewriteDrift
         ? { ...exactRepository, originMainSha: "e".repeat(40) }
         : exactRepository),
-      runBoundary: vi.fn(async () => true),
+      runBoundary: vi.fn(async () => {
+        events.push("boundary");
+        if (options.boundaryTopologyDrift) configuredTopology = "wrong-region";
+        return true;
+      }),
       now: vi.fn(() => Date.UTC(1970, 0, 1, 0, 21, 0)),
       sleep: vi.fn(async () => undefined),
       writeOutput: (source: string) => output.push(source),
@@ -816,7 +803,7 @@ function receipt(output: readonly string[]): Record<string, any> {
 describe("protected production canonical-route executor", () => {
   it("pins an active exact Railway custom-domain policy and separate protected workflows", () => {
     expect(PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA).toBe(
-      "pintpath-protected-production-route-mutation/v1",
+      "pintpath-protected-production-route-mutation/v2",
     );
     expect(PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE).toBe(
       "GITHUB_ENVIRONMENT_PROTECTED",
@@ -839,6 +826,7 @@ describe("protected production canonical-route executor", () => {
     expect(protectedProductionRouteMutationInternals.policyExact(process.cwd())).toBe(true);
     expect(PRODUCTION_ROUTE_CLOSE_MUTATION).toContain("customDomainDelete");
     expect(PRODUCTION_ROUTE_OPEN_MUTATION).toContain("customDomainCreate");
+    expect(PRODUCTION_ROUTE_INVENTORY_QUERY).toContain("config(decryptVariables:false)");
     for (const [filename, environment, confirmation] of [
       ["close-production-route.yml", "production-route-close", "CLOSE_PINTPATH_PRODUCTION_ROUTE"],
       ["open-production-route.yml", "production-route-open", "OPEN_PINTPATH_PRODUCTION_ROUTE"],
@@ -881,6 +869,23 @@ describe("protected production canonical-route executor", () => {
     expect(openWorkflow).toContain("--promotion-recovery-receipt");
   });
 
+  it("validates route topology semantically across object key order and rejects tampering", () => {
+    const topology = productionRouteTopologyFixture();
+    const reordered = JSON.parse(JSON.stringify(topology, (_key, value) => {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return Object.fromEntries(Object.entries(value).reverse());
+      }
+      return value;
+    }));
+    expect(protectedProductionRouteMutationInternals
+      .productionRouteReplicaTopologyExact(reordered)).toBe(true);
+
+    const tampered = structuredClone(reordered);
+    tampered.after.configuredRegions[0].numReplicas = 1;
+    expect(protectedProductionRouteMutationInternals
+      .productionRouteReplicaTopologyExact(tampered)).toBe(false);
+  });
+
   it("closes only the canonical route after exact preflight and retains provider-only proof", async () => {
     const fixture = harness("close");
     await expect(runProtectedProductionRouteMutation(fixture.overrides)).resolves.toBe(0);
@@ -905,6 +910,7 @@ describe("protected production canonical-route executor", () => {
         acknowledgementExact: true,
         inventoryTransitionExact: true,
         candidateDeploymentPostflightExact: true,
+        replicaTopologyEvidenceExact: true,
         publicRuntimePostflightExact: false,
         terminalEvidenceExact: true,
         finalReceiptEvidenceExact: true,
@@ -990,7 +996,7 @@ describe("protected production canonical-route executor", () => {
       .toBe(false);
   });
 
-  it("reasserts provider target bytes after intent and before the boundary/write", async () => {
+  it("runs the boundary before the final provider reassertion and write", async () => {
     const fixture = harness("close", { providerPrewriteDrift: true });
     await expect(runProtectedProductionRouteMutation(fixture.overrides)).resolves.toBe(1);
     expect(receipt(fixture.output)).toMatchObject({
@@ -1000,11 +1006,38 @@ describe("protected production canonical-route executor", () => {
         durableIntentExact: true,
         repositoryPrewriteReasserted: true,
         providerPrewriteReasserted: false,
-        boundaryPreflightExact: false,
+        boundaryPreflightExact: true,
       },
     });
-    expect(fixture.overrides.runBoundary).not.toHaveBeenCalled();
+    expect(fixture.overrides.runBoundary).toHaveBeenCalledOnce();
     expect(fixture.calls.some((call) => call.operationName === "PintPathCloseProductionRoute"))
+      .toBe(false);
+  });
+
+  it("requeries provider authority after the boundary and blocks boundary-time topology drift", async () => {
+    const exact = harness("close");
+    await expect(runProtectedProductionRouteMutation(exact.overrides)).resolves.toBe(0);
+    const boundaryIndex = exact.events.indexOf("boundary");
+    const mutationIndex = exact.events.indexOf("PintPathCloseProductionRoute");
+    expect(boundaryIndex).toBeGreaterThanOrEqual(0);
+    expect(mutationIndex).toBeGreaterThan(boundaryIndex);
+    expect(exact.events.slice(boundaryIndex + 1, mutationIndex)).toEqual([
+      "PintPathProductionRouteEmptyPatch",
+      "PintPathProductionRouteInventory",
+      "PintPathProductionRouteTarget",
+    ]);
+
+    const drift = harness("close", { boundaryTopologyDrift: true });
+    await expect(runProtectedProductionRouteMutation(drift.overrides)).resolves.toBe(1);
+    expect(receipt(drift.output)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: {
+        boundaryPreflightExact: true,
+        providerPrewriteReasserted: false,
+      },
+    });
+    expect(drift.calls.some((call) => call.operationName === "PintPathCloseProductionRoute"))
       .toBe(false);
   });
 
@@ -1019,10 +1052,21 @@ describe("protected production canonical-route executor", () => {
     }
   });
 
-  it("requires exactly two healthy replicas and canonical predecessor authorities", async () => {
+  it("uses configured regional topology and treats the legacy aggregate as observation-only", async () => {
+    const fixture = harness("close", { legacyAggregateReplicas: null });
+    await expect(runProtectedProductionRouteMutation(fixture.overrides)).resolves.toBe(0);
+    expect(receipt(fixture.output)).toMatchObject({
+      replicaTopology: productionRouteTopologyFixture(),
+      checks: { replicaTopologyEvidenceExact: true },
+    });
+  });
+
+  it("requires exact two-replica Asia topology and canonical predecessor authorities", async () => {
     for (const fixture of [
-      harness("close", { providerReplicas: 1 }),
-      harness("open", { providerReplicas: 1 }),
+      harness("close", { configuredTopology: "one" }),
+      harness("open", { configuredTopology: "one" }),
+      harness("close", { configuredTopology: "extra-positive" }),
+      harness("open", { configuredTopology: "wrong-region" }),
       harness("close", { authorityExtraKey: true }),
       harness("close", { reviewedPullRequestDrift: true }),
       harness("close", { predecessorAuthorityContractDrift: "legacy-schema" }),
