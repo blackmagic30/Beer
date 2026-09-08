@@ -303,7 +303,10 @@ reviewed legacy key ID.
    mobile, CI, scheduled, webhook, backup, and archived consumer uses the
    replacement format, and complete the live Auth, admin, role, private-Storage,
    provider, and Free-scope checks.
-6. Only then approve the protected legacy-cutover workflow. Supply
+6. Only then dispatch the protected legacy-cutover workflow. Its GitHub
+   Environment has zero required reviewers, zero wait timers, and permits
+   protected `main` only; the automated reviewed-candidate and artifact checks
+   are still mandatory. Supply
    the exact atomic-replacement, fenced zero-replica deployment, and active
    closeout run IDs. Before any provider-secret custody, its GitHub verifier
    requires the exact successful same-candidate attempt-one artifacts and

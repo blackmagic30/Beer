@@ -50,6 +50,16 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [
+    key,
+    canonicalKeyOrder(record[key]),
+  ]));
+}
+
 function localVersions(): string[] {
   return fs.readdirSync(path.join(root, "supabase/migrations"))
     .filter((name) => /^[0-9]+_[a-z0-9_]+\.sql$/.test(name))
@@ -113,16 +123,20 @@ const deploymentCheckKeys = [
   "collateralInventoryExact",
   "collateralStateUnchanged",
   "costPolicyExact",
+  "configuredTopologyExact",
   "deploymentExact",
   "durableIntentExact",
   "gitAutodeployAbsent",
   "githubMainExact",
+  "immediatePrewriteExact",
   "policyExact",
   "prerequisiteExact",
   "reconciliationCompleted",
   "runtimeHealthExact",
   "runtimeReadinessExact",
   "runtimeStartupExact",
+  "fencedRuntimeAbsentBeforeWrite",
+  "fencedRuntimeAbsentPostflight",
   "sourceAuthorityExact",
   "sourceReasserted",
   "targetPostflightAttempted",
@@ -137,8 +151,21 @@ const deploymentCheckKeys = [
 ] as const;
 
 function fencedDeploymentReceipt(): string {
+  const topologyWithoutHash = {
+    configuredReplicas: 0,
+    configuredRegions: [
+      { region: "asia-southeast1-eqsg3a", numReplicas: 0 },
+      { region: "europe-west4-drams3a", numReplicas: 0 },
+    ],
+  };
+  const topology = {
+    ...topologyWithoutHash,
+    configuredTopologySha256: sha256(
+      `${JSON.stringify(canonicalKeyOrder(topologyWithoutHash), null, 2)}\n`,
+    ),
+  };
   return `${JSON.stringify({
-    schemaVersion: "pintpath-railway-application-deployment-executor/v5",
+    schemaVersion: "pintpath-railway-application-deployment-executor/v6",
     operation: "pintpath-railway-application-source-upload",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     target: "permanent-staging",
@@ -160,6 +187,22 @@ function fencedDeploymentReceipt(): string {
       after: "7".repeat(64),
     },
     replicaCounts: { before: 0, after: 0 },
+    legacyReplicaCounts: {
+      before: null,
+      immediatelyBeforeWrite: null,
+      after: null,
+    },
+    configuredTopology: {
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      before: topology,
+      immediatelyBeforeWrite: topology,
+      after: topology,
+    },
+    runtimeAbsence: {
+      required: true,
+      immediatelyBeforeWrite: true,
+      postflight: true,
+    },
     runtimeResponseSha256s: { health: null, startup: null, ready: null },
     workerFencePrerequisite: null,
     checks: Object.fromEntries(deploymentCheckKeys.map((key) => [key, true])),
@@ -524,6 +567,28 @@ describe("protected permanent-staging venue directory", () => {
       fencedDeploymentRunId: fencedRunId,
       latestDeploymentRunExact: true,
     });
+  });
+
+  it.each([
+    ["configured topology hash", (receipt: Record<string, any>) => {
+      receipt.configuredTopology.after.configuredTopologySha256 = "f".repeat(64);
+    }],
+    ["postflight runtime presence", (receipt: Record<string, any>) => {
+      receipt.runtimeAbsence.postflight = false;
+    }],
+  ] as const)("rejects fenced deployment receipt %s tampering", async (
+    _label,
+    tamper,
+  ) => {
+    const harness = fencedAuthorityVerification();
+    const receiptPath = "/private/deployment-receipt.json";
+    const receipt = JSON.parse(harness.files.get(receiptPath)!) as Record<string, any>;
+    tamper(receipt);
+    harness.files.set(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+
+    await expect(runProtectedPermanentStagingVenueDirectory(harness.input))
+      .rejects.toThrow("protected_permanent_staging_venue_directory_fenced_receipt_invalid");
+    expect(harness.files.has(harness.outputPath)).toBe(false);
   });
 
   it.each([

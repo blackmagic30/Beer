@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-railway-application-deployment-policy/v5",
+  "schemaVersion": "pintpath-railway-application-deployment-policy/v6",
   "policyId": "pintpath-permanent-staging-fenced-app-source-upload",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -83,6 +83,36 @@
     "automaticMaintenanceCandidateBindingRequired": true,
     "maximumObservationSeconds": 900,
     "pollIntervalSeconds": 10
+  },
+  "configuredTopologyContract": {
+    "authoritativeSource": "environment.config(decryptVariables:false)",
+    "configuredReplicaCounts": [
+      0
+    ],
+    "allowedConfiguredRegions": [
+      "asia-southeast1-eqsg3a",
+      "europe-west4-drams3a"
+    ],
+    "solePositiveRegion": null,
+    "zeroOnlyRegions": [
+      "asia-southeast1-eqsg3a",
+      "europe-west4-drams3a"
+    ],
+    "legacyReplicaCountRole": "nullable-observation-only",
+    "immediateProviderReassertionRequired": true,
+    "postflightProviderReassertionRequired": true
+  },
+  "fencedDeploymentContract": {
+    "configuredTopologySource": "environment.config(decryptVariables:false)",
+    "configuredReplicaCount": 0,
+    "allowedConfiguredRegions": [
+      "asia-southeast1-eqsg3a",
+      "europe-west4-drams3a"
+    ],
+    "legacyReplicaCountRole": "nullable-observation-only",
+    "immediateProviderReassertionRequired": true,
+    "runtimeAbsentImmediatelyBeforeWriteRequired": true,
+    "runtimeAbsentPostflightRequired": true
   },
   "prerequisite": null,
   "providerReadinessContract": null,

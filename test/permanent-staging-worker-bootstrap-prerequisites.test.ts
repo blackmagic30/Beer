@@ -17,6 +17,8 @@ import { canonicalJson as canonicalVenueJson } from
   "../scripts/import-melbourne-venues.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
+import { stagingQuiesceScaleTopologyFixture } from
+  "./fixtures/protected-scale-receipt.js";
 
 const CANDIDATE = "a".repeat(40);
 const OLD_SOURCE = "b".repeat(40);
@@ -72,6 +74,7 @@ const WORKER_CHECKS = {
   postflightAttempted: true,
   targetPostflightExact: true,
   postflightDeploymentExact: true,
+  configuredTopologyEvidenceExact: true,
   runtimeRoutesPolledExact: true,
   runtimeMaintenanceStateExact: true,
   boundaryPostflightExact: true,
@@ -98,6 +101,7 @@ const SCALE_CHECKS = {
   runtimePostflightExact: true,
   candidateUnchanged: true,
   deploymentUnchanged: true,
+  replicaTopologyEvidenceExact: true,
   boundaryPostflightExact: true,
   terminalEvidenceExact: true,
   finalReceiptEvidenceExact: true,
@@ -110,6 +114,7 @@ const DEPLOYMENT_CHECKS = {
   cliExact: true,
   writeTokenScopeExact: true,
   costPolicyExact: true,
+  configuredTopologyExact: true,
   prerequisiteExact: true,
   workerFencePrerequisiteExact: true,
   workerFenceDeploymentContinuityExact: true,
@@ -118,6 +123,7 @@ const DEPLOYMENT_CHECKS = {
   gitAutodeployAbsent: true,
   collateralInventoryExact: true,
   durableIntentExact: true,
+  immediatePrewriteExact: true,
   sourceReasserted: true,
   writeAttemptedAtMostOnce: true,
   targetPostflightAttempted: true,
@@ -128,10 +134,58 @@ const DEPLOYMENT_CHECKS = {
   runtimeHealthExact: true,
   runtimeStartupExact: true,
   runtimeReadinessExact: true,
+  fencedRuntimeAbsentBeforeWrite: true,
+  fencedRuntimeAbsentPostflight: true,
   collateralStateUnchanged: true,
   boundaryPostflightExact: true,
   terminalEvidenceExact: true,
 };
+
+function deploymentTopology(configuredReplicas: 0 | 1) {
+  const withoutHash = {
+    configuredReplicas,
+    configuredRegions: [
+      { region: "asia-southeast1-eqsg3a", numReplicas: configuredReplicas },
+      { region: "europe-west4-drams3a", numReplicas: 0 },
+    ],
+  };
+  return {
+    ...withoutHash,
+    configuredTopologySha256: sha(canonicalTopology(withoutHash)),
+  };
+}
+
+function workerTopologyEvidence(
+  operation: "prepare" | "activate",
+  writeAttempted = true,
+) {
+  const configuredRegions = operation === "prepare"
+    ? [
+      { region: "asia-southeast1-eqsg3a", numReplicas: 0 },
+      { region: "europe-west4-drams3a", numReplicas: 1 },
+    ]
+    : [
+      { region: "asia-southeast1-eqsg3a", numReplicas: 1 },
+      { region: "europe-west4-drams3a", numReplicas: 0 },
+    ];
+  const configured = { configuredReplicas: 1, configuredRegions };
+  const snapshot = {
+    ...configured,
+    configuredTopologySha256: sha(canonical(configured)),
+    legacyAggregateReplicas: 1,
+  };
+  return {
+    authoritySource: "environment.config(decryptVariables:false)",
+    primaryRegion: "asia-southeast1-eqsg3a",
+    allowedRegions: [
+      "asia-southeast1-eqsg3a",
+      "europe-west4-drams3a",
+    ],
+    before: snapshot,
+    immediatelyBeforeWrite: writeAttempted ? snapshot : null,
+    after: snapshot,
+  };
+}
 
 const VERIFICATION_CHECKS = {
   policiesExact: true,
@@ -154,6 +208,20 @@ function canonical(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [
+    key,
+    canonicalKeyOrder(record[key]),
+  ]));
+}
+
+function canonicalTopology(value: unknown): string {
+  return `${JSON.stringify(canonicalKeyOrder(value), null, 2)}\n`;
+}
+
 function prepareReceipt(): string {
   const binding = {
     policySha256: POLICY_SHA,
@@ -173,7 +241,7 @@ function prepareReceipt(): string {
   const topology = sha("legacy-topology");
   const collateral = sha("legacy-collateral");
   return canonical({
-    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v2",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     binding,
     bindingSha256: sha(canonical(binding)),
@@ -188,6 +256,7 @@ function prepareReceipt(): string {
       mutationCallCount: 1,
       acknowledgementExact: true,
       providerBeforeSha256: sha("before"),
+      providerImmediatelyBeforeWriteSha256: sha("before"),
       providerAfterSha256: sha("after"),
       deploymentBeforeIdSha256: deployment,
       deploymentAfterIdSha256: deployment,
@@ -196,7 +265,9 @@ function prepareReceipt(): string {
       sourcePreservedExact: true,
       deploymentIdChanged: false,
       topologyBeforeSha256: topology,
+      topologyImmediatelyBeforeWriteSha256: topology,
       topologyAfterSha256: topology,
+      configuredTopologyEvidence: workerTopologyEvidence("prepare"),
       collateralVariablesBeforeSha256: collateral,
       collateralVariablesAfterSha256: collateral,
     },
@@ -257,7 +328,7 @@ function activateReceipt(): string {
   const deploymentAfter = sha("candidate-after-activation");
   const collateral = sha("activation-collateral");
   return canonical({
-    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v2",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     binding,
     bindingSha256: sha(canonical(binding)),
@@ -272,6 +343,7 @@ function activateReceipt(): string {
       mutationCallCount: 1,
       acknowledgementExact: true,
       providerBeforeSha256: sha("activation-before"),
+      providerImmediatelyBeforeWriteSha256: sha("activation-before"),
       providerAfterSha256: sha("activation-after"),
       deploymentBeforeIdSha256: deploymentBefore,
       deploymentAfterIdSha256: deploymentAfter,
@@ -279,8 +351,10 @@ function activateReceipt(): string {
       sourceAfterSha: CANDIDATE,
       sourcePreservedExact: true,
       deploymentIdChanged: true,
-      topologyBeforeSha256: sha("activation-topology-before"),
-      topologyAfterSha256: sha("activation-topology-after"),
+      topologyBeforeSha256: sha("activation-topology"),
+      topologyImmediatelyBeforeWriteSha256: sha("activation-topology"),
+      topologyAfterSha256: sha("activation-topology"),
+      configuredTopologyEvidence: workerTopologyEvidence("activate"),
       collateralVariablesBeforeSha256: collateral,
       collateralVariablesAfterSha256: collateral,
     },
@@ -324,7 +398,7 @@ function activateReceipt(): string {
 
 function scaleReceipt(): string {
   return canonical({
-    schemaVersion: "pintpath-permanent-staging-scale-operation/v2",
+    schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     direction: "quiesce-staging-zero",
     outcome: "scaled",
@@ -340,14 +414,16 @@ function scaleReceipt(): string {
     commandStdoutSha256: sha("scale-stdout"),
     commandStderrSha256: sha("scale-stderr"),
     productionActivationPrerequisite: null,
+    replicaTopology: stagingQuiesceScaleTopologyFixture(),
     checks: SCALE_CHECKS,
   });
 }
 
 function fencedDeploymentReceipt(): string {
   const collateral = sha("deployment-collateral");
+  const topology = deploymentTopology(0);
   return canonical({
-    schemaVersion: "pintpath-railway-application-deployment-executor/v5",
+    schemaVersion: "pintpath-railway-application-deployment-executor/v6",
     operation: "pintpath-railway-application-source-upload",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     target: "permanent-staging",
@@ -366,6 +442,22 @@ function fencedDeploymentReceipt(): string {
     boundaryPostflightSha256: sha("deployment-boundary-after"),
     collateralSnapshotSha256s: { before: collateral, after: collateral },
     replicaCounts: { before: 0, after: 0 },
+    legacyReplicaCounts: {
+      before: null,
+      immediatelyBeforeWrite: null,
+      after: null,
+    },
+    configuredTopology: {
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      before: topology,
+      immediatelyBeforeWrite: topology,
+      after: topology,
+    },
+    runtimeAbsence: {
+      required: true,
+      immediatelyBeforeWrite: true,
+      postflight: true,
+    },
     runtimeResponseSha256s: { health: null, startup: null, ready: null },
     workerFencePrerequisite: null,
     checks: DEPLOYMENT_CHECKS,
@@ -686,9 +778,21 @@ function venueDirectoryEvidence(
 
 function activeDeploymentReceipt(): string {
   const value = JSON.parse(fencedDeploymentReceipt());
+  const topology = deploymentTopology(1);
   value.startedAt = "2026-08-21T01:11:10.000Z";
   value.completedAt = "2026-08-21T01:11:50.000Z";
   value.replicaCounts = { before: 1, after: 1 };
+  value.configuredTopology = {
+    authoritativeSource: "environment.config(decryptVariables:false)",
+    before: topology,
+    immediatelyBeforeWrite: topology,
+    after: topology,
+  };
+  value.runtimeAbsence = {
+    required: false,
+    immediatelyBeforeWrite: null,
+    postflight: null,
+  };
   value.runtimeResponseSha256s = {
     health: sha("active-health"),
     startup: sha("active-startup"),
@@ -787,7 +891,7 @@ function priorQuiesceVerification(): string {
         `pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-${CANDIDATE}`,
       artifactId: "7001",
       filename: "automatic-maintenance-worker-fence-terminal.json",
-      schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+      schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v2",
       outcome: "prepared",
       sourceSha: OLD_SOURCE,
       deploymentIdSha256: sha("legacy-deployment"),
@@ -868,12 +972,12 @@ function priorActivationVerification(
                 ? "venue-directory-terminal.json"
                 : "bootstrap-staging-one-receipt.json",
         schemaVersion: kind === "prepare"
-          ? "pintpath-automatic-maintenance-worker-fence-terminal/v1"
+          ? "pintpath-automatic-maintenance-worker-fence-terminal/v2"
           : scale
-            ? "pintpath-permanent-staging-scale-operation/v2"
+            ? "pintpath-permanent-staging-scale-operation/v3"
             : kind === "venue-directory"
               ? "pintpath-permanent-staging-venue-directory-terminal/v1"
-              : "pintpath-railway-application-deployment-executor/v5",
+              : "pintpath-railway-application-deployment-executor/v6",
         outcome: kind === "prepare"
           ? "prepared"
           : kind === "fenced-deployment"
@@ -946,6 +1050,13 @@ function activatedProviderSnapshot() {
     serviceInstanceId: "99999999-9999-4999-8999-999999999999",
     serviceId: SERVICE_ID,
     numReplicas: 1,
+    configuredTopology: {
+      configuredReplicas: 1,
+      regions: [
+        { region: "asia-southeast1-eqsg3a", numReplicas: 1 },
+        { region: "europe-west4-drams3a", numReplicas: 0 },
+      ],
+    },
     rows: [
       {
         id: "row-unrelated",
@@ -1491,7 +1602,7 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
     );
     expect(runbook).toContain(
-      "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f",
+      "3474e28c413e908b7dac76190709553e753fed39df753a1cd273b29f161bfcef",
     );
   });
 
@@ -1808,6 +1919,30 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       expectedDeploymentSha: null,
     });
+  });
+
+  it.each([
+    ["configured topology", (receipt: Record<string, any>) => {
+      receipt.configuredTopology.immediatelyBeforeWrite.configuredTopologySha256 =
+        sha("tampered-topology");
+    }],
+    ["runtime absence", (receipt: Record<string, any>) => {
+      receipt.runtimeAbsence.postflight = false;
+    }],
+  ] as const)("rejects fenced deployment receipt %s tampering", (
+    _label,
+    tamper,
+  ) => {
+    const receipt = JSON.parse(fencedDeploymentReceipt()) as Record<string, any>;
+    tamper(receipt);
+    const source = canonical(receipt);
+    expect(() =>
+      stagingWorkerBootstrapPrerequisiteInternals.validateDeploymentReceipt(
+        source,
+        receipt,
+        CANDIDATE,
+        "fenced-deployment",
+      )).toThrow("receipt_invalid");
   });
 
   it("reconciles activation runner loss read-only and emits the alternate receipt", async () => {

@@ -97,14 +97,18 @@ scale artifacts rather than added as substitutable route/recovery stages. The co
 promotion-recovery policy is schema v2 with SHA-256
 `57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
 
-Activation is one four-job workflow. `production-capture` runs on the JIT
-`pintpath-production-backup` runner in the production private network and
-performs PITR observation bound through the scale receipt from the source-upload
+Activation is one four-job workflow. The current workflow selects only static
+base labels: `production-capture` uses `pintpath-production-backup`, and
+`disposable-recover` uses `pintpath-disposable-recovery`. Those labels express the intended
+private-network roles, but do not implement an authoritative exact-run JIT hold
+or exclude a standing base-label runner. Activation is therefore a hard NO-GO
+until a separately reviewed successor updates the workflow, controller, tests,
+and evidence contract to enforce exact-run eligibility. If that control is
+completed, production capture performs PITR observation bound through the scale receipt from the source-upload
 deployment to the distinct final active deployment, logical/private capture,
 operational-copy proof, and
-separate logical/private WORM sealing. `disposable-recover` runs on the distinct
-JIT `pintpath-disposable-recovery` runner in the disposable private network,
-separately reads both WORM authorities, restores them, replays deletion twice,
+separate logical/private WORM sealing. Disposable recovery separately reads
+both WORM authorities, restores them, replays deletion twice,
 and starts the exact compiled candidate as a local child against disposable
 Postgres, Redis, Supabase Auth, and private Storage. An `if: always()` cleanup
 job independently reconciles Railway and Supabase absence; `finalize` requires
@@ -117,10 +121,15 @@ with `activation-receipt.json` and `tested-commit-sha.txt`, the final activation
 artifact contains exactly 20 files.
 
 Teardown authorities must bind the exact activation `GITHUB_RUN_ID` and attempt
-`1`. Dispatch activation while its protected environment is gated, record the
-assigned run ID, sign and install both per-run cleanup authorities in the
-non-interactive `production-promotion-recovery-cleanup` environment, and only
-then approve capture. Supabase cleanup must be `orderly` and bind the exact
+`1`. The current static-label workflow must not be dispatched: there is no
+authoritative repository implementation that holds its jobs for an exact run
+or proves a standing base-label runner ineligible. Zero required reviewers,
+zero wait timers, and protected `main` only remain the GitHub Environment
+policy; a human approval pause must not substitute for the missing exact-run
+control. Live activation remains hard NO-GO until that controller, matching
+workflow labels, negative/positive tests, private-network hosts, and authentic
+evidence are separately reviewed and present.
+Supabase cleanup must be `orderly` and bind the exact
 Storage purge-receipt SHA-256 for green; emergency cleanup can establish
 absence after failure but never green. Standard cancel is permitted.
 Force-cancel is forbidden until independent read-only observations prove both
@@ -841,8 +850,8 @@ permanent staging, and a new candidate.
 
 1. Configure the protected `production` environment secrets `SUPABASE_URL`,
    `SUPABASE_SERVICE_ROLE_KEY`, and `GOOGLE_PLACES_API_KEY`.
-2. Require a production-environment reviewer who is not the workflow
-   dispatcher.
+2. Configure zero required reviewers, zero wait timers, and protected `main`
+   only. Keep the automated change-reference and signed evidence gates enabled.
 3. Connect the notifier's `pintpath-venue-directory-refresh-failed` event to the
    real on-call page and its `pintpath-venue-directory-refresh-heartbeat` event
    to an independent daily deadman monitor. Only the exact `23 14 * * *`
@@ -1496,18 +1505,22 @@ below.
 
 Configure **GitHub Settings → Environments → `production`** to:
 
-- allow protected branches only;
-- require a reviewer who is not the deployer;
-- prevent self-review where the plan supports it;
+- allow deployment branches and tags from protected `main` only;
+- configure zero required reviewers and zero wait timers;
 - store the manual release gate's one-use admin token and its copy of the
-  low-privilege smoke credentials only in that environment;
-- use a review wait timer if required by the launch owner.
+  low-privilege smoke credentials only in that environment.
+
+Environment entry scopes credentials; it is not human release authorization.
+The exact protected-main candidate, automated checks, reviewed-candidate
+history, independent cryptographic signer/reviewer identities, and signed
+change references remain mandatory.
 
 Do not use `production` for scheduled **Production Health**. Phase 16.7
 configures separate unattended, default-branch-only monitoring and alert
 environments so scheduled probes and failure pages start without a gate or wait
-timer. This does not change the existing protected policy for release,
-deployment, provider, database, or route mutations.
+timer. The same zero-reviewer, zero-wait, protected-`main` Environment policy
+applies to release, deployment, provider, database, and route mutations; their
+machine-verifiable authority remains stricter than credential entry.
 
 Required checks must report for every protected PR. The candidate native
 workflow is now unfiltered so its `ios` job reports on evidence-only PRs as
@@ -1926,23 +1939,33 @@ in Phase 16.6 have passed independent retrieval and restore proof.
 
 ### 16.5 Deploy the exact protected `main` build with enrolment disabled
 
-Before worker preparation, require the existing staging Beer service to be the
-sole healthy one-replica legacy deployment with empty staged patches. The
-current failed/stopped service with no active deployment is not eligible; stop
-and use only a separately reviewed recovery path rather than an ad-hoc Railway
-write. While that healthy legacy deployment remains unchanged, execute the four
-candidate-bound Google Maps/Map ID, Google Places, and OpenAI provider-variable
-operations plus the atomic Supabase publishable/secret-key replacement. Each
-protected workflow must use `skipDeploys=true` and prove that it caused no
-runtime rollout or deployment/topology change.
+Before worker preparation, select exactly one policy-pinned staging bootstrap
+path with empty staged patches. A sole healthy one-replica legacy deployment
+uses the normal path. The current exact failed/stopped cold/dead topology uses
+only `Recover dead permanent staging to explicit zero`; its one permitted
+cross-candidate bridge pins predecessor candidate
+`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`, an
+exact reviewed direct-child successor, a fresh same-candidate `prepare_run_id`,
+and deadline `2026-09-08T18:57:20Z`. For successor quiesce pass
+`ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`
+and `ambiguous_quiesce_run_id=34153306935`, and leave
+`ambiguous_prepare_run_id` empty. No generic failed deployment or ad-hoc Railway
+write is eligible. While the selected baseline remains unchanged, execute the
+four candidate-bound Google Maps/Map ID, Google Places, and OpenAI
+provider-variable operations plus the atomic Supabase publishable/secret-key
+replacement. Each protected workflow must use `skipDeploys=true` and prove that
+it caused no runtime rollout or deployment/topology change.
 
-Then complete the protected permanent-staging worker bootstrap for
-`deploymentSha`. Dispatch
+Then establish the protected permanent-staging prepare/quiesce prerequisite for
+`deploymentSha`. On the healthy path, dispatch
 [`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
-with staging `prepare`; then dispatch
+with staging `prepare`, followed by
 [`Bootstrap permanent-staging worker fence`](../.github/workflows/bootstrap-permanent-staging-worker-fence.yml)
 with `quiesce` to prove the legacy deployment changes exactly from one replica
-to zero. Dispatch
+to zero. On the cold/dead path, use only the cold recovery workflow's fresh
+`prepare` and pinned successor `quiesce` described above; it must prove explicit
+configured topology changes exactly from one replica to zero and runtime
+absence. Then dispatch
 [`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
 with phase `fenced`, supplying the exact prepare and quiesce run IDs. While the
 candidate is fenced at zero, apply and prove the reviewed permanent-staging
@@ -1950,11 +1973,18 @@ venue-directory migration and status refresh against only the pinned staging
 Supabase project. Restore the candidate exactly from zero to one through the
 bootstrap workflow, require
 all three runtime routes to report disabled and candidate-bound automatic
-maintenance, then dispatch staging `activate`. Finally dispatch the staging
-deployment workflow with phase `active` and the exact activation run ID. The
+maintenance, then dispatch staging `activate` with the exact
+`venue_directory_run_id`. Finally dispatch the staging deployment workflow with
+phase `active` and the exact activation run ID. The
 shared verifier must authenticate every producer artifact, GitHub digest,
 receipt, and completion-before-start edge before any consumer receives its
 provider token.
+
+The current receipt contracts are
+`pintpath-automatic-maintenance-worker-fence-terminal/v2`,
+`pintpath-permanent-staging-scale-operation/v3`, and
+`pintpath-railway-application-deployment-executor/v6`. A v1 worker terminal,
+v2 scale receipt, or v5 application deployment receipt is not launch evidence.
 
 There must be exactly these two successful same-candidate staging deployment
 runs: the fenced zero-replica source upload and active one-replica closeout.
@@ -1971,7 +2001,7 @@ bootstrap topology is exactly one healthy replica and obtain the external,
 sanitized authority showing the old SQLite application is detached from the
 target Postgres and cannot run a Postgres maintenance scheduler. Dispatch
 [`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
-with production `fence`; it writes disabled plus `deploymentSha` without a
+with production `fence` and `bootstrap_path=healthy-legacy`; it writes disabled plus `deploymentSha` without a
 deploy and emits the immutable fence artifact. Dispatch
 [`Deploy Pint Path protected production`](../.github/workflows/deploy-production.yml)
 with that exact fence run ID and confirmation
@@ -1989,7 +2019,8 @@ may change only `privacy_maintenance_login` from connection limit 2 to 8 after
 exact catalog, capacity, and artifact preflight. If acknowledgement is
 uncertain, use only the original-run-bound read-only `reconcile` mode; never
 repeat the apply write. Supply the successful apply run ID to production
-`activate` in the worker workflow. Activation independently authenticates the
+`activate` in the worker workflow with `bootstrap_path=healthy-legacy`.
+Activation independently authenticates the
 role intent, terminal, receipt, and full fence→deploy→role chain, then rechecks
 the exact live deployment before enabling candidate-bound workers.
 
@@ -2009,9 +2040,12 @@ that exact candidate is the sole healthy permanent-staging deployment; the
 separate convergence workflow then proves and changes only the matching
 production deployment. Both
 application-deployment GitHub environments, plus the separate
-`production-topology-configuration` environment for convergence, need their
-required reviewer approval and separately scoped metadata/write secrets.
-Before production approval, capture a fresh sanitized strict
+`production-topology-configuration` environment for convergence, use zero
+required reviewers, zero wait timers, protected `main` only, and separately
+scoped metadata/write secrets. The topology environment holds
+`PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN`,
+`PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`, and
+`PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN`. Before production dispatch, capture a fresh sanitized strict
 `production_free_launch` provider-readiness result inside the current deployed
 production service and provision its candidate-bound version-2 envelope/hash
 to the protected production GitHub environment. The required envelope is now
@@ -2118,14 +2152,19 @@ In the protected production operator environment:
    approval bound to the apply receipt; run reviewer-only
    `db:postgres:reviewed-price:authorize-quarantine`, then operator-only
    `db:postgres:reviewed-price:quarantine`.
-8. While public ingress is still closed, dispatch `Activate protected
-production promotion recovery`. Leave its environment approval pending,
-   record the assigned `GITHUB_RUN_ID`, create and independently verify the
-   signed singleton emergency arm plus both per-run teardown authorities,
-   install them with distinct read/delete tokens in the non-interactive cleanup
-   environment, then run the protected arm manager's `initial` compare-and-swap
-   into the dedicated cleanup-state ref; only then approve
-   `production-capture`. An OPEN state mechanically rejects a second arm. Use
+8. While public ingress is still closed, stop: the checked-in activation
+   workflow uses static base labels and has no authoritative exact-run
+   controller or evidence that excludes a standing matching runner. Do not
+   dispatch it. Live activation is a hard NO-GO until a separately reviewed
+   successor supplies the matching workflow labels, controller, tests,
+   private-network hosts, and exact-run evidence. Keep zero required reviewers,
+   zero wait timers, and protected `main` only; do not add human GitHub
+   Environment approval as a workaround. The eventual successor must create
+   and independently verify the signed singleton emergency arm plus both
+   per-run teardown authorities, install their pins and distinct read/delete
+   tokens, and run the protected arm manager's `initial` compare-and-swap into
+   the dedicated cleanup-state ref before making either exact job eligible. An OPEN state
+   mechanically rejects a second arm. Use
    only a signed same-target, prior-authority-linked `renewal` if credentials
    approach their 24-hour expiry. The
    four jobs must:
@@ -2397,7 +2436,14 @@ the release gate while the closeout route is absent.
 
 ### 17.3 Run strict authenticated evidence through the protected environment
 
-Create a fresh, one-use MFA/AAL2 admin app-cookie credential only after the production-environment reviewer is ready, using the exact cookie-only exchange procedure in `docs/external-launch-signoffs.md`. Enter its raw cookie value interactively into the protected environment; never print or pass it on a command line. The compatibility secret name remains `PINTPATH_SMOKE_ADMIN_TOKEN`, but the smoke script transports that value only in `Cookie: pint_path_session=...`, never in `Authorization`:
+Create a fresh, one-use MFA/AAL2 admin app-cookie credential only when the exact
+protected-`main` release-gate checks and signed change reference are ready,
+using the exact cookie-only exchange procedure in
+`docs/external-launch-signoffs.md`. Enter its raw cookie value interactively
+into the protected environment; never print or pass it on a command line. The
+compatibility secret name remains `PINTPATH_SMOKE_ADMIN_TOKEN`, but the smoke
+script transports that value only in `Cookie: pint_path_session=...`, never in
+`Authorization`:
 
 ```bash
 gh secret set PINTPATH_SMOKE_ADMIN_TOKEN --env production

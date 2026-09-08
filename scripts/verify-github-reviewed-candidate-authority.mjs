@@ -94,6 +94,45 @@ const PRODUCTION_POSTGRES_SOURCE_REPIN_RECOVERY_BRIDGE = Object.freeze({
   finalZeroWriteArtifactBytes: 4611,
   finalZeroWriteArtifactCreatedAt: "2026-09-07T11:58:16Z",
 });
+const COLD_QUIESCE_SUCCESSOR_OPERATION =
+  "cold-recovery-successor-quiesce";
+const CURRENT_COLD_QUIESCE_JOB_NAME =
+  "Quiesce the configured Europe replica from one to zero";
+const CURRENT_COLD_QUIESCE_WRITE_STEP =
+  "Quiesce the configured Europe replica from one to zero once";
+const LEGACY_AMBIGUOUS_COLD_QUIESCE_JOB_NAME =
+  "Initialize the exact dead baseline at explicit zero";
+const LEGACY_AMBIGUOUS_COLD_QUIESCE_WRITE_STEP =
+  "Initialize the dead baseline from null to explicit zero once";
+const COLD_QUIESCE_SUCCESSOR_BRIDGE = Object.freeze({
+  priorCandidateSha: "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  priorReviewedHeadSha: "cc2c5311d47f3e895173cb11ef094ef856e0cf07",
+  priorTreeSha: "9da75485e85addfec7096b1c04c52f6780d17b64",
+  priorPullRequestNumber: 90,
+  priorMergedAt: "2026-09-07T18:18:58Z",
+  prepareRunId: 34152745186,
+  prepareRunCreatedAt: "2026-09-07T18:43:02Z",
+  prepareRunStartedAt: "2026-09-07T18:43:02Z",
+  prepareRunCompletedAt: "2026-09-07T18:47:32Z",
+  ambiguousQuiesceRunId: 34153306935,
+  ambiguousQuiesceRunCreatedAt: "2026-09-07T18:51:21Z",
+  ambiguousQuiesceRunStartedAt: "2026-09-07T18:51:21Z",
+  ambiguousQuiesceRunCompletedAt: "2026-09-07T18:57:20Z",
+  successorGraceHours: 24,
+  successorDeadline: "2026-09-08T18:57:20.000Z",
+  failedReadOnlyReconcileRunId: 34154020478,
+  failedReadOnlyReconcileRunCreatedAt: "2026-09-07T19:02:23Z",
+  failedReadOnlyReconcileRunStartedAt: "2026-09-07T19:02:23Z",
+  failedReadOnlyReconcileRunCompletedAt: "2026-09-07T19:06:38Z",
+  artifactId: 10030213299,
+  artifactName:
+    "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  artifactDigest:
+    "sha256:3f830a7376e604a46e0d8cfe3521fc8eb4e1db444ab73bec4063c22442c42fbe",
+  artifactBytes: 4507,
+  artifactCreatedAt: "2026-09-07T18:57:18Z",
+  artifactExpiresAt: "2026-10-07T18:57:18Z",
+});
 const NONTERMINAL_RUN_STATUSES = new Set([
   "in_progress",
   "pending",
@@ -335,6 +374,8 @@ function parseArguments(argv) {
     operation === "cold-recovery-reconcile-prepare";
   const coldQuiesceReconcile =
     operation === "cold-recovery-reconcile-quiesce";
+  const coldQuiesceSuccessor =
+    operation === COLD_QUIESCE_SUCCESSOR_OPERATION;
   const runnerLossReconcile = RUNNER_LOSS_RECOVERY_OPERATIONS.has(operation);
   const productionPostgresSourceRepinReconcile =
     operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION;
@@ -352,6 +393,7 @@ function parseArguments(argv) {
       operation !== PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION &&
       !PROVIDER_OPERATIONS.has(operation) &&
       !COLD_RECOVERY_OPERATIONS.has(operation) &&
+      !coldQuiesceSuccessor &&
       !RUNNER_LOSS_RECOVERY_OPERATIONS.has(operation)) ||
     (cutover
       ? !RUN_ID.test(replacementRunId ?? "") ||
@@ -364,13 +406,13 @@ function parseArguments(argv) {
       : replacementRunId !== null || deploymentRunId !== null || cutoverMode !== null) ||
     (offsiteCleanupRecovery || incidentMaskedCleanupCancel ||
       offsiteCleanupSuccessorCloseout || runnerLossReconcile ||
-      productionPostgresSourceRepinReconcile
+      productionPostgresSourceRepinReconcile || coldQuiesceSuccessor
       ? !RUN_ID.test(priorRunId ?? "")
       : priorRunId !== null) ||
-    (productionPostgresSourceRepinReconcile
+    (productionPostgresSourceRepinReconcile || coldQuiesceSuccessor
       ? !SHA.test(priorCandidateSha ?? "")
       : priorCandidateSha !== null) ||
-    (coldQuiesceReconcile
+    (coldQuiesceReconcile || coldQuiesceSuccessor
       ? !RUN_ID.test(prepareRunId ?? "") || prepareRunId === priorRunId
       : prepareRunId !== null) ||
     (runtimeVariable
@@ -445,12 +487,16 @@ function operationConfiguration(
       priorSkippedWriteAllowed: true,
     });
   }
-  if (COLD_RECOVERY_OPERATIONS.has(operation)) {
+  if (
+    COLD_RECOVERY_OPERATIONS.has(operation) ||
+    operation === COLD_QUIESCE_SUCCESSOR_OPERATION
+  ) {
     const coldOperation = operation === "cold-recovery-prepare"
       ? "prepare"
       : operation === "cold-recovery-reconcile-prepare"
       ? "reconcile-prepare"
-      : operation === "cold-recovery-quiesce"
+      : operation === "cold-recovery-quiesce" ||
+          operation === COLD_QUIESCE_SUCCESSOR_OPERATION
       ? "quiesce"
       : "reconcile-quiesce";
     return Object.freeze({
@@ -463,12 +509,12 @@ function operationConfiguration(
         : coldOperation === "reconcile-prepare"
         ? "Reconcile an ambiguous cold prepare at the exact dead baseline"
         : coldOperation === "quiesce"
-        ? "Initialize the exact dead baseline at explicit zero"
+        ? CURRENT_COLD_QUIESCE_JOB_NAME
         : "Reconcile an ambiguous cold quiesce at exact zero",
       writeStep: coldOperation === "prepare"
         ? "Prepare the exact dead staging baseline once"
         : coldOperation === "quiesce"
-        ? "Initialize the dead baseline from null to explicit zero once"
+        ? CURRENT_COLD_QUIESCE_WRITE_STEP
         : null,
       priorSkippedWriteAllowed: true,
     });
@@ -769,6 +815,37 @@ async function listWorkflowHistory(input) {
   return history;
 }
 
+async function listCompleteWorkflowHistoryAllRefs(input) {
+  const history = [];
+  let totalCount = null;
+  let complete = false;
+  for (let page = 1; page <= MAX_HISTORY_PAGES; page += 1) {
+    const listing = await githubGet(
+      input.fetchImpl,
+      input.token,
+      REPOSITORY,
+      `/actions/workflows/${input.workflowId}/runs` +
+        `?event=workflow_dispatch&per_page=100&page=${page}`,
+    );
+    if (
+      !Number.isSafeInteger(listing?.total_count) ||
+      listing.total_count < 0 ||
+      listing.total_count > MAX_HISTORY_PAGES * 100 ||
+      !Array.isArray(listing?.workflow_runs) ||
+      listing.workflow_runs.length > 100 ||
+      (totalCount !== null && listing.total_count !== totalCount)
+    ) fail("history_invalid");
+    totalCount = listing.total_count;
+    history.push(...listing.workflow_runs);
+    if (listing.workflow_runs.length < 100) {
+      complete = true;
+      break;
+    }
+  }
+  if (!complete || history.length !== totalCount) fail("history_incomplete");
+  return history;
+}
+
 async function priorRunWriteDisposition(input, run, configuration) {
   if (
     run.status !== "completed" ||
@@ -780,12 +857,6 @@ async function priorRunWriteDisposition(input, run, configuration) {
     REPOSITORY,
     `/actions/runs/${run.id}/jobs?filter=all&per_page=100`,
   );
-  const coldJobNames = [
-    "Bind the exact replacement and prepare the dead baseline",
-    "Reconcile an ambiguous cold prepare at the exact dead baseline",
-    "Initialize the exact dead baseline at explicit zero",
-    "Reconcile an ambiguous cold quiesce at exact zero",
-  ];
   const cold = configuration.workflowPath === COLD_RECOVERY_WORKFLOW_PATH;
   const bootstrapJobNames = [
     "Verify the chain and perform one exact protected scale transition",
@@ -795,8 +866,19 @@ async function priorRunWriteDisposition(input, run, configuration) {
     "One candidate-bound automatic-maintenance transition",
     "Reconcile an ambiguous staging automatic-maintenance activation",
   ];
+  const legacyAmbiguousColdQuiesce = cold &&
+    run.id === COLD_QUIESCE_SUCCESSOR_BRIDGE.ambiguousQuiesceRunId;
+  if (legacyAmbiguousColdQuiesce !== (
+    configuration.jobName === LEGACY_AMBIGUOUS_COLD_QUIESCE_JOB_NAME &&
+    configuration.writeStep === LEGACY_AMBIGUOUS_COLD_QUIESCE_WRITE_STEP
+  )) return "invalid";
   const workflowJobNames = cold
-    ? coldJobNames
+    ? exactWorkflowJobNames(
+      configuration.workflowPath,
+      legacyAmbiguousColdQuiesce
+        ? LEGACY_AMBIGUOUS_COLD_QUIESCE_JOB_NAME
+        : CURRENT_COLD_QUIESCE_JOB_NAME,
+    )
     : configuration.workflowPath === STAGING_BOOTSTRAP_WORKFLOW_PATH
     ? bootstrapJobNames
     : configuration.workflowPath === WORKER_FENCE_WORKFLOW_PATH
@@ -841,12 +923,15 @@ async function priorRunWriteDisposition(input, run, configuration) {
     : "invalid";
 }
 
-function exactWorkflowJobNames(workflowPath) {
+function exactWorkflowJobNames(
+  workflowPath,
+  coldQuiesceJobName = CURRENT_COLD_QUIESCE_JOB_NAME,
+) {
   return workflowPath === COLD_RECOVERY_WORKFLOW_PATH
     ? [
         "Bind the exact replacement and prepare the dead baseline",
         "Reconcile an ambiguous cold prepare at the exact dead baseline",
-        "Initialize the exact dead baseline at explicit zero",
+        coldQuiesceJobName,
         "Reconcile an ambiguous cold quiesce at exact zero",
       ]
     : workflowPath === STAGING_BOOTSTRAP_WORKFLOW_PATH
@@ -862,13 +947,57 @@ function exactWorkflowJobNames(workflowPath) {
     : null;
 }
 
+async function successfulWriteRunExact(input, run, configuration) {
+  const jobNames = exactWorkflowJobNames(configuration.workflowPath);
+  if (
+    configuration.writeStep === null ||
+    jobNames === null ||
+    run.status !== "completed" ||
+    run.conclusion !== "success"
+  ) return false;
+  const listing = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/actions/runs/${run.id}/jobs?filter=all&per_page=100`,
+  );
+  if (
+    listing?.total_count !== jobNames.length ||
+    !Array.isArray(listing?.jobs) ||
+    listing.jobs.length !== jobNames.length ||
+    new Set(listing.jobs.map((job) => job?.name)).size !== jobNames.length ||
+    jobNames.some((name) =>
+      !listing.jobs.some((job) => job?.name === name))
+  ) return false;
+  const selected = listing.jobs.find((job) =>
+    job?.name === configuration.jobName);
+  const writeSteps = Array.isArray(selected?.steps)
+    ? selected.steps.filter((step) => step?.name === configuration.writeStep)
+    : [];
+  return selected?.run_id === run.id &&
+    selected.run_attempt === 1 &&
+    selected.status === "completed" &&
+    selected.conclusion === "success" &&
+    writeSteps.length === 1 &&
+    writeSteps[0]?.status === "completed" &&
+    writeSteps[0]?.conclusion === "success" &&
+    listing.jobs.every((job) => job === selected || (
+      job?.run_id === run.id &&
+      job?.run_attempt === 1 &&
+      job?.status === "completed" &&
+      job?.conclusion === "skipped"
+    ));
+}
+
 async function readOnlyReconciliationRunExact(
   input,
   run,
   configuration,
   allowedConclusions,
+  exactJobNames = null,
 ) {
-  const jobNames = exactWorkflowJobNames(configuration.workflowPath);
+  const jobNames = exactJobNames ??
+    exactWorkflowJobNames(configuration.workflowPath);
   if (configuration.writeStep !== null || jobNames === null ||
     run.status !== "completed" ||
     !allowedConclusions.includes(run.conclusion)) {
@@ -1752,6 +1881,302 @@ async function verifyColdQuiesceReconciliationHistory(input, currentRun) {
     ).toISOString(),
     runnerLossRecoveryGraceHours: RECOVERY_GRACE_HOURS,
     runnerLossRecoveryWithinGraceExact: true,
+  });
+}
+
+export async function verifyColdQuiesceSuccessorBridge(
+  input,
+  policy,
+  currentPull,
+  currentRun,
+) {
+  const expected = COLD_QUIESCE_SUCCESSOR_BRIDGE;
+  if (
+    input.priorCandidateSha !== expected.priorCandidateSha ||
+    input.priorRunId !== String(expected.ambiguousQuiesceRunId)
+  ) fail("cold_quiesce_successor_bridge_invalid");
+
+  let priorPull;
+  try {
+    priorPull = await verifyReviewedPullRequest(
+      input.fetchImpl,
+      input.token,
+      policy,
+      expected.priorCandidateSha,
+    );
+  } catch {
+    fail("cold_quiesce_successor_bridge_invalid");
+  }
+  const currentCommit = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/git/commits/${input.candidateSha}`,
+  );
+  if (
+    priorPull.number !== expected.priorPullRequestNumber ||
+    priorPull.reviewedPrHeadSha !== expected.priorReviewedHeadSha ||
+    priorPull.treeSha !== expected.priorTreeSha ||
+    priorPull.mergedAt !== expected.priorMergedAt ||
+    currentCommit?.sha !== input.candidateSha ||
+    currentCommit?.tree?.sha !== currentPull.treeSha ||
+    !Array.isArray(currentCommit?.parents) ||
+    currentCommit.parents.length !== 1 ||
+    currentCommit.parents[0]?.sha !== expected.priorCandidateSha
+  ) fail("cold_quiesce_successor_bridge_invalid");
+
+  const currentPrepareRunId = Number(input.prepareRunId);
+  if (
+    !RUN_ID.test(input.prepareRunId ?? "") ||
+    !Number.isSafeInteger(currentPrepareRunId) ||
+    currentPrepareRunId === currentRun.id
+  ) fail("cold_quiesce_successor_bridge_history_invalid");
+  let history;
+  try {
+    history = await listCompleteWorkflowHistoryAllRefs({
+      ...input,
+      workflowId: COLD_RECOVERY_WORKFLOW_ID,
+    });
+  } catch {
+    fail("cold_quiesce_successor_bridge_history_invalid");
+  }
+  const priorMergedAtMs = Date.parse(expected.priorMergedAt);
+  const retained = history.map((run) => Object.freeze({
+    run,
+    createdAt: parseTimestamp(
+      run?.created_at,
+      "cold_quiesce_successor_bridge_history_invalid",
+    ),
+    updatedAt: parseTimestamp(
+      run?.updated_at,
+      "cold_quiesce_successor_bridge_history_invalid",
+    ),
+  }));
+  const relevant = retained.filter((item) =>
+    item.run?.status !== "completed" ||
+    typeof item.run?.conclusion !== "string" ||
+    item.run.conclusion.length === 0 ||
+    item.updatedAt >= priorMergedAtMs
+  ).map((item) => item.run);
+  const priorRuns = relevant.filter((run) =>
+    run?.head_sha === expected.priorCandidateSha);
+  const currentRuns = relevant.filter((run) =>
+    run?.head_sha === input.candidateSha);
+  const expectedRunIds = [
+    expected.prepareRunId,
+    expected.ambiguousQuiesceRunId,
+    expected.failedReadOnlyReconcileRunId,
+    currentPrepareRunId,
+    currentRun.id,
+  ];
+  if (
+    relevant.length !== expectedRunIds.length ||
+    priorRuns.length !== 3 ||
+    currentRuns.length !== 2 ||
+    new Set(relevant.map((run) => run?.id)).size !== relevant.length ||
+    expectedRunIds.some((id) => !relevant.some((run) => run?.id === id)) ||
+    relevant.some((run) =>
+      run?.head_sha !== expected.priorCandidateSha &&
+      run?.head_sha !== input.candidateSha)
+  ) fail("cold_quiesce_successor_bridge_history_invalid");
+
+  const validatePinnedRun = (runId, operation, expectedRun) => {
+    const currentConfiguration = operationConfiguration(
+      operation,
+      expected.priorCandidateSha,
+      null,
+      null,
+    );
+    const configuration = runId === expected.ambiguousQuiesceRunId &&
+        operation === "cold-recovery-quiesce"
+      ? Object.freeze({
+        ...currentConfiguration,
+        jobName: LEGACY_AMBIGUOUS_COLD_QUIESCE_JOB_NAME,
+        writeStep: LEGACY_AMBIGUOUS_COLD_QUIESCE_WRITE_STEP,
+      })
+      : currentConfiguration;
+    const run = validateRunIdentity(
+      priorRuns.find((item) => item?.id === runId),
+      {
+        runId,
+        candidateSha: expected.priorCandidateSha,
+        workflowPath: COLD_RECOVERY_WORKFLOW_PATH,
+        displayTitle: configuration.displayTitle,
+        failureCode: "cold_quiesce_successor_bridge_history_invalid",
+      },
+    );
+    if (
+      run.created_at !== expectedRun.createdAt ||
+      run.run_started_at !== expectedRun.startedAt ||
+      run.updated_at !== expectedRun.completedAt ||
+      run.status !== "completed" ||
+      run.conclusion !== expectedRun.conclusion
+    ) fail("cold_quiesce_successor_bridge_history_invalid");
+    return Object.freeze({ run, configuration });
+  };
+  const prepare = validatePinnedRun(
+    expected.prepareRunId,
+    "cold-recovery-prepare",
+    {
+      createdAt: expected.prepareRunCreatedAt,
+      startedAt: expected.prepareRunStartedAt,
+      completedAt: expected.prepareRunCompletedAt,
+      conclusion: "success",
+    },
+  );
+  const quiesce = validatePinnedRun(
+    expected.ambiguousQuiesceRunId,
+    "cold-recovery-quiesce",
+    {
+      createdAt: expected.ambiguousQuiesceRunCreatedAt,
+      startedAt: expected.ambiguousQuiesceRunStartedAt,
+      completedAt: expected.ambiguousQuiesceRunCompletedAt,
+      conclusion: "failure",
+    },
+  );
+  const reconciliation = validatePinnedRun(
+    expected.failedReadOnlyReconcileRunId,
+    "cold-recovery-reconcile-quiesce",
+    {
+      createdAt: expected.failedReadOnlyReconcileRunCreatedAt,
+      startedAt: expected.failedReadOnlyReconcileRunStartedAt,
+      completedAt: expected.failedReadOnlyReconcileRunCompletedAt,
+      conclusion: "failure",
+    },
+  );
+  const currentPrepareConfiguration = operationConfiguration(
+    "cold-recovery-prepare",
+    input.candidateSha,
+    null,
+    null,
+  );
+  const currentPrepare = validateRunIdentity(
+    currentRuns.find((run) => run?.id === currentPrepareRunId),
+    {
+      runId: currentPrepareRunId,
+      candidateSha: input.candidateSha,
+      workflowPath: COLD_RECOVERY_WORKFLOW_PATH,
+      displayTitle: currentPrepareConfiguration.displayTitle,
+      failureCode: "cold_quiesce_successor_bridge_history_invalid",
+    },
+  );
+  const currentConfiguration = operationConfiguration(
+    COLD_QUIESCE_SUCCESSOR_OPERATION,
+    input.candidateSha,
+    null,
+    null,
+  );
+  const selectedCurrent = validateRunIdentity(
+    currentRuns.find((run) => run?.id === currentRun.id),
+    {
+      runId: currentRun.id,
+      candidateSha: input.candidateSha,
+      workflowPath: COLD_RECOVERY_WORKFLOW_PATH,
+      displayTitle: currentConfiguration.displayTitle,
+      failureCode: "cold_quiesce_successor_bridge_history_invalid",
+    },
+  );
+  if (
+    await priorRunWriteDisposition(
+      input,
+      quiesce.run,
+      quiesce.configuration,
+    ) !== "may-have-written" ||
+    !await readOnlyReconciliationRunExact(
+      input,
+      reconciliation.run,
+      reconciliation.configuration,
+      ["failure", "cancelled", "timed_out"],
+      exactWorkflowJobNames(
+        COLD_RECOVERY_WORKFLOW_PATH,
+        LEGACY_AMBIGUOUS_COLD_QUIESCE_JOB_NAME,
+      ),
+    ) ||
+    !await successfulWriteRunExact(
+      input,
+      currentPrepare,
+      currentPrepareConfiguration,
+    ) ||
+    !isNonterminalRun(selectedCurrent) ||
+    selectedCurrent.created_at !== currentRun.created_at ||
+    selectedCurrent.run_started_at !== currentRun.run_started_at ||
+    priorMergedAtMs >= prepare.run.createdAt ||
+    prepare.run.updatedAt >= quiesce.run.startedAt ||
+    quiesce.run.updatedAt >= reconciliation.run.startedAt ||
+    reconciliation.run.updatedAt >= input.currentMergedAtMs ||
+    input.currentMergedAtMs >= currentPrepare.createdAt ||
+    currentPrepare.status !== "completed" ||
+    currentPrepare.conclusion !== "success" ||
+    currentPrepare.updatedAt >= selectedCurrent.createdAt ||
+    selectedCurrent.startedAt >= Date.parse(expected.successorDeadline)
+  ) fail("cold_quiesce_successor_bridge_history_invalid");
+
+  const artifactListing = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    `/actions/runs/${expected.ambiguousQuiesceRunId}/artifacts?name=${encodeURIComponent(expected.artifactName)}&per_page=100&page=1`,
+  );
+  const artifact = artifactListing?.total_count === 1 &&
+      Array.isArray(artifactListing?.artifacts) &&
+      artifactListing.artifacts.length === 1
+    ? artifactListing.artifacts[0]
+    : null;
+  const artifactCreatedAt = parseTimestamp(
+    artifact?.created_at,
+    "cold_quiesce_successor_bridge_artifact_invalid",
+  );
+  const artifactUpdatedAt = parseTimestamp(
+    artifact?.updated_at,
+    "cold_quiesce_successor_bridge_artifact_invalid",
+  );
+  const artifactExpiresAt = parseTimestamp(
+    artifact?.expires_at,
+    "cold_quiesce_successor_bridge_artifact_invalid",
+  );
+  if (
+    artifact?.id !== expected.artifactId ||
+    artifact?.name !== expected.artifactName ||
+    artifact?.size_in_bytes !== expected.artifactBytes ||
+    artifact?.digest !== expected.artifactDigest ||
+    artifact?.expired !== false ||
+    artifact?.created_at !== expected.artifactCreatedAt ||
+    artifact?.updated_at !== expected.artifactCreatedAt ||
+    artifact?.expires_at !== expected.artifactExpiresAt ||
+    artifact?.workflow_run?.id !== expected.ambiguousQuiesceRunId ||
+    artifact?.workflow_run?.head_branch !== "main" ||
+    artifact?.workflow_run?.head_sha !== expected.priorCandidateSha ||
+    artifactCreatedAt !== artifactUpdatedAt ||
+    artifactUpdatedAt > quiesce.run.updatedAt ||
+    artifactExpiresAt <= currentRun.startedAt
+  ) fail("cold_quiesce_successor_bridge_artifact_invalid");
+
+  return Object.freeze({
+    priorAmbiguousColdQuiesceCandidateSha: expected.priorCandidateSha,
+    priorAmbiguousColdQuiesceReviewedHeadSha: expected.priorReviewedHeadSha,
+    priorAmbiguousColdQuiesceTreeSha: expected.priorTreeSha,
+    priorAmbiguousColdQuiescePullRequestNumber:
+      expected.priorPullRequestNumber,
+    priorAmbiguousColdQuiesceCandidateMergedAt: expected.priorMergedAt,
+    priorAmbiguousColdQuiesceRunId: String(expected.ambiguousQuiesceRunId),
+    priorAmbiguousColdQuiesceRunCompletedAt:
+      new Date(quiesce.run.updatedAt).toISOString(),
+    coldQuiesceSuccessorGraceHours: expected.successorGraceHours,
+    coldQuiesceSuccessorDeadline: expected.successorDeadline,
+    coldQuiesceSuccessorWithinGraceExact: true,
+    priorColdPrepareRunId: String(expected.prepareRunId),
+    selectedColdPrepareRunId: String(currentPrepareRunId),
+    priorFailedReadOnlyColdQuiesceReconcileRunId:
+      String(expected.failedReadOnlyReconcileRunId),
+    priorAmbiguousColdQuiesceArtifactId: String(expected.artifactId),
+    priorAmbiguousColdQuiesceArtifactName: expected.artifactName,
+    priorAmbiguousColdQuiesceArtifactDigest: expected.artifactDigest,
+    coldQuiesceSuccessorDirectParentExact: true,
+    coldQuiesceSuccessorPriorHistoryExact: true,
+    coldQuiesceSuccessorAllRefsHistoryExact: true,
+    coldQuiesceSuccessorCurrentPrepareExact: true,
+    coldQuiesceSuccessorArtifactMetadataExact: true,
+    coldQuiesceSuccessorBridgeRequired: true,
   });
 }
 
@@ -3019,6 +3444,8 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
   const currentRunIdSource = input.env.GITHUB_RUN_ID ?? "";
   const productionPostgresSourceRepinReconcile =
     input.operation === PRODUCTION_POSTGRES_SOURCE_REPIN_RECONCILE_OPERATION;
+  const coldQuiesceSuccessor =
+    input.operation === COLD_QUIESCE_SUCCESSOR_OPERATION;
   if (
     !policy ||
     policy.repository !== REPOSITORY ||
@@ -3030,7 +3457,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     !RUN_ID.test(currentRunIdSource) ||
     token.length < 16 ||
     /[\r\n\0]/.test(token) ||
-    (productionPostgresSourceRepinReconcile
+    (productionPostgresSourceRepinReconcile || coldQuiesceSuccessor
       ? !SHA.test(input.priorCandidateSha ?? "")
       : input.priorCandidateSha != null)
   ) fail("environment_invalid");
@@ -3099,6 +3526,20 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     mergedAt: pull.mergedAt,
     mergedAtMs,
   };
+  const coldQuiesceSuccessorBridge = coldQuiesceSuccessor
+    ? await verifyColdQuiesceSuccessorBridge(
+      {
+        ...historyInput,
+        priorCandidateSha: input.priorCandidateSha,
+        priorRunId: input.priorRunId,
+        prepareRunId: input.prepareRunId,
+        currentMergedAtMs: mergedAtMs,
+      },
+      policy,
+      pull,
+      currentRun,
+    )
+    : null;
   const incidentCleanupCancelHistory =
     input.operation === INCIDENT_MASKED_CLEANUP_CANCEL_OPERATION
       ? await verifyIncidentMaskedCleanupCancelHistory(
@@ -3156,6 +3597,12 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       priorRunId: input.priorRunId,
       prepareRunId: input.prepareRunId,
     }, currentRun)
+    : coldQuiesceSuccessor
+    ? Object.freeze({
+      safePriorSkippedWriteRunIds: [],
+      safePriorReadOnlyRunIds: [],
+      reconciledPriorAmbiguousDisableRunId: null,
+    })
     : input.operation === "cold-recovery-reconcile-prepare" ||
         input.operation === "staging-worker-bootstrap-reconcile-restore" ||
         input.operation === "staging-worker-fence-reconcile-activate"
@@ -3207,6 +3654,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
   const stagingDeploymentRunIds =
     PROVIDER_OPERATIONS.has(input.operation) ||
       COLD_RECOVERY_OPERATIONS.has(input.operation) ||
+      coldQuiesceSuccessor ||
       RUNNER_LOSS_RECOVERY_OPERATIONS.has(input.operation) ||
       (input.operation === "runtime-variable" && input.target !== "production")
       ? await verifyStagingLifecycleNotSealed(historyInput)
@@ -3403,6 +3851,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     ...(cleanupRecoveryHistory ?? {}),
     ...(incidentCleanupCancelHistory ?? {}),
     ...(cleanupSuccessorCloseoutHistory ?? {}),
+    ...(coldQuiesceSuccessorBridge ?? {}),
     ...(stagingDeploymentRunIds === null
       ? {}
       : {

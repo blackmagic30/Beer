@@ -66,19 +66,56 @@ function policy(name: "permanent-staging" | "production"):
   return value;
 }
 
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [
+    key,
+    canonicalKeyOrder(record[key]),
+  ]));
+}
+
+function topologySha256(value: unknown): string {
+  return crypto.createHash("sha256").update(
+    `${JSON.stringify(canonicalKeyOrder(value), null, 2)}\n`,
+  ).digest("hex");
+}
+
 function providerObservation(
   exactPolicy: PermanentStagingAppDeploymentPolicy,
   candidateSha: string,
   deploymentId: string,
   snapshotId: string,
   status = "SUCCESS",
-  replicaCount = exactPolicy.target.allowedReplicaCounts[0],
+  legacyReplicaCount: number | null =
+    exactPolicy.fencedDeploymentContract
+      ? null
+      : exactPolicy.target.allowedReplicaCounts[0],
+  configuredReplicaCount = exactPolicy.target.allowedReplicaCounts[0],
+  configuredRegionsOverride?: readonly {
+    readonly region: string;
+    readonly numReplicas: number;
+  }[],
 ) {
+  const configuredRegions = configuredRegionsOverride ?? [
+      {
+        region: "asia-southeast1-eqsg3a",
+        numReplicas: configuredReplicaCount,
+      },
+      ...(exactPolicy.target.name === "permanent-staging"
+        ? [{ region: "europe-west4-drams3a", numReplicas: 0 }]
+        : []),
+    ];
+  const configuredTopologyBase = {
+    configuredReplicas: configuredReplicaCount,
+    configuredRegions,
+  };
   const snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot = {
     serviceInstanceId: INSTANCE_ID,
     serviceId: exactPolicy.target.serviceId,
     environmentId: exactPolicy.target.environmentId,
-    numReplicas: replicaCount,
+    numReplicas: legacyReplicaCount,
     latestDeployment: {
       id: deploymentId,
       status,
@@ -110,8 +147,60 @@ function providerObservation(
     collateralSha256: crypto.createHash("sha256").update(
       `${exactPolicy.target.environmentId}:collateral`,
     ).digest("hex"),
+    configuredTopology: {
+      ...configuredTopologyBase,
+      configuredTopologySha256: topologySha256(configuredTopologyBase),
+    },
     snapshot,
   };
+}
+
+function providerSnapshotResponse(
+  exactPolicy: PermanentStagingAppDeploymentPolicy,
+  environmentConfig: unknown,
+  legacyReplicaCount: number | null,
+): string {
+  const snapshot = providerObservation(
+    exactPolicy,
+    CANDIDATE_SHA,
+    DEPLOYMENT_AFTER,
+    SNAPSHOT_AFTER,
+    "SUCCESS",
+    legacyReplicaCount,
+  ).snapshot;
+  return JSON.stringify({
+    data: {
+      environment: {
+        id: exactPolicy.target.environmentId,
+        config: environmentConfig,
+      },
+      serviceInstance: {
+        id: snapshot.serviceInstanceId,
+        serviceId: snapshot.serviceId,
+        environmentId: snapshot.environmentId,
+        numReplicas: snapshot.numReplicas,
+        latestDeployment: snapshot.latestDeployment,
+        activeDeployments: snapshot.activeDeployments,
+        domains: {
+          serviceDomains: snapshot.domains.map(({ kind: _kind, ...domain }) =>
+            domain),
+          customDomains: [],
+        },
+      },
+      deployment: {
+        id: snapshot.deployment.id,
+        projectId: snapshot.deployment.projectId,
+        environmentId: snapshot.deployment.environmentId,
+        serviceId: snapshot.deployment.serviceId,
+        snapshotId: snapshot.deployment.snapshotId,
+        meta: {
+          commitHash: snapshot.deployment.commitHash,
+          imageDigest: snapshot.deployment.imageDigest,
+          patchId: snapshot.deployment.patchId,
+        },
+      },
+    },
+  });
 }
 
 function runtimeObservation(
@@ -160,6 +249,21 @@ function runtimeObservation(
   };
 }
 
+function runtimeResponseSource(
+  response: RailwayApplicationDeploymentAttestationRuntimeResponse,
+): string {
+  return JSON.stringify({
+    ok: true,
+    data: {
+      service: response.service,
+      status: response.status,
+      deployment: response.deployment,
+      automaticMaintenance: response.automaticMaintenance,
+      ...(response.route === "/health" ? {} : { dependencies: {} }),
+    },
+  });
+}
+
 function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   acknowledgementCode?: number | null;
   acknowledgementTimedOut?: boolean;
@@ -177,6 +281,14 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   preflightTargetExact?: boolean;
   preflightReplicaCount?: number;
   postflightReplicaCount?: number;
+  preflightLegacyReplicaCount?: number | null;
+  immediatePrewriteLegacyReplicaCount?: number | null;
+  postflightLegacyReplicaCount?: number | null;
+  immediatePrewriteConfiguredReplicaCount?: number;
+  postflightConfiguredReplicaCount?: number;
+  runtimeAbsentStableBeforeWrite?: boolean;
+  runtimeAbsentBeforeWrite?: boolean;
+  runtimeAbsentPostflight?: boolean;
   workerFenceDeploymentId?: string;
 } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(
@@ -202,6 +314,25 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
     ?? exactPolicy.target.allowedReplicaCounts[0];
   const postflightReplicaCount = options.postflightReplicaCount
     ?? preflightReplicaCount;
+  const defaultLegacyReplicaCount = exactPolicy.fencedDeploymentContract
+    ? null
+    : preflightReplicaCount;
+  const preflightLegacyReplicaCount = options.preflightLegacyReplicaCount
+    === undefined
+    ? defaultLegacyReplicaCount
+    : options.preflightLegacyReplicaCount;
+  const immediatePrewriteLegacyReplicaCount =
+    options.immediatePrewriteLegacyReplicaCount === undefined
+      ? preflightLegacyReplicaCount
+      : options.immediatePrewriteLegacyReplicaCount;
+  const postflightLegacyReplicaCount = options.postflightLegacyReplicaCount
+    === undefined
+    ? preflightLegacyReplicaCount
+    : options.postflightLegacyReplicaCount;
+  const immediatePrewriteConfiguredReplicaCount =
+    options.immediatePrewriteConfiguredReplicaCount ?? preflightReplicaCount;
+  const postflightConfiguredReplicaCount =
+    options.postflightConfiguredReplicaCount ?? postflightReplicaCount;
   const observations = [
     providerObservation(
       exactPolicy,
@@ -209,7 +340,17 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       DEPLOYMENT_BEFORE,
       SNAPSHOT_BEFORE,
       "SUCCESS",
+      preflightLegacyReplicaCount,
       preflightReplicaCount,
+    ),
+    providerObservation(
+      exactPolicy,
+      preflightCandidateSha,
+      DEPLOYMENT_BEFORE,
+      SNAPSHOT_BEFORE,
+      "SUCCESS",
+      immediatePrewriteLegacyReplicaCount,
+      immediatePrewriteConfiguredReplicaCount,
     ),
     providerObservation(
       exactPolicy,
@@ -221,7 +362,8 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
         ? SNAPSHOT_BEFORE
         : SNAPSHOT_AFTER,
       "SUCCESS",
-      preflightReplicaCount,
+      immediatePrewriteLegacyReplicaCount,
+      immediatePrewriteConfiguredReplicaCount,
     ),
     providerObservation(
       exactPolicy,
@@ -233,12 +375,16 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
         ? SNAPSHOT_BEFORE
         : SNAPSHOT_AFTER,
       "SUCCESS",
-      postflightReplicaCount,
+      postflightLegacyReplicaCount,
+      postflightConfiguredReplicaCount,
     ),
   ];
   let targetCalls = 0;
   let boundaryCalls = 0;
+  let runtimeAbsenceCalls = 0;
+  const callOrder: string[] = [];
   const runCommand = vi.fn(async () => {
+    callOrder.push("railway-up");
     if (options.commandThrows) throw new Error("injected_command_failure");
     return {
       code: options.acknowledgementCode ?? 0,
@@ -250,7 +396,7 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   });
   const cliAuthority = {
     executablePath: "/reviewed/railway-fd",
-    assertExact: vi.fn(),
+    assertExact: vi.fn(() => { callOrder.push("cli-reassert"); }),
     close: vi.fn(),
   };
   const sourceAuthority = {
@@ -261,7 +407,7 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
     snapshotPath,
     deploymentPath: snapshotPath,
     close: vi.fn(),
-    reassert: vi.fn(),
+    reassert: vi.fn(() => { callOrder.push("source-reassert"); }),
     cleanup: vi.fn(),
   };
   let nowTick = 0;
@@ -271,6 +417,7 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
     runCommand,
     cliAuthority,
     sourceAuthority,
+    callOrder,
     overrides: {
       cwd: process.cwd(),
       env: {
@@ -340,16 +487,24 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
             CANDIDATE_SHA,
             DEPLOYMENT_AFTER,
             SNAPSHOT_AFTER,
+            "SUCCESS",
+            1,
+            1,
+            [
+              { region: "asia-southeast1-eqsg3a", numReplicas: 1 },
+              { region: "europe-west4-drams3a", numReplicas: 0 },
+            ],
           );
         }
+        callOrder.push(`target-query-${targetCalls}`);
         const preflightCall = targetCalls === 0;
         if (preflightCall && options.preflightFailureCode) {
           throw new Error(options.preflightFailureCode);
         }
         const pollCall = preflightCandidateSha !== CANDIDATE_SHA
-          && targetCalls === 1;
+          && targetCalls === 2;
         const terminalCall = targetCalls >= (
-          preflightCandidateSha === CANDIDATE_SHA ? 1 : 2
+          preflightCandidateSha === CANDIDATE_SHA ? 2 : 3
         );
         const exactValue = options.terminalDeploymentDrifts && terminalCall
           ? providerObservation(
@@ -358,11 +513,12 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
             TERMINAL_DRIFT_DEPLOYMENT,
             TERMINAL_DRIFT_SNAPSHOT,
             "SUCCESS",
-            postflightReplicaCount,
+            postflightLegacyReplicaCount,
+            postflightConfiguredReplicaCount,
           )
           : observations[preflightCandidateSha === CANDIDATE_SHA
-            ? (targetCalls === 0 ? 0 : 2)
-            : Math.min(targetCalls, 2)]!;
+            ? (targetCalls === 0 ? 0 : targetCalls === 1 ? 1 : 3)
+            : Math.min(targetCalls, 3)]!;
         const value = preflightCall
           ? {
             ...exactValue,
@@ -375,13 +531,14 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
         if (options.pollThrows && pollCall) {
           throw new Error("injected_poll_observation_failure");
         }
-        if (targetCalls > 1 && options.reconciliationSucceeds === false) {
+        if (targetCalls > 2 && options.reconciliationSucceeds === false) {
           return providerObservation(
             exactPolicy,
             preflightCandidateSha,
             DEPLOYMENT_BEFORE,
             SNAPSHOT_BEFORE,
             "SUCCESS",
+            preflightLegacyReplicaCount,
             preflightReplicaCount,
           );
         }
@@ -405,6 +562,20 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
           candidateSha,
           deploymentId,
         );
+      }),
+      probeRuntimeAbsent: vi.fn(async () => {
+        callOrder.push(runtimeAbsenceCalls === 0
+          ? "stable-runtime-absence"
+          : "postflight-runtime-absence");
+        const absent = runtimeAbsenceCalls === 0
+          ? options.runtimeAbsentStableBeforeWrite !== false
+          : options.runtimeAbsentPostflight !== false;
+        runtimeAbsenceCalls += 1;
+        return absent;
+      }),
+      probeRuntimeAbsentImmediately: vi.fn(async () => {
+        callOrder.push("immediate-runtime-absence");
+        return options.runtimeAbsentBeforeWrite !== false;
       }),
       runCommand,
       writeOutput: (value: string) => output.push(value),
@@ -480,10 +651,10 @@ async function linuxPinnedCliFixture(
 describe("Railway application deployment executor", () => {
   it("pins active staging and production policies, source/config identities, and CLI bytes", () => {
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA).toBe(
-      "pintpath-railway-application-deployment-policy/v5",
+      "pintpath-railway-application-deployment-policy/v6",
     );
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA).toBe(
-      "pintpath-railway-application-deployment-executor/v5",
+      "pintpath-railway-application-deployment-executor/v6",
     );
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE).toBe(
       "GITHUB_ENVIRONMENT_PROTECTED",
@@ -511,10 +682,35 @@ describe("Railway application deployment executor", () => {
     expect(fencedStaging?.postflightContract.automaticMaintenanceEnabled).toBe(false);
     expect(fencedStaging?.postflightContract.runtimeProbeRequired).toBe(false);
     expect(fencedStaging?.target.allowedReplicaCounts).toEqual([0]);
+    expect(fencedStaging?.configuredTopologyContract).toEqual({
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      configuredReplicaCounts: [0],
+      allowedConfiguredRegions: [
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ],
+      solePositiveRegion: null,
+      zeroOnlyRegions: [
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ],
+      legacyReplicaCountRole: "nullable-observation-only",
+      immediateProviderReassertionRequired: true,
+      postflightProviderReassertionRequired: true,
+    });
     expect(staging.target.name).toBe("permanent-staging");
     expect(staging.postflightContract.automaticMaintenanceEnabled).toBe(true);
     expect(staging.postflightContract.runtimeProbeRequired).toBe(true);
     expect(staging.target.allowedReplicaCounts).toEqual([1]);
+    expect(staging.configuredTopologyContract).toMatchObject({
+      configuredReplicaCounts: [1],
+      allowedConfiguredRegions: [
+        "asia-southeast1-eqsg3a",
+        "europe-west4-drams3a",
+      ],
+      solePositiveRegion: "asia-southeast1-eqsg3a",
+      zeroOnlyRegions: ["europe-west4-drams3a"],
+    });
     expect(staging.postflightContract.replicaCountMustMatchPreflight).toBe(true);
     expect(staging.writeContract.topologyMutationAllowed).toBe(false);
     expect(staging.prerequisite).toBeNull();
@@ -529,6 +725,12 @@ describe("Railway application deployment executor", () => {
     });
     expect(production.target.name).toBe("production");
     expect(production.target.allowedReplicaCounts).toEqual([1, 2]);
+    expect(production.configuredTopologyContract).toMatchObject({
+      configuredReplicaCounts: [1, 2],
+      allowedConfiguredRegions: ["asia-southeast1-eqsg3a"],
+      solePositiveRegion: "asia-southeast1-eqsg3a",
+      zeroOnlyRegions: [],
+    });
     expect(production.postflightContract.replicaCountMustMatchPreflight).toBe(true);
     expect(production.writeContract.topologyMutationAllowed).toBe(false);
     expect(production.prerequisite?.sameCandidateRequired).toBe(true);
@@ -541,6 +743,10 @@ describe("Railway application deployment executor", () => {
       allChecksPassRequired: true,
     });
     expect(production.target.environmentId).not.toBe(staging.target.environmentId);
+    expect(permanentStagingAppDeploymentExecutorInternals
+      .RAILWAY_APPLICATION_DEPLOYMENT_SNAPSHOT_QUERY).toContain(
+        "config(decryptVariables: false)",
+      );
   });
 
   it("rejects policy byte drift, reordered fields, extra fields, and target substitution", () => {
@@ -606,6 +812,85 @@ describe("Railway application deployment executor", () => {
     }, null, 2)}\n`)).toBeNull();
   });
 
+  it("requires an explicit configured topology while retaining legacy null", () => {
+    const exactPolicy = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
+    if (!exactPolicy) throw new Error("fenced_fixture_policy_invalid");
+    const config = (multiRegionConfig: unknown) => ({
+      services: {
+        [exactPolicy.target.serviceId]: {
+          deploy: { multiRegionConfig },
+        },
+      },
+    });
+    const parsed = permanentStagingAppDeploymentExecutorInternals
+      .parseProviderSnapshotWithConfiguredTopology(
+        providerSnapshotResponse(exactPolicy, config({
+          "asia-southeast1-eqsg3a": { numReplicas: 0 },
+          "europe-west4-drams3a": { numReplicas: 0 },
+        }), null),
+        exactPolicy,
+        exactPolicy.target.environmentId,
+      );
+
+    expect(parsed).toMatchObject({
+      snapshot: { numReplicas: null },
+      configuredTopology: {
+        configuredReplicas: 0,
+        configuredRegions: [
+          { region: "asia-southeast1-eqsg3a", numReplicas: 0 },
+          { region: "europe-west4-drams3a", numReplicas: 0 },
+        ],
+      },
+    });
+    expect(permanentStagingAppDeploymentExecutorInternals
+      .parseProviderSnapshotWithConfiguredTopology(
+        providerSnapshotResponse(exactPolicy, config(null), null),
+        exactPolicy,
+        exactPolicy.target.environmentId,
+      )).toBeNull();
+    expect(permanentStagingAppDeploymentExecutorInternals
+      .parseProviderSnapshotWithConfiguredTopology(
+        providerSnapshotResponse(exactPolicy, {}, null),
+        exactPolicy,
+        exactPolicy.target.environmentId,
+      )).toBeNull();
+  });
+
+  it("proves fenced runtime absence only with repeated exact 404 responses", async () => {
+    const sleep = vi.fn(async () => undefined);
+    const absentFetch = vi.fn(async () => new Response(null, { status: 404 }));
+
+    await expect(permanentStagingAppDeploymentExecutorInternals
+      .defaultProbeRuntimeAbsent(
+        absentFetch as unknown as typeof fetch,
+        sleep,
+        "https://beer-staging.up.railway.app",
+      )).resolves.toBe(true);
+    expect(absentFetch).toHaveBeenCalledTimes(9);
+    expect(sleep).toHaveBeenCalledTimes(2);
+
+    const liveFetch = vi.fn(async () => new Response(null, { status: 200 }));
+    await expect(permanentStagingAppDeploymentExecutorInternals
+      .defaultProbeRuntimeAbsent(
+        liveFetch as unknown as typeof fetch,
+        sleep,
+        "https://beer-staging.up.railway.app",
+      )).resolves.toBe(false);
+    expect(liveFetch).toHaveBeenCalledTimes(1);
+
+    const uncertainFetch = vi.fn(async () => {
+      throw new Error("connection refused");
+    });
+    await expect(permanentStagingAppDeploymentExecutorInternals
+      .defaultProbeRuntimeAbsent(
+        uncertainFetch as unknown as typeof fetch,
+        sleep,
+        "https://beer-staging.up.railway.app",
+      )).resolves.toBe(false);
+  });
+
   it("performs one upload and emits SHA-bound route evidence after reconciliation", async () => {
     const exactPolicy = policy("permanent-staging");
     const fixture = harness(exactPolicy);
@@ -619,11 +904,11 @@ describe("Railway application deployment executor", () => {
     expect(fixture.runCommand.mock.calls[0]![0]).toBe(
       fixture.cliAuthority.executablePath,
     );
-    expect(fixture.cliAuthority.assertExact).toHaveBeenCalledTimes(2);
+    expect(fixture.cliAuthority.assertExact).toHaveBeenCalledTimes(3);
     expect(fixture.cliAuthority.close).toHaveBeenCalledTimes(1);
-    expect(fixture.sourceAuthority.reassert).toHaveBeenCalledTimes(2);
+    expect(fixture.sourceAuthority.reassert).toHaveBeenCalledTimes(3);
     expect(fixture.sourceAuthority.close).toHaveBeenCalledTimes(1);
-    expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(3);
+    expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(4);
     const argv = fixture.runCommand.mock.calls[0]![1] as readonly string[];
     expect(argv).toEqual([
       "up",
@@ -691,6 +976,19 @@ describe("Railway application deployment executor", () => {
     expect(code).toBe(0);
     expect(fixture.runCommand).toHaveBeenCalledTimes(1);
     expect(fixture.overrides.probeRuntime).not.toHaveBeenCalled();
+    expect(fixture.overrides.probeRuntimeAbsent).toHaveBeenCalledTimes(2);
+    expect(fixture.overrides.probeRuntimeAbsentImmediately).toHaveBeenCalledOnce();
+    const stableAbsence = fixture.callOrder.indexOf("stable-runtime-absence");
+    const finalTopology = fixture.callOrder.indexOf("target-query-1");
+    const upload = fixture.callOrder.indexOf("railway-up");
+    expect(stableAbsence).toBeGreaterThanOrEqual(0);
+    expect(finalTopology).toBeGreaterThan(stableAbsence);
+    expect(fixture.callOrder.slice(upload - 3, upload + 1)).toEqual([
+      "immediate-runtime-absence",
+      "source-reassert",
+      "cli-reassert",
+      "railway-up",
+    ]);
     const receipt = JSON.parse(fs.readFileSync(
       path.join(fixture.evidenceDir, "deployment-receipt.json"),
       "utf8",
@@ -700,6 +998,16 @@ describe("Railway application deployment executor", () => {
       outcome: "deployed",
       candidateSha: CANDIDATE_SHA,
       replicaCounts: { before: 0, after: 0 },
+      legacyReplicaCounts: {
+        before: null,
+        immediatelyBeforeWrite: null,
+        after: null,
+      },
+      runtimeAbsence: {
+        required: true,
+        immediatelyBeforeWrite: true,
+        postflight: true,
+      },
       runtimeResponseSha256s: {
         health: null,
         startup: null,
@@ -711,7 +1019,145 @@ describe("Railway application deployment executor", () => {
         runtimeHealthExact: true,
         runtimeStartupExact: true,
         runtimeReadinessExact: true,
+        configuredTopologyExact: true,
+        immediatePrewriteExact: true,
+        fencedRuntimeAbsentBeforeWrite: true,
+        fencedRuntimeAbsentPostflight: true,
         terminalEvidenceExact: true,
+      },
+    });
+  });
+
+  it("blocks the fenced upload when configured topology drifts immediately before write", async () => {
+    const exactPolicy = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
+    if (!exactPolicy) throw new Error("fenced_fixture_policy_invalid");
+    const fixture = harness(exactPolicy, {
+      immediatePrewriteConfiguredReplicaCount: 1,
+    });
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "immediate_prewrite_failed",
+      writeAttempts: 0,
+      configuredTopology: {
+        before: { configuredReplicas: 0 },
+        immediatelyBeforeWrite: { configuredReplicas: 1 },
+      },
+      checks: {
+        fencedRuntimeAbsentBeforeWrite: false,
+        immediatePrewriteExact: false,
+      },
+    });
+  });
+
+  it("blocks the fenced upload unless runtime absence is proven before write", async () => {
+    const exactPolicy = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
+    if (!exactPolicy) throw new Error("fenced_fixture_policy_invalid");
+    const fixture = harness(exactPolicy, { runtimeAbsentBeforeWrite: false });
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "fenced_runtime_present",
+      writeAttempts: 0,
+      runtimeAbsence: {
+        required: true,
+        immediatelyBeforeWrite: false,
+      },
+      checks: {
+        fencedRuntimeAbsentBeforeWrite: false,
+        immediatePrewriteExact: true,
+      },
+    });
+  });
+
+  it("keeps a fenced upload non-green when configured topology drifts postflight", async () => {
+    const exactPolicy = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
+    if (!exactPolicy) throw new Error("fenced_fixture_policy_invalid");
+    const fixture = harness(exactPolicy, { postflightConfiguredReplicaCount: 1 });
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      writeAttempts: 1,
+      configuredTopology: {
+        before: { configuredReplicas: 0 },
+        after: { configuredReplicas: 1 },
+      },
+      checks: {
+        topologyPreserved: false,
+        targetPostflightExact: false,
+      },
+    });
+  });
+
+  it("keeps a fenced upload non-green unless runtime remains absent postflight", async () => {
+    const exactPolicy = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
+    if (!exactPolicy) throw new Error("fenced_fixture_policy_invalid");
+    const fixture = harness(exactPolicy, { runtimeAbsentPostflight: false });
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "mutation_uncertain",
+      writeAttempts: 1,
+      runtimeAbsence: {
+        required: true,
+        immediatelyBeforeWrite: true,
+        postflight: false,
+      },
+      checks: {
+        fencedRuntimeAbsentBeforeWrite: true,
+        fencedRuntimeAbsentPostflight: false,
+        targetPostflightExact: false,
       },
     });
   });
@@ -738,14 +1184,19 @@ describe("Railway application deployment executor", () => {
       [1, 2],
       [replicaCount],
       [replicaCount],
+      [replicaCount],
     ]);
     const intent = JSON.parse(fs.readFileSync(
       path.join(fixture.evidenceDir, "deployment-intent.json"),
       "utf8",
     ));
     expect(intent).toMatchObject({
-      schemaVersion: "pintpath-railway-application-deployment-intent/v2",
+      schemaVersion: "pintpath-railway-application-deployment-intent/v3",
       preservedReplicaCount: replicaCount,
+      configuredTopology: {
+        authoritativeSource: "environment.config(decryptVariables:false)",
+        immediatelyBeforeWriteRequired: true,
+      },
       workerFencePrerequisite: {
         runId: PRODUCTION_FENCE_RUN_ID,
         verificationSha256: crypto.createHash("sha256").update("{}\n").digest("hex"),
@@ -773,6 +1224,125 @@ describe("Railway application deployment executor", () => {
       },
       workerFencePrerequisite: {
         runId: PRODUCTION_FENCE_RUN_ID,
+      },
+    });
+  });
+
+  it("uses the observed environment topology contract for the production staging prerequisite", () => {
+    const production = policy("production");
+    const staging = policy("permanent-staging");
+    const stagingTopology = providerObservation(
+      production,
+      CANDIDATE_SHA,
+      DEPLOYMENT_AFTER,
+      SNAPSHOT_AFTER,
+      "SUCCESS",
+      null,
+      1,
+      [
+        { region: "asia-southeast1-eqsg3a", numReplicas: 1 },
+        { region: "europe-west4-drams3a", numReplicas: 0 },
+      ],
+    ).configuredTopology;
+
+    expect(permanentStagingAppDeploymentExecutorInternals
+      .configuredTopologyAllowed(production, stagingTopology, [1])).toBe(false);
+    expect(permanentStagingAppDeploymentExecutorInternals
+      .configuredTopologyAllowed(
+        production,
+        stagingTopology,
+        [1],
+        staging.target.environmentId,
+      )).toBe(true);
+  });
+
+  it("uses active-staging runtime semantics for the production prerequisite", async () => {
+    const production = policy("production");
+    const staging = policy("permanent-staging");
+    const stagingRuntime = runtimeObservation(
+      staging,
+      CANDIDATE_SHA,
+      DEPLOYMENT_AFTER,
+    );
+    const exactResponses = [
+      stagingRuntime.health,
+      stagingRuntime.startup,
+      stagingRuntime.ready,
+    ];
+    const exactFetch = vi.fn(async () => new Response(
+      runtimeResponseSource(exactResponses.shift()!),
+      { status: 200 },
+    ));
+
+    await expect(permanentStagingAppDeploymentExecutorInternals
+      .defaultProbeRuntime(
+        exactFetch as unknown as typeof fetch,
+        staging.target.publicOrigin,
+        CANDIDATE_SHA,
+        production,
+        staging.target.environmentId,
+        DEPLOYMENT_AFTER,
+      )).resolves.toMatchObject({
+        health: { automaticMaintenance: { enabled: true } },
+        startup: { automaticMaintenance: { enabled: true } },
+        ready: { automaticMaintenance: { enabled: true } },
+      });
+
+    const disabledRuntime = runtimeObservation(
+      production,
+      CANDIDATE_SHA,
+      DEPLOYMENT_AFTER,
+    ).health;
+    const disabledForStaging = {
+      ...disabledRuntime,
+      deployment: {
+        ...disabledRuntime.deployment,
+        environmentIdSha256: railwayDeploymentIdentityIdSha256(
+          "environment",
+          staging.target.environmentId,
+        )!,
+      },
+    };
+    const disabledFetch = vi.fn(async () => new Response(
+      runtimeResponseSource(disabledForStaging),
+      { status: 200 },
+    ));
+    await expect(permanentStagingAppDeploymentExecutorInternals
+      .defaultProbeRuntime(
+        disabledFetch as unknown as typeof fetch,
+        staging.target.publicOrigin,
+        CANDIDATE_SHA,
+        production,
+        staging.target.environmentId,
+        DEPLOYMENT_AFTER,
+      )).rejects.toThrow("runtime_probe_failed");
+  });
+
+  it("treats legacy replica counts as nullable observation on healthy paths", async () => {
+    const exactPolicy = policy("permanent-staging");
+    const fixture = harness(exactPolicy, {
+      preflightLegacyReplicaCount: null,
+      immediatePrewriteLegacyReplicaCount: 50,
+      postflightLegacyReplicaCount: 0,
+    });
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(0);
+
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "deployed",
+      replicaCounts: { before: 1, after: 1 },
+      legacyReplicaCounts: {
+        before: null,
+        immediatelyBeforeWrite: 50,
+        after: 0,
       },
     });
   });
@@ -1065,7 +1635,7 @@ describe("Railway application deployment executor", () => {
     ], fixture.overrides)).resolves.toBe(1);
     expect(fixture.runCommand).toHaveBeenCalledTimes(1);
     expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(
-      options.commandThrows ? 2 : 3,
+      options.commandThrows ? 3 : 4,
     );
     const receipt = JSON.parse(fs.readFileSync(
       path.join(fixture.evidenceDir, "deployment-receipt.json"),
@@ -1249,6 +1819,12 @@ describe("Railway application deployment executor", () => {
           DEPLOYMENT_AFTER,
           SNAPSHOT_AFTER,
         ).snapshot,
+        providerObservation(
+          exactPolicy,
+          CANDIDATE_SHA,
+          DEPLOYMENT_AFTER,
+          SNAPSHOT_AFTER,
+        ).configuredTopology,
         parsedGitSource,
       )).toMatchObject({ gitAutodeployAbsent: false });
     const paginated = collateral(null).replace(
@@ -1599,7 +2175,7 @@ describe("Railway application deployment executor", () => {
 
       expect(providerCommand).toHaveBeenCalledTimes(1);
       expect(unsafeProviderWrites).toBe(0);
-      expect(sourceAuthority.reassert).toHaveBeenCalledTimes(2);
+      expect(sourceAuthority.reassert).toHaveBeenCalledTimes(3);
       expect(sourceAuthority.close).toHaveBeenCalledTimes(1);
       expect(fs.existsSync(heldRoot.authorityPath)).toBe(false);
       const receipt = JSON.parse(fs.readFileSync(

@@ -149,7 +149,7 @@
       "workflowName": "Deploy Pint Path permanent staging",
       "runNamePrefix": "Deploy permanent staging | fenced | ",
       "artifactNamePrefix": "pintpath-permanent-staging-fenced-deployment-",
-      "receiptSchemaVersion": "pintpath-railway-application-deployment-executor/v5",
+      "receiptSchemaVersion": "pintpath-railway-application-deployment-executor/v6",
       "receiptOperation": "pintpath-railway-application-source-upload",
       "receiptExecutorState": "GITHUB_ENVIRONMENT_PROTECTED",
       "requiredReplicaCount": 0,

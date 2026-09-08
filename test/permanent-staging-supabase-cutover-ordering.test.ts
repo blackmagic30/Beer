@@ -34,14 +34,14 @@ describe("permanent-staging Supabase cutover ordering", () => {
       [
         "perform at most one all-or-nothing",
         "After that exact atomic replacement completes, deploy",
-        "Only then approve the protected legacy-cutover workflow",
+        "Only then dispatch the protected legacy-cutover workflow",
       ],
     ],
     [
       "docs/protected-provider-mutation-operations.md",
       [
         "one atomic skipDeploys=true mutation",
-        "Then run staging worker activate, which independently authenticates the full prepare→quiesce→ fenced-upload→restore chain",
+        "Then run staging worker activate with the exact venue_directory_run_id, which independently authenticates the full prepare→quiesce→fenced-upload→venue-directory→restore chain",
         "Run the active deployment phase once at one replica and require both its activation terminal and sibling full-chain prerequisite verification",
         "Only then run Permanent staging Supabase legacy-key cutover",
       ],
@@ -49,7 +49,7 @@ describe("permanent-staging Supabase cutover ordering", () => {
     [
       "docs/full-scale-postgres-migration-runbook.md",
       [
-        "Supabase publishable/secret-key replacement under its own approval",
+        "Supabase publishable/secret-key replacement under its own signed or automated authority",
         "Then prepare and quiesce the worker fence",
         "apply and prove the staging schema/venue refresh",
         "retain the active closeout artifact",
@@ -101,7 +101,7 @@ describe("permanent-staging Supabase cutover ordering", () => {
       "docs/production-launch-runbook.md",
       "### 16.5 Deploy the exact protected main build with enrolment disabled",
       [
-        "While that healthy legacy deployment remains unchanged",
+        "While the selected baseline remains unchanged",
         "skipDeploys=true",
         "with staging prepare",
         "with quiesce",

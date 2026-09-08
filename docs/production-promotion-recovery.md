@@ -1,11 +1,13 @@
 # Protected production promotion and recovery authority
 
-Status: **implementation complete; live authority absent; launch remains
-NO-GO.** The repository contains the executable activation and attestation
-boundaries, but this change did not call Railway, Supabase, AWS, GitHub
-provider APIs, or run a production recovery. Do not claim success until an
-owner-authorized, candidate-bound live run produces authentic provider
-receipts and the later protected attestation passes.
+Status: **workflow core exists; authoritative exact-run eligibility,
+controller evidence, and live authority are absent; launch remains hard
+NO-GO.** The current data-bearing jobs still use static base labels. This
+change did not call Railway, Supabase, AWS, GitHub provider APIs, or run a
+production recovery. Do not claim success until a separately reviewed
+exact-run successor exists and an owner-authorized, candidate-bound live run
+produces authentic provider receipts and the later protected attestation
+passes.
 
 The controlling policy is
 `ops/railway/production-promotion-recovery-policy.json`, schema
@@ -103,16 +105,31 @@ Teardown authorities are one-use records that bind the exact activation
 `GITHUB_RUN_ID`, run attempt `1`, candidate, reviewed disposable Railway and
 Supabase identities, complete signed Railway workspace identity/project
 inventory, and the SHA-256 of a separate signed emergency-cleanup arm. They
-cannot be prepared before GitHub assigns the run ID. Use this order:
+cannot be prepared before GitHub assigns the run ID.
+
+Configure both `production-promotion-recovery-activation` and
+`production-promotion-recovery-cleanup` with zero required reviewers, zero wait
+timers, and deployment branches and tags restricted to protected `main` only.
+GitHub Environment entry scopes credentials; it is not a human approval gate.
+Distinct cryptographic signer/reviewer identities, Ed25519 verification, exact
+target inventories, the singleton arm, and signed change references remain
+mandatory.
+
+The checked-in activation workflow currently selects only static production
+and disposable base labels. It does not implement an authoritative exact-run
+hold and cannot exclude a standing matching runner. This is a hard NO-GO: do
+not dispatch until a separately reviewed successor supplies matching workflow
+labels, a controller, negative/positive tests, private-network hosts, and
+authentic exact-run evidence. Do not use human Environment approval as a
+workaround. Once that successor exists, preserve this order:
 
 1. Provision and independently inventory the exact disposable Railway project,
    its sole environment, the disposable Supabase project, and all expected
    target hashes. Prepare both JIT runners but do not expose production
    credentials to the disposable network.
 2. Dispatch activation with confirmation
-   `ACTIVATE_PRODUCTION_PROMOTION_RECOVERY`. Leave the
-   `production-promotion-recovery-activation` environment approval pending and
-   record the assigned `GITHUB_RUN_ID` from the gated run.
+   `ACTIVATE_PRODUCTION_PROMOTION_RECOVERY` only through that exact-run
+   successor and record its assigned `GITHUB_RUN_ID`.
 3. Create and sign the emergency-cleanup arm for that exact run ID, candidate,
    Railway project/environment/workspace inventories, Supabase target, and the
    two pinned cleanup-policy hashes. Install its secret bytes/key in both the
@@ -122,8 +139,8 @@ promotion recovery emergency cleanup arm` with `operation=initial`; it
    `refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state`
    only if no OPEN state exists. The non-force push is a compare-and-swap:
    concurrent or second arms fail mechanically. Capture verifies the exact
-   OPEN state head before mutation. Do not approve it until that transition is
-   complete.
+   OPEN state head before mutation. Do not make the exact capture job eligible
+   until that transition is complete.
 4. Authorized reviewers create and sign the Railway and Supabase teardown
    authorities for that exact run ID, attempt `1`, candidate, target inventory,
    and arm-authority SHA-256. Independently verify their bytes and public-key
@@ -132,9 +149,9 @@ promotion recovery emergency cleanup arm` with `operation=initial`; it
    `production-promotion-recovery-cleanup`. This environment is non-interactive
    during cleanup: no approval prompt may strand disposable resources after a
    cancellation or failure.
-6. Only after the arm, both per-run authorities, and both read/delete credential pairs
-   are installed and independently checked may the reviewer approve
-   `production-capture`.
+6. Only after the arm, both per-run authorities, and both read/delete
+   credential pairs are installed and independently checked may the
+   exact-run controller make `production-capture` eligible.
 7. Follow the run through both absence terminals. The controller changes the
    state to DISARMED only after both fresh provider absences are independently
    reconciled. Revoke the one-use authorities/tokens only after that terminal

@@ -28,8 +28,11 @@ Postgres-HA PITR enable/verification, and exact disposable-restore teardown.
 The exact production `pintpath.au` custom-domain close/open pair also has
 separate protected one-operation executors.
 Those repository paths are implementation-complete but do not replace their
-protected-environment approvals, exact live IDs and credentials, provider
-receipts, independent verification, or the remaining recovery drill. Every
+environment-scoped credentials, automated authorities, exact live IDs,
+provider receipts, independent cryptographic verification, or the remaining
+recovery drill. All unattended operator GitHub Environments use zero required
+reviewers, zero wait timers, and protected `main` only; separate signed
+reviewer/signer and change-reference authorities remain mandatory. Every
 other route/domain mutation, arbitrary service/resource/volume change, Railway-native
 redeploy/rollback, and every unlisted write remain blocked.
 
@@ -81,7 +84,8 @@ redeploy/rollback, and every unlisted write remain blocked.
   proof before the protected canary-B, legacy-disable, and old-key-denial
   ceremony. The cutover workflow requires the exact replacement and later
   deployment run IDs before secret custody. These paths still require live
-  credentials, approvals, and receipts. Production operational-copy
+  environment-scoped credentials, automated/signed authorities, and receipts.
+  Production operational-copy
   credentials and bucket configuration are prohibited in permanent staging. No
   live write rehearsal may use production as a substitute.
 - **Deployment evidence foundation:** The reviewed build now emits only
@@ -97,7 +101,7 @@ redeploy/rollback, and every unlisted write remain blocked.
   source-upload path with immutable target/CLI/source pins, one write attempt,
   read-only uncertainty reconciliation, and unconditional provider/boundary
   postflight. It remains safely inactive without the protected GitHub
-  environment approval and target-scoped secrets. No authentic deployment
+  Environment's target-scoped secrets and automated authority. No authentic deployment
   receipt exists yet, so the live deployment blocker remains open.
 - **Keychain custody checkpoint:** The operator terminal capture showed only
   the pinned Railway project and permanent-staging environment UUIDs; it did

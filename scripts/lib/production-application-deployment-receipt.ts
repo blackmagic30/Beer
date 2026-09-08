@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA } from
   "./permanent-staging-app-deployment-executor.js";
 
@@ -22,6 +24,20 @@ function exact(value: unknown, keys: readonly string[]): value is Json {
     && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
 }
 
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (!object(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [
+    key,
+    canonicalKeyOrder(value[key]),
+  ]));
+}
+
+function recursivelyEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalKeyOrder(left))
+    === JSON.stringify(canonicalKeyOrder(right));
+}
+
 function timestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const milliseconds = Date.parse(value);
@@ -30,6 +46,50 @@ function timestamp(value: unknown): value is string {
 
 function sha256(value: unknown): value is string {
   return typeof value === "string" && SHA256.test(value);
+}
+
+function nullableReplicaCount(value: unknown): boolean {
+  return value === null || (
+    typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= 50
+  );
+}
+
+function productionTopologyEvidence(value: unknown): value is Json {
+  if (!exact(value, [
+    "configuredReplicas",
+    "configuredRegions",
+    "configuredTopologySha256",
+  ])
+    || (value.configuredReplicas !== 1 && value.configuredReplicas !== 2)
+    || !Array.isArray(value.configuredRegions)
+    || value.configuredRegions.length !== 1
+    || !exact(value.configuredRegions[0], ["region", "numReplicas"])
+    || value.configuredRegions[0].region !== "asia-southeast1-eqsg3a"
+    || value.configuredRegions[0].numReplicas !== value.configuredReplicas
+    || !sha256(value.configuredTopologySha256)) return false;
+  return crypto.createHash("sha256").update(`${JSON.stringify(canonicalKeyOrder({
+    configuredReplicas: value.configuredReplicas,
+    configuredRegions: value.configuredRegions,
+  }), null, 2)}\n`).digest("hex") === value.configuredTopologySha256;
+}
+
+function productionTopologyChain(value: unknown): boolean {
+  if (!exact(value, [
+    "authoritativeSource",
+    "before",
+    "immediatelyBeforeWrite",
+    "after",
+  ])
+    || value.authoritativeSource
+      !== "environment.config(decryptVariables:false)"
+    || !productionTopologyEvidence(value.before)
+    || !productionTopologyEvidence(value.immediatelyBeforeWrite)
+    || !productionTopologyEvidence(value.after)) return false;
+  return recursivelyEqual(value.before, value.immediatelyBeforeWrite)
+    && recursivelyEqual(value.before, value.after);
 }
 
 export function parseProductionApplicationDeploymentReceipt(
@@ -42,6 +102,7 @@ export function parseProductionApplicationDeploymentReceipt(
     "acknowledgement", "previousDeploymentIdSha256", "deploymentIdSha256",
     "intentSha256", "cliOutputSha256", "boundaryPreflightSha256",
     "boundaryPostflightSha256", "collateralSnapshotSha256s", "replicaCounts",
+    "legacyReplicaCounts", "configuredTopology", "runtimeAbsence",
     "runtimeResponseSha256s", "workerFencePrerequisite", "checks",
   ])
     || value.schemaVersion !== PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA
@@ -71,9 +132,28 @@ export function parseProductionApplicationDeploymentReceipt(
     || !exact(value.collateralSnapshotSha256s, ["before", "after"])
     || !sha256(value.collateralSnapshotSha256s.before)
     || !sha256(value.collateralSnapshotSha256s.after)
+    || value.collateralSnapshotSha256s.after
+      !== value.collateralSnapshotSha256s.before
     || !exact(value.replicaCounts, ["before", "after"])
     || (value.replicaCounts.after !== 1 && value.replicaCounts.after !== 2)
     || value.replicaCounts.before !== value.replicaCounts.after
+    || !exact(value.legacyReplicaCounts, [
+      "before", "immediatelyBeforeWrite", "after",
+    ])
+    || !nullableReplicaCount(value.legacyReplicaCounts.before)
+    || !nullableReplicaCount(value.legacyReplicaCounts.immediatelyBeforeWrite)
+    || !nullableReplicaCount(value.legacyReplicaCounts.after)
+    || !productionTopologyChain(value.configuredTopology)
+    || !object(value.configuredTopology)
+    || !object(value.configuredTopology.after)
+    || value.configuredTopology.after.configuredReplicas
+      !== value.replicaCounts.after
+    || !exact(value.runtimeAbsence, [
+      "required", "immediatelyBeforeWrite", "postflight",
+    ])
+    || value.runtimeAbsence.required !== false
+    || value.runtimeAbsence.immediatelyBeforeWrite !== null
+    || value.runtimeAbsence.postflight !== null
     || !exact(value.runtimeResponseSha256s, ["health", "startup", "ready"])
     || !sha256(value.runtimeResponseSha256s.health)
     || !sha256(value.runtimeResponseSha256s.startup)
@@ -93,7 +173,9 @@ export function parseProductionApplicationDeploymentReceipt(
       "policyExact", "githubMainExact", "sourceAuthorityExact", "cliExact",
       "writeTokenScopeExact", "costPolicyExact", "prerequisiteExact",
       "workerFencePrerequisiteExact", "workerFenceDeploymentContinuityExact",
-      "boundaryPreflightExact", "targetPreflightExact", "gitAutodeployAbsent",
+      "boundaryPreflightExact", "targetPreflightExact", "configuredTopologyExact",
+      "immediatePrewriteExact", "fencedRuntimeAbsentBeforeWrite",
+      "fencedRuntimeAbsentPostflight", "gitAutodeployAbsent",
       "collateralInventoryExact", "durableIntentExact", "sourceReasserted",
       "writeAttemptedAtMostOnce", "targetPostflightAttempted", "targetPostflightExact",
       "reconciliationCompleted", "topologyPreserved", "deploymentExact",
@@ -103,7 +185,9 @@ export function parseProductionApplicationDeploymentReceipt(
     || Object.values(value.checks).some((check) => check !== true)
     || (value.outcome === "already_deployed"
       ? value.writeAttempts !== 0 || value.acknowledgement !== "not_attempted"
-      : value.writeAttempts !== 1)
+        || value.deploymentIdSha256 !== value.previousDeploymentIdSha256
+      : value.writeAttempts !== 1
+        || value.deploymentIdSha256 === value.previousDeploymentIdSha256)
     || (value.outcome === "deployed" && value.acknowledgement !== "received")
     || (value.outcome === "reconciled_success"
       && value.acknowledgement !== "missing_or_failed")) return null;

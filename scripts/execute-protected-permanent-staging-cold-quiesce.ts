@@ -7,11 +7,13 @@ import {
   canonical,
   COLD_RECOVERY_LOCK,
   COLD_RECOVERY_POLICY_SHA256,
+  COLD_QUIESCE_SUCCESSOR_BINDING,
   coldIdentityCanonical,
   defaultBoundaryCheck,
   fullStateCanonical,
   maintenanceRowsAfterExact,
   nonMaintenanceRows,
+  parseColdQuiesceSuccessorBinding,
   policyExact,
   probeRuntimeAbsent,
   railwayCall,
@@ -28,6 +30,7 @@ import {
   type BoundaryEvidence,
   type ColdRecoveryState,
   type CommandResult,
+  type ColdQuiesceSuccessorBinding,
 } from "./lib/permanent-staging-cold-recovery.js";
 import {
   parseStagingWorkerBootstrapPrerequisitesVerification,
@@ -36,11 +39,14 @@ import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
 
 export const COLD_QUIESCE_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cold-quiesce/v2" as const;
+  "pintpath-permanent-staging-cold-quiesce/v4" as const;
 
 interface Checks {
   policyExact: boolean;
   githubAuthorityExact: boolean;
+  successorBridgeExact: boolean;
+  successorBridgeTopologyExact: boolean;
+  successorBridgePrewriteReasserted: boolean;
   preparePrerequisiteExact: boolean;
   tokenScopesExact: boolean;
   cliExact: boolean;
@@ -56,6 +62,7 @@ interface Checks {
   acknowledgementExact: boolean;
   postflightAttempted: boolean;
   exactZeroStateAfter: boolean;
+  configuredTopologyTransitionExact: boolean;
   maintenanceRowsAfterExact: boolean;
   deploymentSourceAndTopologyUnchanged: boolean;
   collateralVariablesUnchanged: boolean;
@@ -72,7 +79,9 @@ interface Dependencies {
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => Promise<void>;
   readonly boundaryCheck: () => Promise<BoundaryEvidence>;
-  readonly readState: (replicas: null | 0) => Promise<ColdRecoveryState | null>;
+  readonly readState: (
+    configuredReplicas: 0 | 1 | "any",
+  ) => Promise<ColdRecoveryState | null>;
   readonly readPrivateEvidence: (filename: string) => string;
   readonly reassertRepositoryState: (cwd: string, candidateSha: string) => boolean;
   readonly probeRuntimeAbsent: () => Promise<boolean>;
@@ -86,6 +95,9 @@ function emptyChecks(): Checks {
   return {
     policyExact: false,
     githubAuthorityExact: false,
+    successorBridgeExact: false,
+    successorBridgeTopologyExact: false,
+    successorBridgePrewriteReasserted: false,
     preparePrerequisiteExact: false,
     tokenScopesExact: false,
     cliExact: false,
@@ -101,6 +113,7 @@ function emptyChecks(): Checks {
     acknowledgementExact: false,
     postflightAttempted: false,
     exactZeroStateAfter: false,
+    configuredTopologyTransitionExact: false,
     maintenanceRowsAfterExact: false,
     deploymentSourceAndTopologyUnchanged: false,
     collateralVariablesUnchanged: false,
@@ -112,14 +125,14 @@ function emptyChecks(): Checks {
 
 function successfulChecks(
   value: Checks,
-  outcome: "initialized_zero" | "reconciled_success" | "failed_before_attempt" |
-    "mutation_uncertain",
+  outcome: "configured_zero" | "reconciled_configured_zero" |
+    "failed_before_attempt" | "mutation_uncertain",
 ): boolean {
   const common = Object.entries(value).filter(
     ([name]) => name !== "acknowledgementExact",
   ).every(([, check]) => check === true);
-  return common && ((outcome === "initialized_zero" && value.acknowledgementExact) ||
-    (outcome === "reconciled_success" && !value.acknowledgementExact));
+  return common && ((outcome === "configured_zero" && value.acknowledgementExact) ||
+    (outcome === "reconciled_configured_zero" && !value.acknowledgementExact));
 }
 
 async function reconcile(dependencies: Dependencies): Promise<ColdRecoveryState | null> {
@@ -172,8 +185,9 @@ export async function runProtectedPermanentStagingColdQuiesce(
   let intentSha256: string | null = null;
   let terminalSha256: string | null = null;
   let prerequisiteSha256: string | null = null;
+  let successorBridge: ColdQuiesceSuccessorBinding | null = null;
   let failureCode: string | null = null;
-  let outcome: "initialized_zero" | "reconciled_success" |
+  let outcome: "configured_zero" | "reconciled_configured_zero" |
     "failed_before_attempt" | "mutation_uncertain" = "failed_before_attempt";
   let boundaryBefore: BoundaryEvidence = { passed: false, receiptSha256: null };
   let boundaryAfter: BoundaryEvidence = { passed: false, receiptSha256: null };
@@ -190,6 +204,24 @@ export async function runProtectedPermanentStagingColdQuiesce(
       args.expectedDeploymentSha,
     );
     if (!resultChecks.githubAuthorityExact) throw new Error("authority_invalid");
+    const successorBridgeSource = dependencies.readPrivateEvidence(
+      args.successorBridgeFile!,
+    );
+    const reviewedAuthoritySource = dependencies.readPrivateEvidence(
+      args.reviewedAuthorityFile!,
+    );
+    successorBridge = parseColdQuiesceSuccessorBinding(
+      successorBridgeSource,
+      reviewedAuthoritySource,
+      args.candidateSha,
+      dependencies.env.GITHUB_RUN_ID ?? "",
+      args.prepareRunId!,
+      dependencies.now(),
+    );
+    resultChecks.successorBridgeExact = successorBridge !== null;
+    if (!resultChecks.successorBridgeExact) {
+      throw new Error("successor_bridge_invalid");
+    }
     const prerequisiteSource = dependencies.readPrivateEvidence(
       args.prepareVerificationFile!,
     );
@@ -208,8 +240,8 @@ export async function runProtectedPermanentStagingColdQuiesce(
       args.expectedDeploymentSha && prerequisite.prerequisites.length === 1 &&
       prerequisite.prerequisites[0]?.kind === "cold-prepare" &&
       prerequisite.prerequisites[0]?.runId === args.prepareRunId &&
-      prerequisite.prerequisites[0]?.receipt.replicasBefore === null &&
-      prerequisite.prerequisites[0]?.receipt.replicasAfter === null;
+      prerequisite.prerequisites[0]?.receipt.replicasBefore === 1 &&
+      prerequisite.prerequisites[0]?.receipt.replicasAfter === 1;
     if (!resultChecks.preparePrerequisiteExact) throw new Error("prepare_invalid");
     tokens = tokensExact(dependencies.env, "quiesce");
     if (!tokens) throw new Error("token_invalid");
@@ -227,8 +259,11 @@ export async function runProtectedPermanentStagingColdQuiesce(
     resultChecks.boundaryPreflightExact = boundaryBefore.passed &&
       boundaryBefore.receiptSha256 !== null;
     if (!resultChecks.boundaryPreflightExact) throw new Error("boundary_invalid");
-    before = await dependencies.readState(null);
-    resultChecks.exactDeadStateBefore = before !== null;
+    before = await dependencies.readState(1);
+    resultChecks.successorBridgeTopologyExact = before !== null &&
+      successorBridge!.liveStateSha256 === sha256(fullStateCanonical(before));
+    resultChecks.exactDeadStateBefore = before !== null &&
+      resultChecks.successorBridgeTopologyExact;
     resultChecks.maintenanceRowsBeforeExact = before !== null &&
       maintenanceRowsAfterExact(before.rows);
     if (!resultChecks.exactDeadStateBefore || !resultChecks.maintenanceRowsBeforeExact) {
@@ -237,13 +272,26 @@ export async function runProtectedPermanentStagingColdQuiesce(
     resultChecks.runtimeAbsentBefore = await dependencies.probeRuntimeAbsent();
     if (!resultChecks.runtimeAbsentBefore) throw new Error("runtime_present");
     const intent = canonical({
-      schemaVersion: "pintpath-permanent-staging-cold-quiesce-intent/v1",
+      schemaVersion: "pintpath-permanent-staging-cold-quiesce-intent/v3",
       policySha256: COLD_RECOVERY_POLICY_SHA256,
       operation: "cold-quiesce",
       candidateSha: args.candidateSha,
       expectedDeploymentSha: args.expectedDeploymentSha,
       prepareRunId: args.prepareRunId,
       prepareVerificationSha256: prerequisiteSha256,
+      successorBridge: {
+        bridgeSha256: successorBridge!.bridgeSha256,
+        reviewedAuthoritySha256: successorBridge!.reviewedAuthoritySha256,
+        currentRunId: successorBridge!.currentRunId,
+        currentPrepareRunId: successorBridge!.currentPrepareRunId,
+        priorCandidateSha: successorBridge!.priorCandidateSha,
+        priorQuiesceRunId: successorBridge!.priorQuiesceRunId,
+        priorArtifactId: successorBridge!.priorArtifactId,
+        priorArtifactDigest: successorBridge!.priorArtifactDigest,
+        liveStateSha256: successorBridge!.liveStateSha256,
+        verifiedAt: successorBridge!.verifiedAt,
+        deadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
+      },
       projectId: COLD_RECOVERY_LOCK.projectId,
       environmentId: COLD_RECOVERY_LOCK.environmentId,
       serviceId: COLD_RECOVERY_LOCK.serviceId,
@@ -251,13 +299,20 @@ export async function runProtectedPermanentStagingColdQuiesce(
         "deployment",
         COLD_RECOVERY_LOCK.deploymentId,
       ),
-      replicasBefore: null,
-      replicasAfter: 0,
+      configuredReplicasBefore: before!.configuredReplicas,
+      configuredReplicasAfter: 0,
+      configuredRegionsBefore: before!.configuredRegions,
+      configuredRegionsAfter: COLD_RECOVERY_LOCK.quiesceRegions.map((region) => ({
+        region,
+        numReplicas: 0,
+      })),
+      legacyReplicasBefore: before!.numReplicas,
+      legacyReplicasAfterAllowed: [null, 0],
       providerBeforeSha256: sha256(fullStateCanonical(before!)),
       boundaryPreflightReceiptSha256: boundaryBefore.receiptSha256,
       maximumAttempts: 1,
       retryAllowed: false,
-      normalOneToZeroReceiptClaimed: false,
+      configuredOneToZeroReceiptClaimed: true,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
     });
@@ -273,12 +328,35 @@ export async function runProtectedPermanentStagingColdQuiesce(
       args.candidateSha,
     );
     if (!resultChecks.repositoryPrewriteReasserted) throw new Error("repository_drift");
-    const prewrite = await dependencies.readState(null);
+    const exactBefore = before!;
+    const prewrite = await dependencies.readState(1);
     resultChecks.providerPrewriteReasserted = prewrite !== null &&
-      fullStateCanonical(prewrite) === fullStateCanonical(before!);
+      fullStateCanonical(prewrite) === fullStateCanonical(exactBefore);
     if (!resultChecks.providerPrewriteReasserted) throw new Error("provider_drift");
     resultChecks.runtimePrewriteReasserted = await dependencies.probeRuntimeAbsent();
     if (!resultChecks.runtimePrewriteReasserted) throw new Error("runtime_present");
+    const reboundBridgeSource = dependencies.readPrivateEvidence(
+      args.successorBridgeFile!,
+    );
+    const reboundAuthoritySource = dependencies.readPrivateEvidence(
+      args.reviewedAuthorityFile!,
+    );
+    const reboundBridge = parseColdQuiesceSuccessorBinding(
+      reboundBridgeSource,
+      reboundAuthoritySource,
+      args.candidateSha,
+      dependencies.env.GITHUB_RUN_ID ?? "",
+      args.prepareRunId!,
+      dependencies.now(),
+    );
+    resultChecks.successorBridgePrewriteReasserted = reboundBridge !== null &&
+      reboundBridge.bridgeSha256 === successorBridge!.bridgeSha256 &&
+      reboundBridge.reviewedAuthoritySha256 ===
+        successorBridge!.reviewedAuthoritySha256 &&
+      reboundBridge.liveStateSha256 === sha256(fullStateCanonical(prewrite!));
+    if (!resultChecks.successorBridgePrewriteReasserted) {
+      throw new Error("successor_bridge_expired_or_drifted");
+    }
 
     attempts = 1;
     try {
@@ -291,15 +369,19 @@ export async function runProtectedPermanentStagingColdQuiesce(
   } catch (error) {
     failureCode = error instanceof Error ? error.message : "unexpected_failure";
   } finally {
-    if (attempts === 1 && before !== null) {
+    if (before !== null && attempts === 1) {
       resultChecks.postflightAttempted = true;
       try { after = await reconcile(dependencies); } catch { after = null; }
       resultChecks.exactZeroStateAfter = after !== null;
+      resultChecks.configuredTopologyTransitionExact = after !== null &&
+        after.configuredReplicas === 0 &&
+        before.configuredReplicas === 1 &&
+        after.configuredRegions.every((entry) => entry.numReplicas === 0);
       resultChecks.maintenanceRowsAfterExact = after !== null &&
         maintenanceRowsAfterExact(after.rows);
       resultChecks.deploymentSourceAndTopologyUnchanged = after !== null &&
         coldIdentityCanonical(after) === coldIdentityCanonical(before) &&
-        before.numReplicas === null && after.numReplicas === 0;
+        before.deploymentRegions.length === after.deploymentRegions.length;
       resultChecks.collateralVariablesUnchanged = after !== null &&
         canonical(nonMaintenanceRows(after.rows)) ===
           canonical(nonMaintenanceRows(before.rows));
@@ -318,8 +400,8 @@ export async function runProtectedPermanentStagingColdQuiesce(
       if (successfulWithoutTerminalOrAcknowledgement) {
         failureCode = null;
         outcome = resultChecks.acknowledgementExact
-          ? "initialized_zero"
-          : "reconciled_success";
+          ? "configured_zero"
+          : "reconciled_configured_zero";
       } else {
         failureCode ??= "reconciliation_failed";
         outcome = "mutation_uncertain";
@@ -339,8 +421,12 @@ export async function runProtectedPermanentStagingColdQuiesce(
       sourceSha: args.expectedDeploymentSha,
       startedAt,
       completedAt: new Date(dependencies.now()).toISOString(),
-      replicasBefore: null,
-      replicasAfter: 0,
+      configuredReplicasBefore: before.configuredReplicas,
+      configuredReplicasAfter: after?.configuredReplicas ?? null,
+      configuredRegionsBefore: before.configuredRegions,
+      configuredRegionsAfter: after?.configuredRegions ?? null,
+      legacyReplicasBefore: before.numReplicas,
+      legacyReplicasAfter: after?.numReplicas ?? null,
       attempts,
       retryAllowed: false,
       intentSha256,
@@ -348,6 +434,21 @@ export async function runProtectedPermanentStagingColdQuiesce(
         runId: args.prepareRunId,
         verificationSha256: prerequisiteSha256,
       },
+      successorBridge: successorBridge === null
+        ? null
+        : {
+          bridgeSha256: successorBridge.bridgeSha256,
+          reviewedAuthoritySha256: successorBridge.reviewedAuthoritySha256,
+          currentRunId: successorBridge.currentRunId,
+          currentPrepareRunId: successorBridge.currentPrepareRunId,
+          priorCandidateSha: successorBridge.priorCandidateSha,
+          priorQuiesceRunId: successorBridge.priorQuiesceRunId,
+          priorArtifactId: successorBridge.priorArtifactId,
+          priorArtifactDigest: successorBridge.priorArtifactDigest,
+          liveStateSha256: successorBridge.liveStateSha256,
+          verifiedAt: successorBridge.verifiedAt,
+          deadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
+        },
       runnerLossReconciliation: null,
       commandEvidence: {
         exitCode: command?.code ?? null,
@@ -365,6 +466,10 @@ export async function runProtectedPermanentStagingColdQuiesce(
         stateAfterSha256: after ? sha256(fullStateCanonical(after)) : null,
         topologyBeforeSha256: sha256(coldIdentityCanonical(before)),
         topologyAfterSha256: after ? sha256(coldIdentityCanonical(after)) : null,
+        configuredTopologyBeforeSha256: sha256(canonical(before.configuredRegions)),
+        configuredTopologyAfterSha256: after
+          ? sha256(canonical(after.configuredRegions))
+          : null,
         collateralVariablesBeforeSha256: sha256(canonical(nonMaintenanceRows(before.rows))),
         collateralVariablesAfterSha256: after
           ? sha256(canonical(nonMaintenanceRows(after.rows)))
@@ -379,8 +484,8 @@ export async function runProtectedPermanentStagingColdQuiesce(
         postflightReceiptSha256: boundaryAfter.receiptSha256,
       },
       checks: { ...resultChecks, terminalEvidenceExact: true },
-      nextRequiredProof: "EXACT_CANDIDATE_UPLOAD_AT_EXPLICIT_ZERO",
-      normalOneToZeroReceiptClaimed: false,
+      nextRequiredProof: "EXACT_CANDIDATE_UPLOAD_AT_CONFIGURED_ZERO",
+      configuredOneToZeroReceiptClaimed: true,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
     });
@@ -407,14 +512,16 @@ export async function runProtectedPermanentStagingColdQuiesce(
     failureCode,
     candidateSha: args?.candidateSha ?? null,
     sourceSha: args?.expectedDeploymentSha ?? null,
-    replicasBefore: null,
-    replicasAfter: 0,
+    configuredReplicasBefore: before?.configuredReplicas ?? null,
+    configuredReplicasAfter: after?.configuredReplicas ?? null,
+    legacyReplicasBefore: before?.numReplicas ?? null,
+    legacyReplicasAfter: after?.numReplicas ?? null,
     attempts,
     retryAllowed: false,
     prepareVerificationSha256: prerequisiteSha256,
     intentSha256,
     terminalSha256,
-    normalOneToZeroReceiptClaimed: false,
+    configuredOneToZeroReceiptClaimed: attempts === 1,
     checks: resultChecks,
   })}\n`);
   return successfulChecks(resultChecks, outcome) ? 0 : 1;

@@ -13,6 +13,14 @@ import {
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
 import {
+  parseRailwayMultiRegionReplicaTopology,
+  type RailwayRegionReplicaCount,
+} from "./lib/railway-multi-region-replica-topology.js";
+import {
+  workerFenceTopologyEvidence,
+  workerFenceTopologyEvidenceExact,
+} from "./lib/worker-fence-topology-evidence.js";
+import {
   parseProductionActivationRoleLimitPrerequisiteVerification,
   PRODUCTION_ACTIVATION_ROLE_LIMIT_PREREQUISITE_FILENAME,
   type ProductionActivationRoleLimitPrerequisiteVerification,
@@ -23,9 +31,9 @@ export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_POLICY_SCHEMA =
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_AUTHORITY_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-authority/v1" as const;
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_INTENT_SCHEMA =
-  "pintpath-automatic-maintenance-worker-fence-intent/v1" as const;
+  "pintpath-automatic-maintenance-worker-fence-intent/v2" as const;
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_TERMINAL_SCHEMA =
-  "pintpath-automatic-maintenance-worker-fence-terminal/v1" as const;
+  "pintpath-automatic-maintenance-worker-fence-terminal/v2" as const;
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_EXECUTOR_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_POLICY_SHA256 =
@@ -133,6 +141,7 @@ export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_METADATA_QUERY =
 ) {
   environment(id:$environmentId,projectId:$projectId) {
     id
+    config(decryptVariables:false)
     variables(first:100) {
       edges { node { id name environmentId serviceId isSealed references } }
       pageInfo { hasNextPage endCursor }
@@ -234,7 +243,11 @@ interface ProviderSnapshot {
   readonly environmentId: string;
   readonly serviceInstanceId: string;
   readonly serviceId: string;
-  readonly numReplicas: number;
+  readonly numReplicas: number | null;
+  readonly configuredTopology: {
+    readonly configuredReplicas: number;
+    readonly regions: readonly RailwayRegionReplicaCount[];
+  };
   readonly rows: readonly VariableRow[];
   readonly domains: readonly ProviderDomain[];
   readonly latestDeployment: DeploymentSummary & { readonly snapshotId: string };
@@ -283,6 +296,7 @@ interface Checks {
   postflightAttempted: boolean;
   targetPostflightExact: boolean;
   postflightDeploymentExact: boolean;
+  configuredTopologyEvidenceExact: boolean;
   runtimeRoutesPolledExact: boolean;
   runtimeMaintenanceStateExact: boolean;
   boundaryPostflightExact: boolean;
@@ -369,6 +383,7 @@ function emptyChecks(): Checks {
     postflightAttempted: false,
     targetPostflightExact: false,
     postflightDeploymentExact: false,
+    configuredTopologyEvidenceExact: false,
     runtimeRoutesPolledExact: false,
     runtimeMaintenanceStateExact: false,
     boundaryPostflightExact: false,
@@ -984,6 +999,35 @@ function providerDomain(
   };
 }
 
+function configuredTopologyAllowed(
+  environmentId: string,
+  regions: readonly RailwayRegionReplicaCount[],
+  configuredReplicas: number,
+): boolean {
+  const allowedRegions = environmentId === TARGETS["permanent-staging"].environmentId
+    ? new Set(["asia-southeast1-eqsg3a", "europe-west4-drams3a"])
+    : environmentId === TARGETS.production.environmentId
+      ? new Set(["asia-southeast1-eqsg3a"])
+      : null;
+  return allowedRegions !== null && configuredReplicas === 1
+    && regions.every(({ region }) => allowedRegions.has(region))
+    && (environmentId === TARGETS["permanent-staging"].environmentId
+      ? regions.filter(({ numReplicas }) => numReplicas > 0).length === 1
+        && regions.some(({ numReplicas }) => numReplicas === 1)
+      : regions.some(({ region, numReplicas }) =>
+        region === "asia-southeast1-eqsg3a" && numReplicas === 1)
+        && regions.every(({ region, numReplicas }) =>
+          region === "asia-southeast1-eqsg3a" || numReplicas === 0));
+}
+
+function activeConfiguredTopologyExact(snapshot: ProviderSnapshot): boolean {
+  return snapshot.configuredTopology.configuredReplicas === 1
+    && snapshot.configuredTopology.regions.some(({ region, numReplicas }) =>
+      region === "asia-southeast1-eqsg3a" && numReplicas === 1)
+    && snapshot.configuredTopology.regions.every(({ region, numReplicas }) =>
+      region === "asia-southeast1-eqsg3a" || numReplicas === 0);
+}
+
 function metadataPart(value: unknown, environmentId: string) {
   if (
     !exactKeys(value, ["data"]) ||
@@ -993,7 +1037,7 @@ function metadataPart(value: unknown, environmentId: string) {
   const staged = value.data.staged;
   const instance = value.data.serviceInstance;
   if (
-    !exactKeys(environment, ["id", "variables"]) ||
+    !exactKeys(environment, ["id", "config", "variables"]) ||
     environment.id !== environmentId ||
     !exactKeys(environment.variables, ["edges", "pageInfo"]) ||
     !Array.isArray(environment.variables.edges) ||
@@ -1017,9 +1061,11 @@ function metadataPart(value: unknown, environmentId: string) {
     !UUID_PATTERN.test(instance.id) ||
     instance.serviceId !== SERVICE_ID ||
     instance.environmentId !== environmentId ||
-    !Number.isSafeInteger(instance.numReplicas) ||
-    Number(instance.numReplicas) < 1 ||
-    Number(instance.numReplicas) > 50 ||
+    !(instance.numReplicas === null || (
+      Number.isSafeInteger(instance.numReplicas) &&
+      Number(instance.numReplicas) >= 0 &&
+      Number(instance.numReplicas) <= 50
+    )) ||
     !exactKeys(instance.latestDeployment, [
       "id",
       "status",
@@ -1036,6 +1082,15 @@ function metadataPart(value: unknown, environmentId: string) {
     instance.domains.serviceDomains.length > 100 ||
     instance.domains.customDomains.length > 100
   ) return null;
+  const configuredTopology = parseRailwayMultiRegionReplicaTopology(
+    environment.config,
+    SERVICE_ID,
+  );
+  if (configuredTopology.kind !== "configured" || !configuredTopologyAllowed(
+    environmentId,
+    configuredTopology.regions,
+    configuredTopology.configuredTotal,
+  )) return null;
   const latest = deploymentSummary({
     id: instance.latestDeployment.id,
     status: instance.latestDeployment.status,
@@ -1088,7 +1143,11 @@ function metadataPart(value: unknown, environmentId: string) {
     environmentId,
     serviceInstanceId: instance.id,
     serviceId: SERVICE_ID,
-    numReplicas: Number(instance.numReplicas),
+    numReplicas: instance.numReplicas as number | null,
+    configuredTopology: {
+      configuredReplicas: configuredTopology.configuredTotal,
+      regions: configuredTopology.regions,
+    },
     rows,
     domains,
     latestDeployment: { ...latest, snapshotId: instance.latestDeployment.snapshotId },
@@ -1210,7 +1269,7 @@ function serviceShapeStable(before: ProviderSnapshot, after: ProviderSnapshot): 
   return before.environmentId === after.environmentId &&
     before.serviceInstanceId === after.serviceInstanceId &&
     before.serviceId === after.serviceId &&
-    before.numReplicas === after.numReplicas &&
+    canonical(before.configuredTopology) === canonical(after.configuredTopology) &&
     canonical(before.domains) === canonical(after.domains);
 }
 
@@ -1235,14 +1294,29 @@ function topologyCanonical(snapshot: ProviderSnapshot): string {
     environmentId: snapshot.environmentId,
     serviceInstanceId: snapshot.serviceInstanceId,
     serviceId: snapshot.serviceId,
-    numReplicas: snapshot.numReplicas,
+    configuredTopology: snapshot.configuredTopology,
     domains: snapshot.domains,
+  });
+}
+
+function providerAuthorityCanonical(snapshot: ProviderSnapshot): string {
+  return canonical({
+    environmentId: snapshot.environmentId,
+    serviceInstanceId: snapshot.serviceInstanceId,
+    serviceId: snapshot.serviceId,
+    configuredTopology: snapshot.configuredTopology,
+    rows: snapshot.rows,
+    domains: snapshot.domains,
+    latestDeployment: snapshot.latestDeployment,
+    activeDeployments: snapshot.activeDeployments,
+    deployment: snapshot.deployment,
   });
 }
 
 function soleHealthyCandidate(snapshot: ProviderSnapshot, candidateSha: string): boolean {
   const active = snapshot.activeDeployments[0];
-  return snapshot.latestDeployment.status === "SUCCESS" &&
+  return activeConfiguredTopologyExact(snapshot) &&
+    snapshot.latestDeployment.status === "SUCCESS" &&
     snapshot.latestDeployment.deploymentStopped === false &&
     snapshot.activeDeployments.length === 1 &&
     active?.id === snapshot.latestDeployment.id &&
@@ -1281,7 +1355,7 @@ function soleHealthyLegacyBaseline(
   const pinnedDomain = snapshot.domains[0];
   const stagingHost = new URL(TARGETS["permanent-staging"].publicOrigin).hostname;
   return target === "permanent-staging" &&
-    snapshot.numReplicas === 1 &&
+    snapshot.configuredTopology.configuredReplicas === 1 &&
     snapshot.latestDeployment.status === "SUCCESS" &&
     snapshot.latestDeployment.deploymentStopped === false &&
     snapshot.activeDeployments.length === 1 &&
@@ -1516,6 +1590,7 @@ function nextFailure(checks: Checks, operation: Operation): FailureCode | null {
   if (!checks.postflightAttempted || !checks.targetPostflightExact ||
     !checks.noOtherProviderChanges) return "RECONCILIATION_FAILED";
   if (!checks.postflightDeploymentExact) return "RECONCILIATION_FAILED";
+  if (!checks.configuredTopologyEvidenceExact) return "RECONCILIATION_FAILED";
   if (OPERATIONS[operation].requiresRuntimeProof &&
     (!checks.postflightDeploymentExact ||
       !checks.runtimeRoutesPolledExact ||
@@ -1575,6 +1650,7 @@ async function runMutationMode(
   let terminalSha: string | null = null;
   let metadataToken = "";
   let before: ProviderSnapshot | null = null;
+  let immediatelyBeforeWrite: ProviderSnapshot | null = null;
   let after: ProviderSnapshot | null = null;
   let boundaryBefore: BoundaryEvidence = { passed: false, receiptSha256: null };
   let boundaryAfter: BoundaryEvidence = { passed: false, receiptSha256: null };
@@ -1770,6 +1846,9 @@ async function runMutationMode(
     if (!checks.operationPreflightExact) {
       throw new OperationFailure("OPERATION_PREFLIGHT_FAILED");
     }
+    if (before === null) {
+      throw new OperationFailure("TARGET_PREFLIGHT_FAILED");
+    }
 
     const configuredVariables = {
       PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: operation.enabledValue,
@@ -1794,7 +1873,9 @@ async function runMutationMode(
       graphqlOperation: "variableCollectionUpsert",
       maximumAttempts: 1,
       retryAllowed: false,
-      preflightProviderSha256: sha256(canonical(before)),
+      preflightProviderSha256: sha256(providerAuthorityCanonical(before)),
+      configuredTopologyBefore: before.configuredTopology,
+      legacyReplicaCountBefore: before.numReplicas,
       boundaryPreflightReceiptSha256: boundaryBefore.receiptSha256,
       productionActivationPrerequisite,
       secretMaterialIncluded: false,
@@ -1839,18 +1920,25 @@ async function runMutationMode(
       }
     }
 
-    const prewrite = await readProviderSnapshot(
+    immediatelyBeforeWrite = await readProviderSnapshot(
       dependencies,
       metadataToken,
       target.environmentId,
     );
     checks.targetPreflightExact = checks.targetPreflightExact &&
-      prewrite !== null &&
-      canonical(prewrite) === canonical(before) &&
-      targetRowsBeforeExact(prewrite) &&
-      targetOriginAttached(prewrite, args.target);
+      immediatelyBeforeWrite !== null &&
+      providerAuthorityCanonical(immediatelyBeforeWrite)
+        === providerAuthorityCanonical(before) &&
+      targetRowsBeforeExact(immediatelyBeforeWrite) &&
+      targetOriginAttached(immediatelyBeforeWrite, args.target);
     if (!checks.targetPreflightExact) {
       throw new OperationFailure("TARGET_PREFLIGHT_FAILED");
+    }
+
+    checks.githubAuthorityExact = checks.githubAuthorityExact &&
+      dependencies.reassertRepositoryState(dependencies.cwd, args.candidateSha);
+    if (!checks.githubAuthorityExact) {
+      throw new OperationFailure("AUTHORITY_RECEIPT_INVALID");
     }
 
     attempts = 1;
@@ -1906,6 +1994,19 @@ async function runMutationMode(
         operation.postflightMode === "unchanged"
           ? deploymentCanonical(before) === deploymentCanonical(after)
           : soleHealthyCandidate(after, args.candidateSha)
+      );
+      checks.configuredTopologyEvidenceExact = workerFenceTopologyEvidenceExact(
+        workerFenceTopologyEvidence(
+          args.target,
+          before,
+          immediatelyBeforeWrite,
+          after,
+        ),
+        {
+          target: args.target,
+          operation: args.operation,
+          writeAttempted: true,
+        },
       );
       checks.runtimeRoutesPolledExact = !operation.requiresRuntimeProof ||
         runtime.pollRounds > 0;
@@ -1963,8 +2064,14 @@ async function runMutationMode(
         graphqlOperation: "variableCollectionUpsert",
         mutationCallCount: attempts,
         acknowledgementExact: checks.acknowledgementExact,
-        providerBeforeSha256: sha256(canonical(before)),
-        providerAfterSha256: after === null ? null : sha256(canonical(after)),
+        providerBeforeSha256: sha256(providerAuthorityCanonical(before)),
+        providerImmediatelyBeforeWriteSha256:
+          immediatelyBeforeWrite === null
+            ? null
+            : sha256(providerAuthorityCanonical(immediatelyBeforeWrite)),
+        providerAfterSha256: after === null
+          ? null
+          : sha256(providerAuthorityCanonical(after)),
         deploymentBeforeIdSha256: railwayDeploymentIdentityIdSha256(
           "deployment",
           before.deployment.id,
@@ -1979,9 +2086,19 @@ async function runMutationMode(
         deploymentIdChanged: after !== null &&
           after.deployment.id !== before.deployment.id,
         topologyBeforeSha256: sha256(topologyCanonical(before)),
+        topologyImmediatelyBeforeWriteSha256:
+          immediatelyBeforeWrite === null
+            ? null
+            : sha256(topologyCanonical(immediatelyBeforeWrite)),
         topologyAfterSha256: after === null
           ? null
           : sha256(topologyCanonical(after)),
+        configuredTopologyEvidence: workerFenceTopologyEvidence(
+          args.target,
+          before,
+          immediatelyBeforeWrite,
+          after,
+        ),
         collateralVariablesBeforeSha256: sha256(canonical(otherRows(before))),
         collateralVariablesAfterSha256: after === null
           ? null
@@ -2101,6 +2218,7 @@ export const automaticMaintenanceWorkerFenceInternals = {
   otherRows,
   parseArguments,
   policyExact,
+  providerAuthorityCanonical,
   soleHealthyCandidate,
   soleHealthyLegacyBaseline,
   serviceShapeStable,

@@ -30,7 +30,11 @@ on:
         required: false
         type: string
       ambiguous_quiesce_run_id:
-        description: Reconcile only; exact prior quiesce whose write step may have run
+        description: Reconcile or successor bridge; exact prior quiesce whose write step may have run
+        required: false
+        type: string
+      ambiguous_quiesce_candidate_sha:
+        description: Successor quiesce only; exact reviewed candidate of the pinned ambiguous quiesce
         required: false
         type: string
       ambiguous_prepare_run_id:
@@ -79,6 +83,7 @@ jobs:
           EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
           AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
           REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -92,6 +97,7 @@ jobs:
           test "$RUN_ATTEMPT" = 1
           test -z "$PREPARE_RUN_ID"
           test -z "$AMBIGUOUS_PREPARE_RUN_ID"
+          test -z "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
           test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
           [[ "$REPLACEMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           test "$CONFIRMATION" = \
@@ -250,6 +256,7 @@ jobs:
       - name: Require exact read-only cold prepare reconciliation authority
         env:
           AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
           AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
@@ -271,6 +278,7 @@ jobs:
           test "$AMBIGUOUS_PREPARE_RUN_ID" != "$RUN_ID"
           test "$REPLACEMENT_RUN_ID" != "$RUN_ID"
           test -z "$PREPARE_RUN_ID"
+          test -z "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
           test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
@@ -420,7 +428,7 @@ jobs:
 
   quiesce:
     if: inputs.operation == 'quiesce'
-    name: Initialize the exact dead baseline at explicit zero
+    name: Quiesce the configured Europe replica from one to zero
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: permanent-staging-scale-evidence
@@ -436,6 +444,8 @@ jobs:
 
       - name: Require exact cold quiesce authority
         env:
+          AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DISPATCH_REF: ${{ github.ref }}
@@ -453,10 +463,15 @@ jobs:
           test "$EXPECTED_DEPLOYMENT_SHA" = 12c0d24f6619a0286e16b8daf56fc27aaa1e3aba
           [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           test "$PREPARE_RUN_ID" != "$RUN_ID"
-          test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
+          test "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA" = \
+            838e8c877dcafc0a822a12e5a26afa81c26924a3
+          test "$CANDIDATE_SHA" != "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
+          test "$AMBIGUOUS_QUIESCE_RUN_ID" = 34153306935
+          test "$AMBIGUOUS_QUIESCE_RUN_ID" != "$RUN_ID"
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1
+          test -z "$AMBIGUOUS_PREPARE_RUN_ID"
           test -z "$REPLACEMENT_RUN_ID"
           test "$CONFIRMATION" = \
             "QUIESCE_PERMANENT_STAGING_COLD_RECOVERY_TO_ZERO_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
@@ -489,20 +504,59 @@ jobs:
           install -d -m 700 \
             "$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite" \
             "$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite/sealed" \
+            "$RUNNER_TEMP/pintpath-cold-successor-bridge" \
+            "$RUNNER_TEMP/pintpath-cold-successor-bridge/sealed" \
             "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence" \
             "$RUNNER_TEMP/pintpath-cold-github-candidate"
 
       - name: Authenticate the reviewed candidate and fresh cold quiesce dispatch
         env:
+          AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
         shell: bash
         run: |
           set -euo pipefail
           npm run --silent github:reviewed-candidate-authority:verify -- \
             --candidate-sha "$CANDIDATE_SHA" \
-            --operation cold-recovery-quiesce \
+            --operation cold-recovery-successor-quiesce \
+            --prepare-run-id "$PREPARE_RUN_ID" \
+            --prior-candidate-sha "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA" \
+            --prior-run-id "$AMBIGUOUS_QUIESCE_RUN_ID" \
             > "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+          chmod 600 "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+
+      - name: Retrieve the pinned ambiguous predecessor quiesce artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.ambiguous_quiesce_run_id }}
+          name: pintpath-permanent-staging-cold-quiesce-${{ inputs.ambiguous_quiesce_candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-cold-successor-bridge/downloaded
+
+      - name: Seal the exact ambiguous predecessor evidence bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-cold-successor-bridge"
+          test -z "$(find "$root/downloaded" -type l -print -quit)"
+          test "$(find "$root/downloaded" -type f | wc -l | tr -d ' ')" = 4
+          for leaf in \
+            cold-quiesce-receipt.json \
+            cold-quiesce-intent.json \
+            prerequisites-verification.json \
+            reviewed-authority.json
+          do
+            mapfile -d '' matches < <(find "$root/downloaded" -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            cp --no-dereference -- "${matches[0]}" "$root/sealed/$leaf"
+            cmp --silent -- "${matches[0]}" "$root/sealed/$leaf"
+            chmod 400 "$root/sealed/$leaf"
+          done
 
       - name: Retrieve the exact cold prepare artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -573,7 +627,35 @@ jobs:
           test "$("$cli_path" --version)" = 'railway 5.32.0'
           echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path" >> "$GITHUB_ENV"
 
-      - name: Initialize the dead baseline from null to explicit zero once
+      - name: Bind the ambiguous predecessor to configured live topology
+        env:
+          GITHUB_ACTIONS: "true"
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_COLD_RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
+          AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx \
+            scripts/verify-permanent-staging-cold-quiesce-successor-bridge.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --prepare-run-id "$PREPARE_RUN_ID" \
+            --prior-candidate-sha "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA" \
+            --prior-quiesce-run-id "$AMBIGUOUS_QUIESCE_RUN_ID" \
+            --prior-artifact-dir "$RUNNER_TEMP/pintpath-cold-successor-bridge/sealed" \
+            --reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
+
+      - name: Quiesce the configured Europe replica from one to zero once
         env:
           GITHUB_ACTIONS: "true"
           GITHUB_REF: ${{ github.ref }}
@@ -597,7 +679,20 @@ jobs:
             --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
             --prepare-run-id "$PREPARE_RUN_ID" \
             --prepare-verification-file "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/prerequisites-verification.json" \
+            --successor-bridge-file "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/cold-quiesce-successor-bridge.json" \
+            --reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json" \
             --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
+
+      - name: Remove ambiguous predecessor artifact custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-cold-successor-bridge"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
 
       - name: Reconcile the Railway production-staging mutation boundary
         if: always()
@@ -635,6 +730,8 @@ jobs:
 
       - name: Require exact read-only cold reconciliation authority
         env:
+          AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
+          AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
           AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
@@ -655,9 +752,11 @@ jobs:
           test "$PREPARE_RUN_ID" != "$AMBIGUOUS_QUIESCE_RUN_ID"
           test "$PREPARE_RUN_ID" != "$RUN_ID"
           test "$AMBIGUOUS_QUIESCE_RUN_ID" != "$RUN_ID"
+          test -z "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1
+          test -z "$AMBIGUOUS_PREPARE_RUN_ID"
           test -z "$REPLACEMENT_RUN_ID"
           test "$CONFIRMATION" = \
             "RECONCILE_PERMANENT_STAGING_COLD_RECOVERY_AT_ZERO_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
@@ -690,6 +789,8 @@ jobs:
           install -d -m 700 \
             "$RUNNER_TEMP/pintpath-cold-reconcile-prerequisite" \
             "$RUNNER_TEMP/pintpath-cold-reconcile-prerequisite/sealed" \
+            "$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge" \
+            "$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge/sealed" \
             "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence" \
             "$RUNNER_TEMP/pintpath-cold-github-candidate"
 
@@ -709,6 +810,34 @@ jobs:
             --prepare-run-id "$PREPARE_RUN_ID" \
             > "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
           chmod 600 "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
+
+      - name: Retrieve the exact ambiguous successor quiesce artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.ambiguous_quiesce_run_id }}
+          name: pintpath-permanent-staging-cold-quiesce-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-cold-reconcile-successor-bridge/downloaded
+
+      - name: Seal the exact successor bridge continuity evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge"
+          test -z "$(find "$root/downloaded" -type l -print -quit)"
+          for leaf in \
+            cold-quiesce-successor-bridge.json \
+            reviewed-authority.json
+          do
+            mapfile -d '' matches < <(find "$root/downloaded" -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            cp --no-dereference -- "${matches[0]}" "$root/sealed/$leaf"
+            cmp --silent -- "${matches[0]}" "$root/sealed/$leaf"
+            chmod 400 "$root/sealed/$leaf"
+          done
+          test "$(find "$root/sealed" -type f | wc -l | tr -d ' ')" = 2
 
       - name: Retrieve the exact cold prepare artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -796,7 +925,20 @@ jobs:
             --prepare-verification-file "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence/prerequisites-verification.json" \
             --prior-quiesce-run-id "$AMBIGUOUS_QUIESCE_RUN_ID" \
             --reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json" \
+            --successor-bridge-file "$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge/sealed/cold-quiesce-successor-bridge.json" \
+            --successor-reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge/sealed/reviewed-authority.json" \
             --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
+
+      - name: Remove successor bridge continuity custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-cold-reconcile-successor-bridge"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
 
       - name: Reconcile the Railway production-staging mutation boundary
         if: always()

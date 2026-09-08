@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites-policy/v4",
+  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites-policy/v5",
   "policyId": "pintpath-permanent-staging-worker-bootstrap-prerequisites",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "repository": "blackmagic30/Beer",
@@ -26,19 +26,19 @@
     },
     "fencedDeployment": {
       "path": "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
-      "sha256": "a46ee1af6d8b3afcfe38d595767e28fcae53a9716730e4cff33b9da39e0ff7df"
+      "sha256": "9cea6cacfd33a2f4500532ecf2d4564c1dbc9595eb6835e2935ff9e2df5186f5"
     },
     "activeDeployment": {
       "path": "ops/railway/permanent-staging-app-deployment-policy.json",
-      "sha256": "c73fe315f98c5736f4ac31963e11361b059881d7ec5774292e7e8048ff6f8986"
+      "sha256": "49367b816eb1ad86e32aa85dd9bd1e2297743760e113a23c882b3776b5afad77"
     },
     "coldRecovery": {
       "path": "ops/railway/permanent-staging-cold-recovery-policy.json",
-      "sha256": "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd"
+      "sha256": "83d3c01669719a2e061b120b5337f2b6119782357a1b68f5537352b0e8e15666"
     },
     "venueDirectory": {
       "path": "ops/supabase/permanent-staging-venue-directory-policy.json",
-      "sha256": "08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f"
+      "sha256": "3474e28c413e908b7dac76190709553e753fed39df753a1cd273b29f161bfcef"
     }
   },
   "producers": {
@@ -48,7 +48,7 @@
       "runNameTemplate": "Automatic maintenance worker fence | permanent-staging | prepare | <candidate-sha>",
       "artifactNameTemplate": "pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-<candidate-sha>",
       "receiptFilename": "automatic-maintenance-worker-fence-terminal.json",
-      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1"
+      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v2"
     },
     "cold-prepare": {
       "workflowPath": ".github/workflows/recover-permanent-staging-cold-zero.yml",
@@ -57,10 +57,10 @@
       "alternateReadOnlyRunNameTemplate": "Permanent staging cold recovery | reconcile-prepare | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-cold-prepare-<candidate-sha>",
       "receiptFilename": "cold-prepare-terminal.json",
-      "receiptSchema": "pintpath-permanent-staging-cold-prepare/v1",
-      "alternateReadOnlyReceiptSchema": "pintpath-permanent-staging-cold-prepare-reconciliation/v1",
-      "replicasBefore": null,
-      "replicasAfter": null,
+      "receiptSchema": "pintpath-permanent-staging-cold-prepare/v2",
+      "alternateReadOnlyReceiptSchema": "pintpath-permanent-staging-cold-prepare-reconciliation/v2",
+      "replicasBefore": 1,
+      "replicasAfter": 1,
       "normalOneToZeroReceipt": false
     },
     "quiesce": {
@@ -69,7 +69,7 @@
       "runNameTemplate": "Permanent staging worker bootstrap | quiesce | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-worker-bootstrap-quiesce-<candidate-sha>",
       "receiptFilename": "quiesce-staging-zero-receipt.json",
-      "receiptSchema": "pintpath-permanent-staging-scale-operation/v2",
+      "receiptSchema": "pintpath-permanent-staging-scale-operation/v3",
       "prerequisitesFilename": "prerequisites-verification.json"
     },
     "cold-quiesce": {
@@ -79,11 +79,11 @@
       "alternateReadOnlyRunNameTemplate": "Permanent staging cold recovery | reconcile-quiesce | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-cold-quiesce-<candidate-sha>",
       "receiptFilename": "cold-quiesce-receipt.json",
-      "receiptSchema": "pintpath-permanent-staging-cold-quiesce/v2",
+      "receiptSchema": "pintpath-permanent-staging-cold-quiesce/v4",
       "prerequisitesFilename": "prerequisites-verification.json",
-      "replicasBefore": null,
+      "replicasBefore": 1,
       "replicasAfter": 0,
-      "normalOneToZeroReceipt": false
+      "configuredOneToZeroReceipt": true
     },
     "fenced-deployment": {
       "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
@@ -91,7 +91,7 @@
       "runNameTemplate": "Deploy permanent staging | fenced | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-fenced-deployment-<candidate-sha>",
       "receiptFilename": "deployment-receipt.json",
-      "receiptSchema": "pintpath-railway-application-deployment-executor/v5"
+      "receiptSchema": "pintpath-railway-application-deployment-executor/v6"
     },
     "venue-directory": {
       "workflowPath": ".github/workflows/permanent-staging-venue-directory.yml",
@@ -138,8 +138,8 @@
       "alternateReadOnlyRunNameTemplate": "Permanent staging worker bootstrap | reconcile-restore | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-worker-bootstrap-restore-<candidate-sha>",
       "receiptFilename": "bootstrap-staging-one-receipt.json",
-      "receiptSchema": "pintpath-permanent-staging-scale-operation/v2",
-      "alternateReadOnlyReceiptSchema": "pintpath-permanent-staging-bootstrap-restore-reconciliation/v1",
+      "receiptSchema": "pintpath-permanent-staging-scale-operation/v3",
+      "alternateReadOnlyReceiptSchema": "pintpath-permanent-staging-bootstrap-restore-reconciliation/v2",
       "prerequisitesFilename": "prerequisites-verification.json"
     },
     "activate": {
@@ -149,8 +149,8 @@
       "alternateReadOnlyRunNameTemplate": "Automatic maintenance worker fence | permanent-staging | reconcile-activate | <candidate-sha>",
       "artifactNameTemplate": "pintpath-automatic-maintenance-worker-fence-permanent-staging-activate-<candidate-sha>",
       "receiptFilename": "automatic-maintenance-worker-fence-terminal.json",
-      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1",
-      "alternateReadOnlyReceiptSchema": "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v1",
+      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v2",
+      "alternateReadOnlyReceiptSchema": "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v2",
       "prerequisitesFilename": "prerequisites-verification.json"
     },
     "active-deployment": {
@@ -159,7 +159,7 @@
       "runNameTemplate": "Deploy permanent staging | active | <candidate-sha>",
       "artifactNameTemplate": "pintpath-permanent-staging-deployment-<candidate-sha>",
       "receiptFilename": "deployment-receipt.json",
-      "receiptSchema": "pintpath-railway-application-deployment-executor/v5"
+      "receiptSchema": "pintpath-railway-application-deployment-executor/v6"
     }
   },
   "consumers": {
@@ -266,13 +266,13 @@
     "sameMainRefRequired": true
   },
   "evidence": {
-    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v4",
+    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v5",
     "filename": "prerequisites-verification.json",
     "canonicalJsonRequired": true,
     "artifactDigestRequired": true,
     "bootstrapPathRequired": true,
-    "truthfulNullableReplicaCountsRequired": true,
-    "coldReceiptsMustNotImpersonateNormalOneToZero": true,
+    "truthfulConfiguredReplicaCountsRequired": true,
+    "coldReceiptsMustBindConfiguredReplicaTopology": true,
     "runnerLossReconciliationReceiptMustBindPriorAmbiguousRun": true,
     "runnerLossReconciliationReceiptsMustNotClaimNormalWrites": true,
     "secretMaterialAllowed": false,

@@ -9,6 +9,8 @@ import {
   automaticMaintenanceWorkerFenceInternals,
   runProtectedAutomaticMaintenanceWorkerFence,
 } from "../scripts/execute-protected-automatic-maintenance-worker-fence.js";
+import { stagingActivationReconciliationInternals } from
+  "../scripts/probe-permanent-staging-automatic-maintenance-activation-reconciliation.js";
 import type { ProductionActivationRoleLimitPrerequisiteVerification } from "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
 import { railwayDeploymentIdentityIdSha256 } from "../src/lib/railway-deployment-identity.js";
 
@@ -170,7 +172,9 @@ function metadataSource(input: {
   readonly deploymentStopped?: boolean;
   readonly deploymentId?: string;
   readonly domain?: string;
-  readonly numReplicas?: number;
+  readonly numReplicas?: number | null;
+  readonly configuredRegions?: Readonly<Record<string, number | null>>;
+  readonly environmentConfig?: unknown;
   readonly snapshotId?: string;
   readonly rows?: readonly ReturnType<typeof row>[];
   readonly status?: string;
@@ -179,10 +183,24 @@ function metadataSource(input: {
   const deploymentId = input.deploymentId ?? IDS.deployment;
   const snapshotId = input.snapshotId ?? IDS.snapshot;
   const status = input.status ?? "SUCCESS";
+  const configuredRegions = input.configuredRegions ?? {
+    "asia-southeast1-eqsg3a": 1,
+  };
+  const multiRegionConfig = Object.fromEntries(
+    Object.entries(configuredRegions).map(([region, numReplicas]) => [
+      region,
+      { numReplicas },
+    ]),
+  );
   return {
     data: {
       environment: {
         id: IDS.production,
+        config: input.environmentConfig === undefined ? {
+          services: {
+            [IDS.service]: { deploy: { multiRegionConfig } },
+          },
+        } : input.environmentConfig,
         variables: {
           edges: input.rows ?? [row("UNRELATED_FIXTURE", "variable-unrelated")],
           pageInfo: { hasNextPage: false, endCursor: null },
@@ -193,7 +211,7 @@ function metadataSource(input: {
         id: IDS.instance,
         serviceId: IDS.service,
         environmentId: IDS.production,
-        numReplicas: input.numReplicas ?? 1,
+        numReplicas: input.numReplicas === undefined ? 1 : input.numReplicas,
         latestDeployment: {
           id: deploymentId,
           status,
@@ -613,10 +631,25 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     ).toBeNull();
     const existingSourceSha = LEGACY_SHA;
     const metadata = [
-      forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
-      forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
+      forStaging(metadataSource({
+        rows: providerRows(),
+        targetPort: 8_080,
+        numReplicas: null,
+        configuredRegions: { "europe-west4-drams3a": 1 },
+      })),
+      forStaging(metadataSource({
+        rows: providerRows(),
+        targetPort: 8_080,
+        numReplicas: null,
+        configuredRegions: { "europe-west4-drams3a": 1 },
+      })),
       forStaging(
-        metadataSource({ rows: stagingTargetRows(), targetPort: 8_080 }),
+        metadataSource({
+          rows: stagingTargetRows(),
+          targetPort: 8_080,
+          numReplicas: null,
+          configuredRegions: { "europe-west4-drams3a": 1 },
+        }),
       ),
     ];
     const deployments = [
@@ -759,7 +792,12 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
 
   it("requires an exact healthy one-replica legacy baseline before staging prepare", () => {
     const metadata = automaticMaintenanceWorkerFenceInternals.metadataPart(
-      forStaging(metadataSource({ rows: providerRows(), targetPort: 8_080 })),
+      forStaging(metadataSource({
+        rows: providerRows(),
+        targetPort: 8_080,
+        numReplicas: null,
+        configuredRegions: { "europe-west4-drams3a": 1 },
+      })),
       IDS.staging,
     );
     expect(metadata).not.toBeNull();
@@ -795,7 +833,19 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
           },
         },
       },
-      { label: "multiple replicas", snapshot: { ...healthy, numReplicas: 2 } },
+      {
+        label: "multiple configured replicas",
+        snapshot: {
+          ...healthy,
+          configuredTopology: {
+            configuredReplicas: 2,
+            regions: [{
+              region: "asia-southeast1-eqsg3a",
+              numReplicas: 2,
+            }],
+          },
+        },
+      },
       {
         label: "multiple active deployments",
         snapshot: {
@@ -969,6 +1019,46 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     }
   });
 
+  it("reconciles activated staging from configured Asia topology when the legacy aggregate is null", () => {
+    const metadata = automaticMaintenanceWorkerFenceInternals.metadataPart(
+      forStaging(metadataSource({
+        rows: stagingTargetRows(),
+        targetPort: 8_080,
+        numReplicas: null,
+        configuredRegions: {
+          "asia-southeast1-eqsg3a": 1,
+          "europe-west4-drams3a": 0,
+        },
+      })),
+      IDS.staging,
+    );
+    const deployment = automaticMaintenanceWorkerFenceInternals.deploymentPart(
+      forStaging(deploymentSource({ candidateSha: CANDIDATE })),
+      IDS.deployment,
+    );
+    expect(metadata).not.toBeNull();
+    expect(deployment).not.toBeNull();
+    expect(stagingActivationReconciliationInternals.stateExact(
+      { ...metadata!, deployment: deployment! },
+      CANDIDATE,
+    )).toBe(true);
+
+    const legacyRegionMetadata = automaticMaintenanceWorkerFenceInternals.metadataPart(
+      forStaging(metadataSource({
+        rows: stagingTargetRows(),
+        targetPort: 8_080,
+        numReplicas: null,
+        configuredRegions: { "europe-west4-drams3a": 1 },
+      })),
+      IDS.staging,
+    );
+    expect(legacyRegionMetadata).not.toBeNull();
+    expect(stagingActivationReconciliationInternals.stateExact(
+      { ...legacyRegionMetadata!, deployment: deployment! },
+      CANDIDATE,
+    )).toBe(false);
+  });
+
   it("fails closed before staging prepare writes when the legacy baseline is unsafe", async () => {
     const scenarios: readonly {
       label: string;
@@ -996,10 +1086,11 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         deploymentSha: CANDIDATE,
       },
       {
-        label: "multiple replicas",
+        label: "multiple configured replicas",
         source: forStaging(
           metadataSource({
-            numReplicas: 2,
+            numReplicas: null,
+            configuredRegions: { "asia-southeast1-eqsg3a": 2 },
             rows: providerRows(),
             targetPort: 8_080,
           }),
@@ -1079,8 +1170,9 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       expect(JSON.parse(output), scenario.label).toMatchObject({
         outcome: "failed_before_attempt",
         attempts: 0,
-        failureCode: "OPERATION_PREFLIGHT_FAILED",
-        checks: { operationPreflightExact: false },
+        failureCode: scenario.label === "multiple configured replicas"
+          ? "TARGET_PREFLIGHT_FAILED"
+          : "OPERATION_PREFLIGHT_FAILED",
       });
     }
   });

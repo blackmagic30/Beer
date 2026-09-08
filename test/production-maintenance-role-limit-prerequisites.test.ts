@@ -53,6 +53,43 @@ function canonical(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function productionWorkerTopologyEvidence() {
+  const configured = {
+    configuredReplicas: 1,
+    configuredRegions: [{
+      region: "asia-southeast1-eqsg3a",
+      numReplicas: 1,
+    }],
+  };
+  const snapshot = {
+    ...configured,
+    configuredTopologySha256: sha(canonical(configured)),
+    legacyAggregateReplicas: null,
+  };
+  return {
+    authoritySource: "environment.config(decryptVariables:false)",
+    primaryRegion: "asia-southeast1-eqsg3a",
+    allowedRegions: ["asia-southeast1-eqsg3a"],
+    before: snapshot,
+    immediatelyBeforeWrite: snapshot,
+    after: snapshot,
+  };
+}
+
+function canonicalKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalKeyOrder);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [
+    key,
+    canonicalKeyOrder(record[key]),
+  ]));
+}
+
+function canonicalTopology(value: unknown): string {
+  return `${JSON.stringify(canonicalKeyOrder(value), null, 2)}\n`;
+}
+
 function crc32(value: Buffer): number {
   let crc = 0xffff_ffff;
   for (const byte of value) {
@@ -175,6 +212,7 @@ const FENCE_CHECKS = {
   postflightAttempted: true,
   targetPostflightExact: true,
   postflightDeploymentExact: true,
+  configuredTopologyEvidenceExact: true,
   runtimeRoutesPolledExact: true,
   runtimeMaintenanceStateExact: true,
   boundaryPostflightExact: true,
@@ -203,7 +241,7 @@ function fenceTerminal(overrides: Record<string, unknown> = {}): string {
   const topology = sha("topology");
   const collateral = sha("collateral");
   return canonical({
-    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v2",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     binding,
     bindingSha256: sha(canonical(binding)),
@@ -218,6 +256,7 @@ function fenceTerminal(overrides: Record<string, unknown> = {}): string {
       mutationCallCount: 1,
       acknowledgementExact: true,
       providerBeforeSha256: sha("provider-before"),
+      providerImmediatelyBeforeWriteSha256: sha("provider-before"),
       providerAfterSha256: sha("provider-after"),
       deploymentBeforeIdSha256: deploymentHash,
       deploymentAfterIdSha256: deploymentHash,
@@ -226,7 +265,9 @@ function fenceTerminal(overrides: Record<string, unknown> = {}): string {
       sourcePreservedExact: true,
       deploymentIdChanged: false,
       topologyBeforeSha256: topology,
+      topologyImmediatelyBeforeWriteSha256: topology,
       topologyAfterSha256: topology,
+      configuredTopologyEvidence: productionWorkerTopologyEvidence(),
       collateralVariablesBeforeSha256: collateral,
       collateralVariablesAfterSha256: collateral,
     },
@@ -277,6 +318,7 @@ const DEPLOYMENT_CHECKS = {
   cliExact: true,
   writeTokenScopeExact: true,
   costPolicyExact: true,
+  configuredTopologyExact: true,
   prerequisiteExact: true,
   workerFencePrerequisiteExact: true,
   workerFenceDeploymentContinuityExact: true,
@@ -285,6 +327,7 @@ const DEPLOYMENT_CHECKS = {
   gitAutodeployAbsent: true,
   collateralInventoryExact: true,
   durableIntentExact: true,
+  immediatePrewriteExact: true,
   sourceReasserted: true,
   writeAttemptedAtMostOnce: true,
   targetPostflightAttempted: true,
@@ -295,6 +338,8 @@ const DEPLOYMENT_CHECKS = {
   runtimeHealthExact: true,
   runtimeStartupExact: true,
   runtimeReadinessExact: true,
+  fencedRuntimeAbsentBeforeWrite: true,
+  fencedRuntimeAbsentPostflight: true,
   collateralStateUnchanged: true,
   boundaryPostflightExact: true,
   terminalEvidenceExact: true,
@@ -305,8 +350,18 @@ function deploymentReceipt(
   replicaCount = 1,
 ): string {
   const collateral = sha("deployment-collateral");
+  const topologyWithoutHash = {
+    configuredReplicas: replicaCount,
+    configuredRegions: [
+      { region: "asia-southeast1-eqsg3a", numReplicas: replicaCount },
+    ],
+  };
+  const topology = {
+    ...topologyWithoutHash,
+    configuredTopologySha256: sha(canonicalTopology(topologyWithoutHash)),
+  };
   return canonical({
-    schemaVersion: "pintpath-railway-application-deployment-executor/v5",
+    schemaVersion: "pintpath-railway-application-deployment-executor/v6",
     operation: "pintpath-railway-application-source-upload",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     target: "production",
@@ -325,6 +380,22 @@ function deploymentReceipt(
     boundaryPostflightSha256: sha("deploy-boundary-after"),
     collateralSnapshotSha256s: { before: collateral, after: collateral },
     replicaCounts: { before: replicaCount, after: replicaCount },
+    legacyReplicaCounts: {
+      before: null,
+      immediatelyBeforeWrite: null,
+      after: null,
+    },
+    configuredTopology: {
+      authoritativeSource: "environment.config(decryptVariables:false)",
+      before: topology,
+      immediatelyBeforeWrite: topology,
+      after: topology,
+    },
+    runtimeAbsence: {
+      required: false,
+      immediatelyBeforeWrite: null,
+      postflight: null,
+    },
     runtimeResponseSha256s: {
       health: sha("health"),
       startup: sha("startup"),
@@ -340,6 +411,14 @@ function deploymentReceipt(
     },
     checks,
   });
+}
+
+function tamperedDeploymentReceipt(
+  tamper: (receipt: Record<string, any>) => void,
+): string {
+  const receipt = JSON.parse(deploymentReceipt()) as Record<string, any>;
+  tamper(receipt);
+  return canonical(receipt);
 }
 
 const ROLE_LIMIT_CHECKS = {
@@ -492,7 +571,7 @@ function activateTerminal(deploymentBeforeIdSha256: string): string {
   const topology = sha("topology");
   const collateral = sha("collateral");
   return canonical({
-    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+    schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v2",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     binding,
     bindingSha256: sha(canonical(binding)),
@@ -507,6 +586,7 @@ function activateTerminal(deploymentBeforeIdSha256: string): string {
       mutationCallCount: 1,
       acknowledgementExact: true,
       providerBeforeSha256: sha("activation-provider-before"),
+      providerImmediatelyBeforeWriteSha256: sha("activation-provider-before"),
       providerAfterSha256: sha("activation-provider-after"),
       deploymentBeforeIdSha256,
       deploymentAfterIdSha256,
@@ -515,7 +595,9 @@ function activateTerminal(deploymentBeforeIdSha256: string): string {
       sourcePreservedExact: true,
       deploymentIdChanged: true,
       topologyBeforeSha256: topology,
+      topologyImmediatelyBeforeWriteSha256: topology,
       topologyAfterSha256: topology,
+      configuredTopologyEvidence: productionWorkerTopologyEvidence(),
       collateralVariablesBeforeSha256: collateral,
       collateralVariablesAfterSha256: collateral,
     },
@@ -1551,6 +1633,23 @@ describe("production maintenance role-limit prerequisites", () => {
       "production already has two replicas",
       undefined,
       () => deploymentReceipt(DEPLOYMENT_CHECKS, 2),
+      false,
+    ],
+    [
+      "configured topology hash drift",
+      undefined,
+      () => tamperedDeploymentReceipt((receipt) => {
+        receipt.configuredTopology.after.configuredTopologySha256 =
+          sha("tampered-production-topology");
+      }),
+      false,
+    ],
+    [
+      "unexpected runtime-absence claim",
+      undefined,
+      () => tamperedDeploymentReceipt((receipt) => {
+        receipt.runtimeAbsence.postflight = true;
+      }),
       false,
     ],
     ["later production worker mutation", undefined, undefined, true],

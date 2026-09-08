@@ -18,6 +18,11 @@ import {
 } from "../scripts/observe-production-post-promotion-pitr.js";
 import { productionApplicationDeploymentReceiptFixture } from
   "./production-application-deployment-receipt.fixtures.js";
+import {
+  productionRouteTopologyFixture,
+  productionScaleTopologyFixture,
+} from
+  "./fixtures/protected-scale-receipt.js";
 import { writeLogicalOffsiteFixture } from "./postgres-logical-offsite.fixtures.js";
 
 const CANDIDATE = "c".repeat(40);
@@ -53,6 +58,10 @@ function sha256(value: crypto.BinaryLike): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function producerReceiptJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
 function queryName(init?: RequestInit): string {
   const body = JSON.parse(String(init?.body)) as { query: string; variables: Json };
   if (body.query === POSTGRES_HA_PITR_SCOPE) return "scope";
@@ -70,7 +79,7 @@ describe("production post-promotion PITR observer", () => {
     const backup = writeLogicalOffsiteFixture(root, "2026-08-14T00:04:30.000Z", 3);
     const manifestFile = path.join(backup.backupDirectory, "manifest.json");
     const deploymentFile = path.join(root, "deployment.json");
-    fs.writeFileSync(deploymentFile, canonicalPostgresBackupJson(
+    fs.writeFileSync(deploymentFile, producerReceiptJson(
       productionApplicationDeploymentReceiptFixture({
         candidateSha: CANDIDATE,
         previousDeploymentIdSha256: PRE_UPLOAD_DEPLOYMENT_ID_SHA256,
@@ -81,8 +90,8 @@ describe("production post-promotion PITR observer", () => {
     ), { mode: 0o600 });
     fs.chmodSync(deploymentFile, 0o600);
     const scaleFile = path.join(root, "scale.json");
-    fs.writeFileSync(scaleFile, canonicalPostgresBackupJson({
-      schemaVersion: "pintpath-permanent-staging-scale-operation/v2",
+    fs.writeFileSync(scaleFile, producerReceiptJson({
+      schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
       executorState: "GITHUB_ENVIRONMENT_PROTECTED",
       direction: "converge-production-two",
       outcome: "scaled",
@@ -105,6 +114,7 @@ describe("production post-promotion PITR observer", () => {
         deploymentBeforeIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
         deploymentAfterIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       },
+      replicaTopology: productionScaleTopologyFixture(),
       checks: {
         policyExact: true,
         githubAuthorityExact: true,
@@ -124,6 +134,7 @@ describe("production post-promotion PITR observer", () => {
         runtimePostflightExact: true,
         candidateUnchanged: true,
         deploymentUnchanged: true,
+        replicaTopologyEvidenceExact: true,
         boundaryPostflightExact: true,
         terminalEvidenceExact: true,
         finalReceiptEvidenceExact: true,
@@ -131,8 +142,8 @@ describe("production post-promotion PITR observer", () => {
     }), { mode: 0o600 });
     fs.chmodSync(scaleFile, 0o600);
     const closeFile = path.join(root, "close.json");
-    fs.writeFileSync(closeFile, canonicalPostgresBackupJson({
-      schemaVersion: "pintpath-protected-production-route-mutation/v1",
+    fs.writeFileSync(closeFile, producerReceiptJson({
+      schemaVersion: "pintpath-protected-production-route-mutation/v2",
       executorState: "GITHUB_ENVIRONMENT_PROTECTED",
       outcome: "closed",
       operation: "close",
@@ -164,6 +175,7 @@ describe("production post-promotion PITR observer", () => {
       terminalEvidenceSha256: "1".repeat(64),
       beforeInventorySha256: "2".repeat(64),
       afterInventorySha256: "3".repeat(64),
+      replicaTopology: productionRouteTopologyFixture(),
       checks: {
         policyExact: true,
         githubAuthorityExact: true,
@@ -186,6 +198,7 @@ describe("production post-promotion PITR observer", () => {
         patchPostflightEmpty: true,
         inventoryTransitionExact: true,
         candidateDeploymentPostflightExact: true,
+        replicaTopologyEvidenceExact: true,
         boundaryPostflightExact: true,
         publicRuntimePostflightExact: false,
         terminalEvidenceExact: true,

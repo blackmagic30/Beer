@@ -148,7 +148,7 @@ resource pins, operator approvals, or two-person evidence.
   preflight; permit one source upload with no automatic retry; reconcile
   uncertainty read-only; and bind `/health`, `/startup`, and `/ready` plus the
   unconditional postflight into SHA-bound evidence. It remains inactive
-  without protected-environment approval/secrets, does not authorize adjacent
+  without environment-scoped secrets and automated/signed authority, does not authorize adjacent
   Railway mutations, does not itself prove the separate combined cost gate,
   and does not close any live launch gate until authentic provider execution
   and independent review occur.
@@ -715,14 +715,17 @@ receipts, smoke/load/recovery evidence, and approvals remain external gates.
   provider-failure,
   expected-peak/2x-peak load, restart, rolling-deploy, rollback-build, and
   minimum 60-minute soak gates, then return permanent staging to one replica.
-- Enable and measure PITR; obtain recovery-administrator approval and provision
+- Enable and measure PITR; obtain signed recovery-administrator authority and provision
   the separately controlled AWS account/bucket/roles; then execute the frozen
   four-job activation for the exact candidate. The production-network capture
   must observe PITR and seal separate logical/private authorities; the
   disposable-network job must independently read both WORM sets, restore them,
   replay deletion twice, and pass the compiled local-child application smoke.
-  Dispatch while gated, record the assigned `GITHUB_RUN_ID`, sign and install
-  both per-run cleanup authorities, and only then approve capture. Require
+  The checked-in activation workflow still uses static base labels and must not
+  be dispatched: authoritative exact-run eligibility/controller evidence is
+  absent, so activation remains a hard NO-GO. A later reviewed successor must
+  bind the assigned `GITHUB_RUN_ID`, both signed per-run cleanup authorities,
+  and exact job eligibility without a human Environment pause. Require
   orderly purge-bound Supabase cleanup and both provider-absence terminals;
   emergency cleanup never greens the run. Standard cancel only, with
   force-cancel forbidden until independent observations prove both providers

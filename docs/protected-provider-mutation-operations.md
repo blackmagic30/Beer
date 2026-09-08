@@ -198,6 +198,19 @@ original -> read-only retry(s) -> exactly one successful reconciliation, all
 inside the original run's fixed 24-hour deadline. A reconciled cold-prepare
 receipt is accepted as the selected prepare for the later quiesce chain.
 
+The one authorized cross-candidate cold-quiesce successor is pinned even more
+narrowly. Its predecessor is candidate
+`838e8c877dcafc0a822a12e5a26afa81c26924a3`, run `34153306935`; the successor
+candidate must be its exact reviewed direct child, use a fresh same-candidate
+`prepare_run_id`, and complete the successor bridge no later than
+`2026-09-08T18:57:20Z`. Dispatch successor `quiesce` with
+`ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`,
+`ambiguous_quiesce_run_id=34153306935`, and an empty
+`ambiguous_prepare_run_id`. The sealed bridge and reviewed-authority bytes must
+prove the legacy command failed deterministically before the provider commit
+path; they are not evidence that the predecessor wrote, nor authority for any
+other candidate, run, topology, or later deadline.
+
 The completed `permanent-staging-postgres` runtime-URL repair is closed
 historical evidence bound to `f6bfb81…`; the executable cold-recovery chain
 does not consume it, it must not be repeated, and it does not freeze later
@@ -280,21 +293,18 @@ mutations on that exact dead baseline before cold prepare.
 
 ## One-time GitHub setup
 
-Create these GitHub Environments and restrict deployment branches to `main`.
-Repository-owner policy intentionally leaves GitHub Environment required-reviewer
-and self-review gates disabled for these operator-dispatched workflows. Authority
-still requires the exact protected-main candidate, original workflow run,
-environment-scoped credentials, reviewed-candidate history, and the workflow's
-fail-closed preflight and reconciliation. Do not add an Environment approval gate
-unless the repository owner explicitly changes this policy. The production
-Postgres source-lock environment is the documented exception: enable a deliberate
-release-owner approval gate immediately before the first production dispatch,
-after ordinary patching is complete. A solo repository owner may be the required
-reviewer with self-review allowed; reserve independent review for the final
-production deployment gate.
+Configure every operator GitHub Environment in this runbook for solo unattended
+execution: **zero required reviewers, zero wait timers, and deployment branches
+and tags restricted to protected `main` only**. Environment entry scopes
+credentials; it is not a human approval boundary. The exact protected-main
+candidate, original workflow run, reviewed-candidate history, automated checks,
+independent cryptographic signer/reviewer identities, signed change references,
+fail-closed preflight, and reconciliation remain mandatory. Do not weaken those
+machine-verifiable gates to compensate for removing a GitHub Environment prompt.
 
 - `permanent-staging-provider-mutation`
 - `permanent-staging-scale-evidence`
+- `permanent-staging-venue-directory`
 - `production-topology-configuration`
 - `production-runtime-configuration`
 - `permanent-staging-supabase-legacy-disable`
@@ -343,9 +353,16 @@ Scale-evidence environment secrets:
 Additional workflow-only protected secrets are exact and environment-scoped:
 
 - `production-topology-configuration` holds
+  `PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN`,
+  `PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`, and
   `PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN`.
 - `production-runtime-configuration` holds
   `PINTPATH_RAILWAY_PRODUCTION_VARIABLE_TOKEN`.
+- `permanent-staging-venue-directory` holds exactly
+  `PINTPATH_STAGING_SUPABASE_SECRET_KEY`,
+  `PINTPATH_STAGING_GOOGLE_PLACES_API_KEY`,
+  `PINTPATH_SUPABASE_STAGING_DATABASE_MIGRATION_TOKEN`, and
+  `PINTPATH_SUPABASE_STAGING_DATABASE_PASSWORD`.
 - `permanent-staging-postgres-build-canary` holds
   `PINTPATH_RAILWAY_STAGING_POSTGRES_CANARY_DEPLOY_TOKEN`.
 - `permanent-staging-supabase-legacy-disable` holds
@@ -356,13 +373,11 @@ Additional workflow-only protected secrets are exact and environment-scoped:
 - `production-postgres-source-repin` holds
   `PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN`,
   `PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`, and the distinct
-  `PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN`. Before the first
-  production dispatch, restrict it to protected `main`, require the designated
-  release owner, and disable administrator bypass. For a solo owner, allow
-  self-review so the explicit approval remains an auditable operator pause without
-  requiring a second account. Teams may instead designate an independent reviewer
-  and prevent self-review. Environment approval applies to this production
-  workflow job, not to ordinary repository patches.
+  `PINTPATH_RAILWAY_PRODUCTION_SOURCE_MUTATION_TOKEN`. It follows the same solo
+  unattended Environment policy: zero required reviewers, zero wait timers, and
+  protected `main` only. Its separate reviewed authority, source anchor,
+  candidate/run history, deploy-suppressed intent, and exact reconciliation are
+  the authorization boundary.
 
 The Supabase legacy-cutover environment also holds separate project-scoped
 `PINTPATH_SUPABASE_STAGING_SECRETS_READ_TOKEN` and
@@ -489,13 +504,14 @@ least-privilege secrets:
 - `PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN`
 - `PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`
 
-It requires an independent reviewer, prevents self-review and administrator
-bypass, and is restricted to protected `main`. Never place these credentials
-at repository scope: GitHub otherwise auto-creates an unprotected environment
-when the name is absent, which is not teardown authority. The restore metadata
-token may inspect only the separately reviewed disposable project; the delete
-token may delete only that exact project. Production and staging tokens remain
-read-only and exist solely to re-prove that forbidden resources are untouched.
+It has zero required reviewers, zero wait timers, and permits protected `main`
+only. Never place these credentials at repository scope: GitHub otherwise
+auto-creates an unprotected environment when the name is absent, which is not
+teardown authority. Independent signed teardown authority and exact target
+review remain mandatory. The restore metadata token may inspect only the
+separately reviewed disposable project; the delete token may delete only that
+exact project. Production and staging tokens remain read-only and exist solely
+to re-prove that forbidden resources are untouched.
 
 The two production-route environments each hold
 `PINTPATH_RAILWAY_PRODUCTION_ROUTE_METADATA_TOKEN` plus the two independent
@@ -506,12 +522,13 @@ alone holds `PINTPATH_RAILWAY_PRODUCTION_ROUTE_CREATE_TOKEN` and
 `PINTPATH_PRODUCTION_ROUTE_AUTHORITY_OPERATION=open`. Metadata, delete, and
 create credentials are distinct production-scoped tokens. Do not copy either
 writer between environments or expose any value as an input, log, or artifact.
-`production-promotion-recovery-activation` protects the two data-bearing JIT
-jobs. `production-capture` uses only
-`[self-hosted, linux, x64, pintpath-production-backup]` inside the production
-private network; `disposable-recover` uses only
-`[self-hosted, linux, x64, pintpath-disposable-recovery]` inside the exact
-disposable private network. The first captures PITR, logical backup, private
+`production-promotion-recovery-activation` scopes credentials for the two
+data-bearing jobs, but the current workflow selects only static base labels:
+`pintpath-production-backup` and `pintpath-disposable-recovery`.
+Authoritative exact-run eligibility and controller evidence are absent, so a
+standing matching runner is not mechanically excluded and activation remains
+a hard NO-GO. If a separately reviewed successor closes that control, the
+first job captures PITR, logical backup, private
 Storage and the deletion authority and seals the logical and private sets into
 their separate WORM authorities. The second independently retrieves both WORM
 sets, restores them, runs the compiled candidate as a local child against the
@@ -560,15 +577,23 @@ lineage sequence. Only a DISARMED state permits the next initial arm.
 
 Each teardown authority must be signed for the exact activation
 `GITHUB_RUN_ID`, attempt `1`, candidate, and reviewed disposable identities.
-Dispatch the activation and leave its environment approval pending, record the
-assigned run ID, create and independently verify both authorities, install
-their pins and distinct read/delete tokens in the cleanup environment, and
-only then approve capture. The Railway and Supabase cleanup steps run
-independently with `if: always()`. Supabase `cleanupMode=orderly` must bind the
-exact Storage purge receipt to finalize green; `emergency` cleanup is only a
-failure/cancellation safety path and can never finalize green. Use standard
-cancel only. Force-cancel is forbidden until independent read-only evidence
-proves both disposable providers absent.
+The checked-in activation workflow still selects only static production and
+disposable base labels. It does not implement an authoritative exact-run hold
+and cannot exclude a standing matching runner. Do not dispatch it: live
+activation is a hard NO-GO until a separately reviewed successor supplies the
+matching workflow labels, controller, negative/positive tests, private-network
+hosts, and authentic exact-run evidence. Keep zero required reviewers, zero
+wait timers, and protected `main` only; GitHub Environment entry scopes
+credentials and a human approval pause is not a substitute for the missing
+control. The eventual control must bind and independently verify the exact-run
+arm, both teardown authorities, their hash pins, distinct read/delete tokens,
+and singleton state CAS before making either job eligible. The
+Railway and Supabase cleanup steps run independently with
+`if: always()`. Supabase `cleanupMode=orderly` must bind the exact Storage purge
+receipt to finalize green; `emergency` cleanup is only a failure/cancellation
+safety path and can never finalize green. Use standard cancel only.
+Force-cancel is forbidden until independent read-only evidence proves both
+disposable providers absent.
 
 Before capture, the same exact run/candidate/targets and complete Railway
 workspace inventory must also be bound into the signed singleton emergency arm
@@ -658,6 +683,12 @@ route open. The controlling policy is schema v2 at SHA-256
 5. For the current dead/null recovery, prove the exact staging `profiles` Data
    API prerequisite from the protected runner, run cold `prepare` without
    changing the null runtime, then authenticate cold quiesce from null to zero.
+   The sole cross-candidate bridge must use predecessor candidate
+   `838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
+   an exact reviewed direct-child successor, a fresh successor
+   `prepare_run_id`, and deadline `2026-09-08T18:57:20Z`; pass the predecessor as
+   `ambiguous_quiesce_candidate_sha` and `ambiguous_quiesce_run_id`, while
+   leaving `ambiguous_prepare_run_id` empty.
    Upload the candidate only at explicit zero, then restore it from zero to one
    with automatic maintenance disabled and candidate-bound. A healthy legacy
    route instead uses the normal prepare and one-to-zero quiesce proof. Never
@@ -668,11 +699,12 @@ route open. The controlling policy is schema v2 at SHA-256
    candidate+target+variable guard; even a skipped prior run requires a new
    reviewed candidate. Complete those reviewed runtime writes while the
    restored candidate remains worker-disabled. Then run staging worker
-   `activate`, which independently authenticates the full prepare→quiesce→
-   fenced-upload→restore chain. Run the `active` deployment phase once at one
-   replica and require both its activation terminal and sibling full-chain
-   prerequisite verification. Retain this second successful candidate-bound
-   artifact as the active closeout. Prove every tracked server, browser,
+   `activate` with the exact `venue_directory_run_id`, which independently
+   authenticates the full prepare→quiesce→fenced-upload→venue-directory→restore
+   chain. Run the `active` deployment phase once at one replica and require both
+   its activation terminal and sibling full-chain prerequisite verification.
+   Retain this second successful candidate-bound artifact as the active
+   closeout. Prove every tracked server, browser,
    mobile, CI, scheduled, webhook, backup, and archived consumer plus Auth,
    admin, role, private Storage, provider, and Free-scope behavior uses the
    final configuration.
@@ -729,6 +761,8 @@ route open. The controlling policy is schema v2 at SHA-256
     ID, SHA-256 digest, size, producer check, run, and candidate. Their canonical
     receipts must prove the same deployment, exactly two healthy replicas, and
     strict deploy-before-scale-before-close chronology.
+    Both production worker `fence` and `activate` must set
+    `bootstrap_path=healthy-legacy`; neither may consume a cold-staging path.
 11. Keep the route absent through promotion. Dispatch `Activate protected
 production promotion recovery` only after the per-run cleanup-authority
     ceremony. Its four jobs capture production, independently retrieve the
@@ -776,8 +810,8 @@ ephemeral environment and a complete canonical inventory hash observed by two
 distinct tokens, performs one `projectDelete`, and independently re-verifies
 absence.
 
-These paths remain inactive without protected secrets, exact live IDs,
-approvals, and provider state. They do not themselves prove a restorable PITR
+These paths remain inactive without protected secrets, exact live IDs, signed
+authorities/change references, and provider state. They do not themselves prove a restorable PITR
 window, full application/Storage/tombstone recovery, WORM, signed RPO/RTO, or
 disposal of separately administered Supabase/evidence authorities. The exact
 production `pintpath.au` close/open pair above is the only route mutation in

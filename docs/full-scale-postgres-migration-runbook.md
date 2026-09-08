@@ -328,9 +328,12 @@ line, print it, or put it in Git.
 
    Configure both protected environments—
    `permanent-staging-postgres-migration-verifier-authority` and
-   `production-postgres-migration-verifier-authority`—as `main`-only, with a
-   required independent reviewer, self-review disabled, and administrator
-   bypass disabled. Each environment must define these target-specific
+   `production-postgres-migration-verifier-authority`—with **zero required
+   reviewers, zero wait timers, and deployment branches and tags restricted to
+   protected `main` only**. Environment entry scopes credentials; the distinct
+   operator/verifier identities, Ed25519 signature, exact target binding, and
+   independently reviewed migration authority remain mandatory. Each
+   environment must define these target-specific
    secrets: `PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_URL` (the exact URL
    containing a distinct short-lived LOGIN credential whose sole membership is
    `pintpath_migration_verifier_authority`),
@@ -547,7 +550,8 @@ URL file.
       one-replica deployment, complete the three Google/OpenAI categories/four
       exact Railway variable operations only through their protected authority.
       Run the separate atomic Supabase publishable/secret-key replacement under
-      its own approval. Every operation uses `skipDeploys=true` and must prove
+      its own signed or automated authority. Every operation uses
+      `skipDeploys=true` and must prove
       deployment identity, topology, and runtime unchanged; the current
       failed/stopped staging app cannot satisfy this preflight and requires a
       separately reviewed recovery path first. Then prepare and quiesce the
@@ -904,7 +908,8 @@ documented in
 [`production-logical-backup-operations.md`](./production-logical-backup-operations.md)
 closes those activation gaps for only its schema-v3 OCI backup and scheduled
 monthly logical-restore jobs: it starts the worker directly in the pinned
-digest runtime with frozen intrinsics, protected environment approval, exact
+digest runtime with frozen intrinsics, protected-environment credentials,
+automated cryptographic authority, exact
 transport policy, and authenticated evidence. Outside that workflow, this
 implementation remains review-only and must not authorize a live backup or
 restore ceremony. An escaped substituted tool could retain its credential

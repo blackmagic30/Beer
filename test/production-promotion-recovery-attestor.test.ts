@@ -27,6 +27,11 @@ import {
 } from "../scripts/create-production-promotion-recovery-activation-receipt.mjs";
 import { productionApplicationDeploymentReceiptFixture } from
   "./production-application-deployment-receipt.fixtures.js";
+import {
+  productionRouteTopologyFixture,
+  productionScaleTopologyFixture,
+} from
+  "./fixtures/protected-scale-receipt.js";
 import { writeLogicalOffsiteFixture } from "./postgres-logical-offsite.fixtures.js";
 
 const CANDIDATE = "c".repeat(40);
@@ -67,6 +72,13 @@ function privateRoot(): string {
 function writeJson(root: string, name: string, value: unknown): string {
   const filename = path.join(root, name);
   fs.writeFileSync(filename, canonicalPostgresBackupJson(value), { mode: 0o600 });
+  fs.chmodSync(filename, 0o600);
+  return filename;
+}
+
+function writeProducerReceipt(root: string, name: string, value: unknown): string {
+  const filename = path.join(root, name);
+  fs.writeFileSync(filename, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   fs.chmodSync(filename, 0o600);
   return filename;
 }
@@ -132,7 +144,14 @@ describe("production promotion-recovery attestor", () => {
     const backup = writeLogicalOffsiteFixture(root, "2026-08-14T00:05:00.000Z", 3);
     const files = new Map<string, string>();
     const put = (name: string, value: unknown) => {
-      const filename = writeJson(root, `${name}.json`, value);
+      const filename = [
+        "production-deployment-receipt",
+        "production-scale-receipt",
+        "closed-route-receipt",
+        "closed-route-terminal",
+      ].includes(name)
+        ? writeProducerReceipt(root, `${name}.json`, value)
+        : writeJson(root, `${name}.json`, value);
       files.set(name, filename);
       return filename;
     };
@@ -146,7 +165,7 @@ describe("production promotion-recovery attestor", () => {
     });
     put("production-deployment-receipt", deployment);
     put("production-scale-receipt", {
-      schemaVersion: "pintpath-permanent-staging-scale-operation/v2",
+      schemaVersion: "pintpath-permanent-staging-scale-operation/v3",
       executorState: "GITHUB_ENVIRONMENT_PROTECTED",
       direction: "converge-production-two",
       outcome: "scaled",
@@ -169,6 +188,7 @@ describe("production promotion-recovery attestor", () => {
         deploymentBeforeIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
         deploymentAfterIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       },
+      replicaTopology: productionScaleTopologyFixture(),
       checks: {
         policyExact: true,
         githubAuthorityExact: true,
@@ -188,21 +208,27 @@ describe("production promotion-recovery attestor", () => {
         runtimePostflightExact: true,
         candidateUnchanged: true,
         deploymentUnchanged: true,
+        replicaTopologyEvidenceExact: true,
         boundaryPostflightExact: true,
         terminalEvidenceExact: true,
         finalReceiptEvidenceExact: true,
       },
     });
     const provisionalClose = {
-      schemaVersion: "pintpath-protected-production-route-mutation/v1",
+      schemaVersion: "pintpath-protected-production-route-mutation/v2",
       operation: "close",
       candidateSha: CANDIDATE,
       deploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       terminalEvidenceSha256: null,
-      checks: { terminalEvidenceExact: false, finalReceiptEvidenceExact: false },
+      replicaTopology: productionRouteTopologyFixture(),
+      checks: {
+        replicaTopologyEvidenceExact: true,
+        terminalEvidenceExact: false,
+        finalReceiptEvidenceExact: false,
+      },
     };
     const terminal = {
-      schemaVersion: "pintpath-protected-production-route-terminal/v1",
+      schemaVersion: "pintpath-protected-production-route-terminal/v2",
       receipt: provisionalClose,
     };
     const terminalFile = put("closed-route-terminal", terminal);
@@ -228,13 +254,14 @@ describe("production promotion-recovery attestor", () => {
       patchPostflightEmpty: true,
       inventoryTransitionExact: true,
       candidateDeploymentPostflightExact: true,
+      replicaTopologyEvidenceExact: true,
       boundaryPostflightExact: true,
       publicRuntimePostflightExact: false,
       terminalEvidenceExact: true,
       finalReceiptEvidenceExact: true,
     };
     put("closed-route-receipt", {
-      schemaVersion: "pintpath-protected-production-route-mutation/v1",
+      schemaVersion: "pintpath-protected-production-route-mutation/v2",
       executorState: "GITHUB_ENVIRONMENT_PROTECTED",
       outcome: "closed",
       operation: "close",
@@ -255,6 +282,7 @@ describe("production promotion-recovery attestor", () => {
       attempts: 1,
       retryAllowed: false,
       terminalEvidenceSha256: sha256(fs.readFileSync(terminalFile)),
+      replicaTopology: productionRouteTopologyFixture(),
       checks: closeChecks,
     });
     const authorization = {

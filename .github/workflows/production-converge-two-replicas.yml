@@ -166,6 +166,7 @@ jobs:
           PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID: ${{ inputs.activate_run_id }}
           PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE: ${{ runner.temp }}/pintpath-production-scale-evidence/production-scale-activation-verification.json
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         shell: bash

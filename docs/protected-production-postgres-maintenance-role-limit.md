@@ -23,10 +23,13 @@ operator entry point is the manual
 ## Required protected wiring
 
 Create the GitHub environment
-`production-postgres-maintenance-role-limit`. Require an independent reviewer,
-prevent self-review, do not allow administrator bypass, and restrict it to
-`main`. Do not reuse an application-deployment or general production secret
-environment.
+`production-postgres-maintenance-role-limit` with **zero required reviewers,
+zero wait timers, and deployment branches and tags restricted to protected
+`main` only**. Environment entry scopes the credential; it is not a human
+approval gate. The exact candidate/run chain, independently reviewed capacity
+evidence, signed change reference, immutable intent, and automated fail-closed
+checks remain mandatory. Do not reuse an application-deployment or general
+production secret environment.
 
 The job deliberately requires an ephemeral, single-job self-hosted runner with
 all four labels:
@@ -78,7 +81,7 @@ deployment run blocks the role transition.
 
 The fence terminal must prove an atomic candidate-bound `false` variable
 transition while preserving the running deployment, topology, source, and
-collateral variables. The later deployment receipt must have every exact v5
+collateral variables. The later deployment receipt must have every exact v6
 executor check true. Bound to the pinned production deployment policy and
 same-candidate workflow authority, those checks prove that `/health`,
 `/startup`, and `/ready` reported workers disabled and candidate-bound, and
@@ -115,9 +118,9 @@ The consumed producer artifacts and receipt schemas are:
 
 - `pintpath-automatic-maintenance-worker-fence-production-fence-<sha>` /
   `automatic-maintenance-worker-fence-terminal.json` /
-  `pintpath-automatic-maintenance-worker-fence-terminal/v1`
+  `pintpath-automatic-maintenance-worker-fence-terminal/v2`
 - `pintpath-production-deployment-<sha>` / `deployment-receipt.json` /
-  `pintpath-railway-application-deployment-executor/v5`
+  `pintpath-railway-application-deployment-executor/v6`
 
 The role workflow publishes the durable pre-write artifact
 `pintpath-production-maintenance-role-limit-intent-<sha>-<run-id>`, containing

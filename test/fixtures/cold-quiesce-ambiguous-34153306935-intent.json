@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-cold-quiesce-intent/v1",
+  "policySha256": "5d68da5c8892c520a92a14816137887455eb95899cd3d43a1f9533e34fa6d6cd",
+  "operation": "cold-quiesce",
+  "candidateSha": "838e8c877dcafc0a822a12e5a26afa81c26924a3",
+  "expectedDeploymentSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+  "prepareRunId": "34152745186",
+  "prepareVerificationSha256": "b17e6b115d6331ba63b7abdd8a130d39ae2008f652480bbc167de4e9bb84b8bb",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "deploymentIdSha256": "fbfeb81e05c27cdf222cdccb5fc0707b72d29d73fb87aa817df82333bfc21422",
+  "replicasBefore": null,
+  "replicasAfter": 0,
+  "providerBeforeSha256": "b4030b2c3f0bc27d173f320ecc0a6dbabeed0f8792222e94480b1a23b47cfede",
+  "boundaryPreflightReceiptSha256": "827bc8f797062b613038ae5d6f5c24c9489f50d3beb889d55e92c5593b9bc742",
+  "maximumAttempts": 1,
+  "retryAllowed": false,
+  "normalOneToZeroReceiptClaimed": false,
+  "secretMaterialIncluded": false,
+  "secretDerivedCommitmentsIncluded": false
+}

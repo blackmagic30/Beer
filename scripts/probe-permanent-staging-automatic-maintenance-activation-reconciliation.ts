@@ -18,6 +18,10 @@ import {
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
 import {
+  workerFenceTopologyEvidence,
+  workerFenceTopologyEvidenceExact,
+} from "./lib/worker-fence-topology-evidence.js";
+import {
   parseRailwayApplicationDeploymentAttestationRuntimeResponse,
 } from "../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
@@ -27,7 +31,7 @@ import {
 } from "./verify-permanent-staging-worker-bootstrap-prerequisites.js";
 
 export const STAGING_ACTIVATION_RECONCILIATION_SCHEMA =
-  "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v1" as const;
+  "pintpath-automatic-maintenance-worker-fence-activation-reconciliation/v2" as const;
 
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
@@ -90,6 +94,7 @@ interface Checks {
   collateralVariablesUnchanged: boolean;
   runtimeActivatedAfter: boolean;
   boundaryPostflightExact: boolean;
+  configuredTopologyEvidenceExact: boolean;
   terminalEvidenceExact: boolean;
 }
 
@@ -309,8 +314,7 @@ async function probeRuntime(
 
 function stateExact(snapshot: ProviderSnapshot, candidateSha: string): boolean {
   const domain = snapshot.domains[0];
-  return snapshot.numReplicas === 1 &&
-    automaticMaintenanceWorkerFenceInternals.soleHealthyCandidate(
+  return automaticMaintenanceWorkerFenceInternals.soleHealthyCandidate(
       snapshot,
       candidateSha,
     ) &&
@@ -410,6 +414,7 @@ function emptyChecks(): Checks {
     collateralVariablesUnchanged: false,
     runtimeActivatedAfter: false,
     boundaryPostflightExact: false,
+    configuredTopologyEvidenceExact: false,
     terminalEvidenceExact: false,
   };
 }
@@ -545,6 +550,9 @@ export async function runPermanentStagingActivationReconciliationProbe(
     if (!checks.exactActivatedStateBefore || !checks.runtimeActivatedBefore) {
       throw new Error("activated_state_invalid");
     }
+    if (before === null || beforeRuntime === null) {
+      throw new Error("activated_state_invalid");
+    }
     const observation = canonical({
       schemaVersion:
         "pintpath-automatic-maintenance-worker-fence-activation-reconciliation-observation/v1",
@@ -558,7 +566,11 @@ export async function runPermanentStagingActivationReconciliationProbe(
       projectId: PROJECT_ID,
       environmentId: ENVIRONMENT_ID,
       serviceId: SERVICE_ID,
-      providerBeforeSha256: sha256(canonical(before)),
+      providerBeforeSha256: sha256(
+        automaticMaintenanceWorkerFenceInternals.providerAuthorityCanonical(before),
+      ),
+      configuredTopologyBefore: before.configuredTopology,
+      legacyReplicaCountBefore: before.numReplicas,
       boundaryPreflightReceiptSha256: boundaryBefore.receiptSha256,
       providerMutationAllowed: false,
       variableMutationCredentialAllowed: false,
@@ -580,7 +592,8 @@ export async function runPermanentStagingActivationReconciliationProbe(
     }
     const reasserted = await dependencies.readState();
     checks.providerReasserted = reasserted !== null &&
-      canonical(reasserted) === canonical(before);
+      automaticMaintenanceWorkerFenceInternals.providerAuthorityCanonical(reasserted)
+        === automaticMaintenanceWorkerFenceInternals.providerAuthorityCanonical(before);
     checks.runtimeReasserted = reasserted !== null &&
       await dependencies.probeRuntime(reasserted, args.candidateSha) !== null;
     if (!checks.providerReasserted || !checks.runtimeReasserted) {
@@ -591,16 +604,38 @@ export async function runPermanentStagingActivationReconciliationProbe(
     checks.exactActivatedStateAfter = after !== null &&
       stateExact(after, args.candidateSha);
     checks.providerStateUnchanged = after !== null &&
-      canonical(after) === canonical(before);
+      automaticMaintenanceWorkerFenceInternals.providerAuthorityCanonical(after)
+        === automaticMaintenanceWorkerFenceInternals.providerAuthorityCanonical(before);
     checks.collateralVariablesUnchanged = after !== null &&
       canonical(automaticMaintenanceWorkerFenceInternals.otherRows(after)) ===
         canonical(automaticMaintenanceWorkerFenceInternals.otherRows(before!));
     afterRuntime = after === null ? null :
       await dependencies.probeRuntime(after, args.candidateSha);
     checks.runtimeActivatedAfter = afterRuntime !== null;
+    if (after === null || afterRuntime === null) {
+      throw new Error("state_drift");
+    }
     boundaryAfter = await dependencies.boundaryCheck();
     checks.boundaryPostflightExact = boundaryAfter.passed &&
       boundaryAfter.receiptSha256 !== null;
+    checks.repositoryReasserted = checks.repositoryReasserted &&
+      dependencies.reassertRepositoryState(
+        dependencies.cwd,
+        args.candidateSha,
+      );
+    checks.configuredTopologyEvidenceExact = workerFenceTopologyEvidenceExact(
+      workerFenceTopologyEvidence(
+        "permanent-staging",
+        before,
+        null,
+        after,
+      ),
+      {
+        target: "permanent-staging",
+        operation: "activate",
+        writeAttempted: false,
+      },
+    );
     if (!Object.entries(checks)
       .filter(([name]) => name !== "terminalEvidenceExact")
       .every(([, value]) => value === true)) throw new Error("reconciliation_invalid");
@@ -632,8 +667,12 @@ export async function runPermanentStagingActivationReconciliationProbe(
         providerWriteAttempted: false,
       },
       providerEvidence: {
-        providerBeforeSha256: sha256(canonical(before)),
-        providerAfterSha256: sha256(canonical(after)),
+        providerBeforeSha256: sha256(
+          automaticMaintenanceWorkerFenceInternals.providerAuthorityCanonical(before),
+        ),
+        providerAfterSha256: sha256(
+          automaticMaintenanceWorkerFenceInternals.providerAuthorityCanonical(after),
+        ),
         deploymentBeforeIdSha256: railwayDeploymentIdentityIdSha256(
           "deployment",
           before.deployment.id,
@@ -649,6 +688,12 @@ export async function runPermanentStagingActivationReconciliationProbe(
         ),
         topologyAfterSha256: sha256(
           automaticMaintenanceWorkerFenceInternals.topologyCanonical(after),
+        ),
+        configuredTopologyEvidence: workerFenceTopologyEvidence(
+          "permanent-staging",
+          before,
+          null,
+          after,
         ),
         collateralVariablesBeforeSha256: sha256(canonical(
           automaticMaintenanceWorkerFenceInternals.otherRows(before),
@@ -705,6 +750,10 @@ export async function runPermanentStagingActivationReconciliationProbe(
     ? 0
     : 1;
 }
+
+export const stagingActivationReconciliationInternals = {
+  stateExact,
+};
 
 if (process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

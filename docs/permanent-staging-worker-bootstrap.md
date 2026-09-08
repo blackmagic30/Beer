@@ -35,10 +35,10 @@ in-progress transition.
    order, then calls the scale executor once with `bootstrap-staging-one`.
    Success proves the exact candidate at one replica with automatic maintenance
    disabled and candidate bound on `/health`, `/startup`, and `/ready`.
-6. Run staging `activate`. The same verifier supports an `activate` consumer
-   that authenticates the full prepare through venue-directory and restore
-   chain. Activation then enables automatic maintenance for the same sole
-   healthy candidate.
+6. Run staging `activate` with the exact `venue_directory_run_id`. The same
+   verifier supports an `activate` consumer that authenticates the full prepare
+   through venue-directory and restore chain. Activation then enables automatic
+   maintenance for the same sole healthy candidate.
 7. Run the `active` phase of `deploy-permanent-staging.yml`; its verifier mode
    `active-deploy` authenticates activation. Before scale evidence, verifier
    mode `scale-evidence` authenticates activation followed by the successful
@@ -47,6 +47,18 @@ in-progress transition.
 No bootstrap workflow dispatches a deployment or another provider workflow.
 Each operator starts the next protected manual workflow only after inspecting
 the prior terminal artifact.
+
+For the current policy-pinned cold/dead successor, replace only the normal
+prepare/quiesce entry with `recover-permanent-staging-cold-zero.yml`. Its one
+cross-candidate bridge pins predecessor candidate
+`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`, an
+exact reviewed direct-child successor, a fresh same-candidate `prepare_run_id`,
+and deadline `2026-09-08T18:57:20Z`. Successor quiesce must pass those first two
+values as `ambiguous_quiesce_candidate_sha` and
+`ambiguous_quiesce_run_id`, leave `ambiguous_prepare_run_id` empty, and retain
+the sealed successor bridge plus reviewed authority. The remaining fenced
+deployment, venue-directory, restore, activation, active closeout, and scale
+sequence stays candidate-bound and ordered.
 
 ## Bootstrap workflow inputs and artifacts
 
@@ -72,7 +84,11 @@ Each artifact contains the canonical
 terminal, and final receipt. The final receipt is respectively
 `quiesce-staging-zero-receipt.json` or
 `bootstrap-staging-one-receipt.json`, with schema
-`pintpath-permanent-staging-scale-operation/v2`.
+`pintpath-permanent-staging-scale-operation/v3`.
+
+The bootstrap-restore runner-loss reconciliation terminal is version 2. Its
+structured `configuredTopologyEvidence` is derived from Railway
+`environment.config`; nullable legacy replica fields are observation-only.
 
 ## Verifier consumer interface
 
@@ -106,7 +122,7 @@ parses canonical receipt schemas, rejects a later matching run, and enforces
 strict completion-before-start chronology. It contacts only the GitHub API.
 
 The verification receipt schema is
-`pintpath-permanent-staging-worker-bootstrap-prerequisites/v4`. It records the
+`pintpath-permanent-staging-worker-bootstrap-prerequisites/v5`. It records the
 reviewed PR authority, consumer identity, ordered producer run IDs, artifact
 IDs/names/digests/sizes, receipt hashes and source/replica bindings, policy SHA,
 verification expiry, and all checks. It contains neither secrets nor hashes of
@@ -116,7 +132,7 @@ more than 24 hours old.
 ## Immutable policy bindings
 
 The prerequisite policy SHA is
-`a7fe6184aa6849cc9b4f8f4652cf02608a21685153144812e9de0e2567bbb548`.
+`b329d08110047897743d4acf7d55e2e7c4aac59c4d16b5e632380bde6079416d`.
 Its producer hashes are:
 
 - worker prepare/activate policy:
@@ -124,11 +140,11 @@ Its producer hashes are:
 - scale policy:
   `164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608`;
 - fenced zero-replica deployment policy:
-  `a46ee1af6d8b3afcfe38d595767e28fcae53a9716730e4cff33b9da39e0ff7df`;
+  `9cea6cacfd33a2f4500532ecf2d4564c1dbc9595eb6835e2935ff9e2df5186f5`;
 - active one-replica deployment policy:
-  `c73fe315f98c5736f4ac31963e11361b059881d7ec5774292e7e8048ff6f8986`;
+  `49367b816eb1ad86e32aa85dd9bd1e2297743760e113a23c882b3776b5afad77`;
 - venue-directory policy:
-  `08d01a0c1d97677334c734354d691159084b4e432512d0d25e2617f10a07d94f`.
+  `3474e28c413e908b7dac76190709553e753fed39df753a1cd273b29f161bfcef`.
 
 Any producer policy change deliberately invalidates this verifier until all
 contracts are reviewed and the prerequisite policy and embedded digest are
