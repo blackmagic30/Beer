@@ -1,0 +1,1129 @@
+{
+  "data": {
+    "environment": {
+      "id": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "config": {
+        "services": {
+          "6816c4a2-e392-4ee5-826f-2584cb599ec0": {
+            "deploy": {
+              "drainingSeconds": 30,
+              "ipv6EgressEnabled": false,
+              "limitOverride": {
+                "containers": {
+                  "cpu": 0.1,
+                  "memoryBytes": 500000000
+                }
+              },
+              "multiRegionConfig": {
+                "us-west2": {
+                  "numReplicas": 1,
+                  "stackerAssignment": null
+                }
+              },
+              "overlapSeconds": 0,
+              "runtime": "V2",
+              "useLegacyStacker": false
+            }
+          }
+        }
+      },
+      "variables": {
+        "edges": [
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "f056e45a-d1a8-45f3-ab47-4b1f9a2216e9",
+              "isSealed": false,
+              "name": "ACCOUNT_DELETION_NOTICE_MODE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "6de43735-26df-450a-b26e-3d3aaca65620",
+              "isSealed": false,
+              "name": "ACCOUNT_DELETION_REHEARSAL_ENABLED",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "4dc084c6-ba34-4692-840b-d9b3883388ee",
+              "isSealed": false,
+              "name": "ADMIN_EMAILS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "6d1fa6af-2d50-4f5b-b731-575ece7bc7c9",
+              "isSealed": false,
+              "name": "ADMIN_SHARED_SECRET",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "a8d42243-8b1b-4dd3-8a38-54e6ae2ddae9",
+              "isSealed": false,
+              "name": "ALCOHOL_GAMIFICATION_ENABLED",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "4a6cf258-6e67-4bf0-b6a0-fea35b75d74d",
+              "isSealed": false,
+              "name": "ALLOW_DEMO_BILLING_IN_PRODUCTION",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "457698a4-76b1-4952-82cb-c0b47e374736",
+              "isSealed": false,
+              "name": "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "cd76854a-4c58-44ad-ad05-222de7adef4e",
+              "isSealed": false,
+              "name": "ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "57310e9b-7b1d-4d45-90a3-5974039a39a1",
+              "isSealed": false,
+              "name": "BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "c06672fe-0fed-4c1e-bf84-60a1f5bf884f",
+              "isSealed": false,
+              "name": "COMMERCIAL_LAUNCH_ENABLED",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "1d725cf9-f849-4e24-b464-01749bee7abd",
+              "isSealed": false,
+              "name": "CONSUMER_PAID_ENROLLMENT_ENABLED",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "b6624731-63c5-4ca2-a527-ac5d94fa4f6f",
+              "isSealed": false,
+              "name": "CONTRIBUTOR_UNLOCK_DAYS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "fa6a79a8-86ce-4b4d-92f8-d7e254faadb4",
+              "isSealed": false,
+              "name": "CONTRIBUTOR_UNLOCK_POINTS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "359ee0d2-e96c-4286-ba89-5dcafec9bdd6",
+              "isSealed": false,
+              "name": "DATABASE_URL",
+              "references": [
+                "c454955f-263b-4599-aee0-dc447a4d3d15.PINTPATH_RUNTIME_DATABASE_URL"
+              ],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "cc0750a4-df2a-44d4-bf2b-dee36211935e",
+              "isSealed": false,
+              "name": "DEMO_BILLING_MODE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "640cc70b-b7ce-4ba2-a8ac-74ece9be68bc",
+              "isSealed": false,
+              "name": "FIELD_TEST_MODE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "2a11a530-43ac-4e8e-b06b-ca81e57c94ec",
+              "isSealed": false,
+              "name": "FREE_PRICE_REVEALS_PER_DAY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "81be960f-7904-4778-9b58-3ac6e1d9ddc0",
+              "isSealed": false,
+              "name": "GOOGLE_MAPS_API_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "19a22361-29ae-48d0-9d35-76bede143801",
+              "isSealed": false,
+              "name": "GOOGLE_MAPS_MAP_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "89b7ba19-61c0-425c-9270-c21951040ae2",
+              "isSealed": false,
+              "name": "GOOGLE_PLACES_API_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "87419523-d167-4234-af43-9080b285969a",
+              "isSealed": false,
+              "name": "HOST",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "ddf887b9-95cf-4c1d-9069-d32f2151d942",
+              "isSealed": false,
+              "name": "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "fdf04155-bf86-4e1f-9eb7-4ff3d0890733",
+              "isSealed": false,
+              "name": "NODE_ENV",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "a46ce995-d643-4e25-ab10-cb5bef0405a1",
+              "isSealed": false,
+              "name": "OFFSITE_BACKUP_INTERVAL_HOURS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "a54c3ba1-3a16-4ad8-ae95-3c692ecd28f9",
+              "isSealed": false,
+              "name": "OFFSITE_BACKUP_RETENTION_DAYS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "98e86f23-bf73-4f96-b1f3-79d3ac6a100f",
+              "isSealed": false,
+              "name": "OPENAI_API_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "d2854e97-3d2a-4022-a9f2-052ac5c8df4e",
+              "isSealed": false,
+              "name": "PARSE_CONFIDENCE_THRESHOLD",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "91400ccc-a8fa-42e9-904c-167640062f6a",
+              "isSealed": false,
+              "name": "PINT_POINTS_REWARDS_ENABLED",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "e2cb66fa-e0cd-4ddd-b8e1-a133e4344911",
+              "isSealed": false,
+              "name": "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "f5e62aba-46f6-490a-8314-e406dfddcb7c",
+              "isSealed": false,
+              "name": "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "82c963ca-e1f8-4db5-9586-635eea11625d",
+              "isSealed": false,
+              "name": "PINTPATH_DATABASE_RESOURCE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "06dc90bd-8394-4f44-afca-b12b4bb84fb5",
+              "isSealed": false,
+              "name": "PINTPATH_EXPECTED_DATABASE_RESOURCE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "2c3d9026-3f8f-45c3-9f4b-3b9f10460c35",
+              "isSealed": false,
+              "name": "PINTPATH_EXPECTED_DATABASE_URL_SHA256",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "36583794-cd51-4aaf-82d7-cb6ed51faf20",
+              "isSealed": false,
+              "name": "PINTPATH_EXPECTED_REDIS_RESOURCE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "5cd4c3af-f281-4a4e-8549-b3f3f33621ad",
+              "isSealed": false,
+              "name": "PINTPATH_EXPECTED_REDIS_URL_SHA256",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "49c27388-4bb3-4723-8f06-f3345bc73996",
+              "isSealed": false,
+              "name": "PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "84b77060-000c-4616-95b3-b4784c0c5892",
+              "isSealed": false,
+              "name": "PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "35d1c1e2-5b4c-414a-83d3-4edf24673cc6",
+              "isSealed": false,
+              "name": "PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "3f8e9a0c-e637-4d0c-bf8e-a0988eb63030",
+              "isSealed": false,
+              "name": "PINTPATH_FORBIDDEN_REDIS_URL_SHA256S",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "3a80af62-0a51-41fa-99ad-e6ea0d0fb1e0",
+              "isSealed": false,
+              "name": "PINTPATH_IDENTITY_REGISTRY_PHASE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "8df4c672-e386-4012-b8a5-f14c528d63ac",
+              "isSealed": false,
+              "name": "PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "9edbef41-fec2-478f-a2da-a15ecb53a60a",
+              "isSealed": false,
+              "name": "PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "fc673415-2c6f-4367-bb11-9b047ae895b8",
+              "isSealed": false,
+              "name": "PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "cb0e37fb-e631-425a-9f4e-43d33f4aeda2",
+              "isSealed": false,
+              "name": "PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "993d7748-12d4-4ecb-ab37-528e4f3abf7e",
+              "isSealed": false,
+              "name": "PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "6878f630-31fc-4262-835d-4063166c06f8",
+              "isSealed": false,
+              "name": "PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "f777c97c-234f-47ae-8917-98764bfae14f",
+              "isSealed": false,
+              "name": "PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "c71ac870-bffb-42d0-b8f6-877469324e8a",
+              "isSealed": false,
+              "name": "PINTPATH_REDIS_RESOURCE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "950e4e98-587c-498d-92aa-70ecee9ce0f0",
+              "isSealed": false,
+              "name": "PORT",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "7756289e-69ab-4688-b8c5-5667fc7c0183",
+              "isSealed": false,
+              "name": "POS_WEBHOOK_SIGNING_SECRET",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "9fc9f1b0-640d-463e-90cf-78ba051eb996",
+              "isSealed": false,
+              "name": "PUBLIC_BASE_URL",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "cb81960c-a4e6-4f32-abe5-3a043881349e",
+              "isSealed": false,
+              "name": "REDIS_KEY_NAMESPACE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "3fdc66ef-5064-4d4c-95da-9401f40dedce",
+              "isSealed": false,
+              "name": "REDIS_URL",
+              "references": [
+                "d6351cec-fe04-4a6f-8e05-1cc164ea1e73.REDIS_URL"
+              ],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "3ed85001-66fa-4e23-accc-8fd9cb08feed",
+              "isSealed": false,
+              "name": "REPORT_DELIVERY_SCHEDULE_ENABLED",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "2f61e658-bc61-4955-82e2-f10c849df036",
+              "isSealed": false,
+              "name": "REPORT_EMAIL_FROM",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "59f567bc-bb41-4187-b877-ad69f47d8723",
+              "isSealed": false,
+              "name": "REPORT_EMAIL_MODE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "5fe5052b-4680-4651-81ee-14a7caf3e11e",
+              "isSealed": false,
+              "name": "REPORT_EMAIL_REPLY_TO",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "aa215093-d71a-402e-ac24-a753a3ed0f30",
+              "isSealed": false,
+              "name": "REPORT_TIMEZONE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "a10fa50b-bda0-4cb7-ba59-f4379bc1c525",
+              "isSealed": false,
+              "name": "REQUIRE_ADMIN_MFA_IN_PRODUCTION",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "31ccac04-b461-4628-91e8-af61b6cad898",
+              "isSealed": false,
+              "name": "REQUIRE_REDIS_RATE_LIMITING",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "39ef45e1-4828-4510-b886-12f41597a452",
+              "isSealed": false,
+              "name": "REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "0c6afb7b-ea06-4d12-bdfb-89103553be02",
+              "isSealed": false,
+              "name": "RESEND_API_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "9e4ca5b1-00b2-4db4-9356-b4c98f5e3654",
+              "isSealed": false,
+              "name": "RESTORE_REHEARSAL_MODE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "1302c7b7-1c1d-4058-a965-bd667ca10d07",
+              "isSealed": false,
+              "name": "SOURCE_EVIDENCE_SIGNING_SECRET",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "cffe893b-c947-45c0-9a7b-b3d808d445bc",
+              "isSealed": false,
+              "name": "STRIPE_PRICE_MONTHLY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "059a902d-387c-498a-b5c5-a6c4e19d24b8",
+              "isSealed": false,
+              "name": "STRIPE_PRICE_YEARLY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "83d02f3f-813b-4e63-95ff-4255e029a996",
+              "isSealed": false,
+              "name": "STRIPE_PRO_PRICE_ID",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "2b25660d-8f1f-4d06-8113-8e48b5bce4a7",
+              "isSealed": false,
+              "name": "STRIPE_SECRET_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "57bdc4de-370b-44be-85a9-968f6a5edb3f",
+              "isSealed": false,
+              "name": "STRIPE_WEBHOOK_SECRET",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "517d9bb7-3598-4dcc-aca1-88084c7361c3",
+              "isSealed": false,
+              "name": "SUPABASE_ANON_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "3bce517e-2852-4e7b-860c-9551768d1a25",
+              "isSealed": false,
+              "name": "SUPABASE_RESULTS_TABLE",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "86d5b705-1d1d-4639-9fd6-cf9dc395fa61",
+              "isSealed": true,
+              "name": "SUPABASE_SERVICE_ROLE_KEY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "1e84ea8b-e845-4c88-8df4-e0651063b552",
+              "isSealed": false,
+              "name": "SUPABASE_URL",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "d705618b-a6cb-4a97-8ba7-0193f0aa414b",
+              "isSealed": false,
+              "name": "TRUST_PROXY",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "130a8c21-4bba-407e-803b-f0884dbc9761",
+              "isSealed": false,
+              "name": "VENUE_PRO_TRIAL_DAYS",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "a71cf9f8-e5e6-4cf3-9d2f-825ae1de0cd2",
+              "isSealed": false,
+              "name": "VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD",
+              "references": [],
+              "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "39aaa7b7-bc10-4803-9c3b-2b42e6332712",
+              "isSealed": false,
+              "name": "DATABASE_URL",
+              "references": [
+                "PGUSER",
+                "POSTGRES_PASSWORD",
+                "RAILWAY_PRIVATE_DOMAIN",
+                "PGDATABASE"
+              ],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "d385e1e6-752d-4298-9fb0-1cc8cfa09170",
+              "isSealed": false,
+              "name": "PGDATA",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "0340c9e7-5634-4c13-9a16-130421520e0a",
+              "isSealed": false,
+              "name": "PGDATABASE",
+              "references": [
+                "POSTGRES_DB"
+              ],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "1ad85ddd-4154-4e25-8941-87a3dd1d762d",
+              "isSealed": false,
+              "name": "PGHOST",
+              "references": [
+                "RAILWAY_PRIVATE_DOMAIN"
+              ],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "979dff7d-9d5f-4bab-b461-210a65af2350",
+              "isSealed": false,
+              "name": "PGPASSWORD",
+              "references": [
+                "POSTGRES_PASSWORD"
+              ],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "bc8b0239-5d8a-4371-b571-a1bdf2c1e3c8",
+              "isSealed": false,
+              "name": "PGPORT",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "f2293f65-4920-4494-a887-0dd483c587ff",
+              "isSealed": false,
+              "name": "PGUSER",
+              "references": [
+                "POSTGRES_USER"
+              ],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "984a06c0-d62f-4338-92d3-233183e32deb",
+              "isSealed": false,
+              "name": "PINTPATH_RUNTIME_DATABASE_URL",
+              "references": [
+                "PINTPATH_RUNTIME_PASSWORD",
+                "RAILWAY_PRIVATE_DOMAIN",
+                "PGPORT"
+              ],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "8505af61-9439-40d8-a319-ceec129ffcc2",
+              "isSealed": false,
+              "name": "PINTPATH_RUNTIME_PASSWORD",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "36926f94-7664-49b5-9449-5ac0865b2371",
+              "isSealed": false,
+              "name": "POSTGRES_DB",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "e9070fb2-f914-4538-ace4-bdfabf43f2a3",
+              "isSealed": false,
+              "name": "POSTGRES_PASSWORD",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "437607bd-c53a-4a30-83da-bc67c50fa845",
+              "isSealed": false,
+              "name": "POSTGRES_USER",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "2cc7382f-02c4-41ef-abba-d8ff00f64f2d",
+              "isSealed": false,
+              "name": "RAILWAY_DEPLOYMENT_DRAINING_SECONDS",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "ba1d41fd-120e-4860-a7b0-e332f3be56c9",
+              "isSealed": false,
+              "name": "SSL_CERT_DAYS",
+              "references": [],
+              "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "b80d8bb1-f5df-4122-a4fe-b50f0ac2fb8e",
+              "isSealed": false,
+              "name": "REDIS_PASSWORD",
+              "references": [],
+              "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "37d1786c-c956-4482-8a52-36f0382f4256",
+              "isSealed": false,
+              "name": "REDIS_PUBLIC_URL",
+              "references": [
+                "REDIS_PASSWORD",
+                "RAILWAY_TCP_PROXY_DOMAIN",
+                "RAILWAY_TCP_PROXY_PORT"
+              ],
+              "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "4fa2e19d-395f-4b69-a5b1-25d8f232e75b",
+              "isSealed": false,
+              "name": "REDIS_URL",
+              "references": [
+                "REDISUSER",
+                "REDIS_PASSWORD",
+                "REDISHOST",
+                "REDISPORT"
+              ],
+              "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "bbe52a8e-a81d-4594-bf01-91402ee4b572",
+              "isSealed": false,
+              "name": "REDISHOST",
+              "references": [
+                "RAILWAY_PRIVATE_DOMAIN"
+              ],
+              "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "0bf55b1f-7046-4edf-8b94-edd9c4cf9951",
+              "isSealed": false,
+              "name": "REDISPASSWORD",
+              "references": [
+                "REDIS_PASSWORD"
+              ],
+              "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "223c427a-5d58-43ae-8740-6f4cd84c07a7",
+              "isSealed": false,
+              "name": "REDISPORT",
+              "references": [],
+              "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73"
+            }
+          },
+          {
+            "node": {
+              "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+              "id": "1d93fd3e-ce43-4120-acb9-0c8ab44f7630",
+              "isSealed": false,
+              "name": "REDISUSER",
+              "references": [],
+              "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73"
+            }
+          }
+        ],
+        "pageInfo": {
+          "endCursor": "R1BDOlM6ZmRmMDQxNTUtYmY4Ni00ZTFmLTllYjctNGZmM2QwODkwNzMz",
+          "hasNextPage": false
+        }
+      }
+    },
+    "staged": {
+      "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "patch": {}
+    },
+    "serviceInstance": {
+      "activeDeployments": [
+        {
+          "deploymentStopped": false,
+          "id": "6300a324-9407-4b1c-b651-749c47e9537f",
+          "status": "SUCCESS"
+        }
+      ],
+      "domains": {
+        "customDomains": [],
+        "serviceDomains": [
+          {
+            "domain": "beer-staging.up.railway.app",
+            "id": "afbb2417-c6df-48e3-9987-271b10ab2962",
+            "targetPort": 8080
+          }
+        ]
+      },
+      "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "id": "5a2f3970-2850-44e0-9b6c-f5c7627dde13",
+      "latestDeployment": {
+        "deploymentStopped": false,
+        "id": "6300a324-9407-4b1c-b651-749c47e9537f",
+        "snapshotId": "92c2253a-60c4-47fb-8053-a2aee33fc944",
+        "status": "SUCCESS"
+      },
+      "numReplicas": null,
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "source": {
+        "image": null,
+        "repo": null
+      }
+    },
+    "deployment": {
+      "id": "6300a324-9407-4b1c-b651-749c47e9537f",
+      "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+      "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "snapshotId": "92c2253a-60c4-47fb-8053-a2aee33fc944",
+      "meta": {
+        "commitHash": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+        "imageDigest": "sha256:35787ff955a6f2f729ebe7e2220a6146d9429d2ab37e2a88b86225ff0681816e",
+        "patchId": null,
+        "serviceManifest": {
+          "deploy": {
+            "cronSchedule": null,
+            "drainingSeconds": 30,
+            "healthcheckPath": "/ready",
+            "healthcheckTimeout": 120,
+            "ipv6EgressEnabled": false,
+            "limitOverride": {
+              "containers": {
+                "cpu": 0.1,
+                "memoryBytes": 500000000
+              }
+            },
+            "multiRegionConfig": {
+              "us-west2": {
+                "numReplicas": 1,
+                "stackerAssignment": null
+              }
+            },
+            "numReplicas": 1,
+            "overlapSeconds": 0,
+            "preDeployCommand": [
+              "npm run predeploy:production"
+            ],
+            "preDeployTimeoutSeconds": null,
+            "region": null,
+            "registryCredentials": null,
+            "requiredMountPath": null,
+            "restartPolicyMaxRetries": 10,
+            "restartPolicyType": "ON_FAILURE",
+            "runtime": "V2",
+            "sleepApplication": false,
+            "startCommand": "node dist/src/server.js",
+            "useLegacyStacker": false
+          }
+        }
+      }
+    }
+  }
+}
