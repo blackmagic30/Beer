@@ -96,6 +96,16 @@ export const POST_Q_DEPLOYMENT_STOP_LOCK = Object.freeze({
       "877d697225c6f8a6290386a1f2e9b003ee1a521b01af0cd046d482a4b16c8dfc",
     patchId: "c6fe9c8a-b26e-4a1d-9d46-4b6ea7d84ad1",
   }),
+  recoveryBridge: Object.freeze({
+    candidateSha: "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7",
+    treeSha: "9978dca9491f7bf7bee77ce39debe1f713e89c53",
+    soleParentSha: "606d33facb515dd10bc94c360e43c20beb999cc1",
+    runId: "34255228036",
+    runAttempt: 1,
+    workflowId: 353312302,
+    prepareJobId: "102159216963",
+    applyJobId: "102160681336",
+  }),
   stableObservationCount: 3,
   stableObservationIntervalMs: 10_000,
   minimumStableObservationSpanMs: 20_000,
@@ -423,9 +433,12 @@ export function parsePostQAuthority(
       !exact(value.containment, [
         "workflowPath", "workflowId", "runId", "runNumber", "runAttempt",
         "headSha", "totalWorkflowDispatchRuns", "priorAttempts",
+        "recoveryBridge",
+        "workflowMetadataExact",
         "currentWriterNotStartedExact", "everyPriorWriterDefinitelySkippedExact",
         "allWorkflowRunPagesReadExact", "allRunAttemptJobPagesReadExact",
         "freshDispatchCannotRepeatWriteExact",
+        "priorCompletedBeforeWriterRunsDoNotConsumeAuthority",
       ]) || !exact(value.failedQ, [
         "runId", "runAttempt", "workflowId", "workflowPath", "headSha",
         "conclusion", "bridgeStepConclusion", "soleWriterStepConclusion",
@@ -448,21 +461,59 @@ export function parsePostQAuthority(
         ".github/workflows/stop-permanent-staging-post-q-deployment.yml" ||
       containment.runId !== expected.runId || containment.runAttempt !== 1 ||
       containment.headSha !== expected.candidateSha ||
-      !Number.isSafeInteger(containment.workflowId) ||
-      !Number.isSafeInteger(containment.runNumber) ||
-      !Number.isSafeInteger(containment.totalWorkflowDispatchRuns) ||
-      (containment.totalWorkflowDispatchRuns as number) < 1 ||
+      containment.workflowId !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.workflowId ||
+      containment.runNumber !== 2 ||
+      containment.totalWorkflowDispatchRuns !== 2 ||
       !Array.isArray(containment.priorAttempts) ||
+      containment.priorAttempts.length !== 1 ||
       containment.priorAttempts.some((attempt) =>
-        !exact(attempt, ["runId", "runAttempt", "writerDisposition"]) ||
+        !exact(attempt, [
+          "runId", "runAttempt", "headSha", "writerDisposition",
+        ]) ||
         !RUN_ID_PATTERN.test(String(attempt.runId)) ||
-        !Number.isSafeInteger(attempt.runAttempt) ||
+        attempt.runAttempt !== 1 ||
+        !/^[a-f0-9]{40}$/.test(String(attempt.headSha)) ||
         attempt.writerDisposition !== "completed_skipped") ||
+      containment.priorAttempts[0].runId !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.runId ||
+      containment.priorAttempts[0].headSha !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.candidateSha ||
+      !exact(containment.recoveryBridge, [
+        "runId", "runAttempt", "workflowId", "workflowPath", "headSha",
+        "prepareJobId", "applyJobId", "prepareFailedBeforeIntentExact",
+        "applyCompletedSkippedWithoutStepsExact",
+        "writerNeverExistedOrStartedExact", "artifactsAbsentExact",
+      ]) ||
+      containment.recoveryBridge.runId !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.runId ||
+      containment.recoveryBridge.runAttempt !== 1 ||
+      containment.recoveryBridge.workflowId !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.workflowId ||
+      containment.recoveryBridge.workflowPath !==
+        ".github/workflows/stop-permanent-staging-post-q-deployment.yml" ||
+      containment.recoveryBridge.headSha !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.candidateSha ||
+      containment.recoveryBridge.prepareJobId !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.prepareJobId ||
+      containment.recoveryBridge.applyJobId !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.applyJobId ||
+      containment.recoveryBridge.prepareFailedBeforeIntentExact !== true ||
+      containment.recoveryBridge.applyCompletedSkippedWithoutStepsExact !== true ||
+      containment.recoveryBridge.writerNeverExistedOrStartedExact !== true ||
+      containment.recoveryBridge.artifactsAbsentExact !== true ||
+      !containment.priorAttempts.some((attempt) =>
+        attempt.runId === POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.runId &&
+        attempt.runAttempt === 1 && attempt.headSha ===
+          POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.candidateSha &&
+        attempt.writerDisposition === "completed_skipped") ||
+      containment.workflowMetadataExact !== true ||
       containment.currentWriterNotStartedExact !== true ||
       containment.everyPriorWriterDefinitelySkippedExact !== true ||
       containment.allWorkflowRunPagesReadExact !== true ||
       containment.allRunAttemptJobPagesReadExact !== true ||
       containment.freshDispatchCannotRepeatWriteExact !== true ||
+      containment.priorCompletedBeforeWriterRunsDoNotConsumeAuthority !== true ||
       value.failedQ.runId !== POST_Q_DEPLOYMENT_STOP_LOCK.q.runId ||
       value.failedQ.runAttempt !== 1 || value.failedQ.workflowId !== 344383802 ||
       value.failedQ.workflowPath !==
@@ -572,6 +623,7 @@ export function parseReviewedContainmentAuthority(
     if (!exact(value, [
       "schemaVersion", "repository", "branch", "candidateSha",
       "reviewedPullRequest", "releasePolicySha256", "directParentSha",
+      "recoveryBridge",
       "authorizationDeadline", "currentContainmentRun", "requiredChecks",
       "requiredArtifacts", "checks", "secretMaterialIncluded",
       "secretDerivedCommitmentsIncluded",
@@ -582,7 +634,17 @@ export function parseReviewedContainmentAuthority(
       value.branch !== "main" ||
       value.candidateSha !== expected.candidateSha ||
       value.releasePolicySha256 !== REVIEWED_RELEASE_POLICY_SHA256 ||
-      value.directParentSha !== POST_Q_DEPLOYMENT_STOP_LOCK.q.candidateSha ||
+      value.directParentSha !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.candidateSha ||
+      !exact(value.recoveryBridge, [
+        "candidateSha", "treeSha", "soleParentSha",
+      ]) ||
+      value.recoveryBridge.candidateSha !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.candidateSha ||
+      value.recoveryBridge.treeSha !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.treeSha ||
+      value.recoveryBridge.soleParentSha !==
+        POST_Q_DEPLOYMENT_STOP_LOCK.recoveryBridge.soleParentSha ||
       value.authorizationDeadline !== "2026-09-08T18:57:20.000Z" ||
       !record(value.reviewedPullRequest) ||
       !exact(value.currentContainmentRun, [
@@ -600,6 +662,7 @@ export function parseReviewedContainmentAuthority(
         "directParentExact", "currentMainTipExact", "noLaterMainDriftExact",
         "baseRequiredCheckLineageExact", "baseRequiredArtifactsExact",
         "chronologyExact", "candidateMaximumAgeHours", "fixedDeadlineExact",
+        "recoveryBridgeExact",
       ]) || Object.entries(value.checks).some(([name, check]) =>
         name === "candidateMaximumAgeHours" ? check !== 168 : check !== true) ||
       value.secretMaterialIncluded !== false ||
