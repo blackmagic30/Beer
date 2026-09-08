@@ -37,6 +37,14 @@ on:
         description: Successor quiesce only; exact reviewed candidate of the pinned ambiguous quiesce
         required: false
         type: string
+      failed_prewrite_quiesce_run_id:
+        description: Successor quiesce only; exact direct-predecessor quiesce whose write step was skipped
+        required: false
+        type: string
+      failed_prewrite_quiesce_candidate_sha:
+        description: Successor quiesce only; exact reviewed direct predecessor of the skipped-write quiesce
+        required: false
+        type: string
       ambiguous_prepare_run_id:
         description: Prepare reconciliation only; exact prior prepare whose write step may have run
         required: false
@@ -89,6 +97,8 @@ jobs:
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
           AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
           AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
+          FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA: ${{ inputs.failed_prewrite_quiesce_candidate_sha }}
+          FAILED_PREWRITE_QUIESCE_RUN_ID: ${{ inputs.failed_prewrite_quiesce_run_id }}
           AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
           REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -106,6 +116,8 @@ jobs:
           test -z "$AMBIGUOUS_PREPARE_RUN_ID"
           test -z "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
           test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
+          test -z "$FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA"
+          test -z "$FAILED_PREWRITE_QUIESCE_RUN_ID"
           [[ "$REPLACEMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           test "$CONFIRMATION" = \
             "PREPARE_PERMANENT_STAGING_COLD_RECOVERY_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
@@ -265,6 +277,8 @@ jobs:
           AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
           AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
           AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA: ${{ inputs.failed_prewrite_quiesce_candidate_sha }}
+          FAILED_PREWRITE_QUIESCE_RUN_ID: ${{ inputs.failed_prewrite_quiesce_run_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DISPATCH_REF: ${{ github.ref }}
@@ -288,6 +302,8 @@ jobs:
           test -z "$PREPARE_RUN_ID"
           test -z "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
           test -z "$AMBIGUOUS_QUIESCE_RUN_ID"
+          test -z "$FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA"
+          test -z "$FAILED_PREWRITE_QUIESCE_RUN_ID"
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1
@@ -458,6 +474,8 @@ jobs:
         env:
           AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
           AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
+          FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA: ${{ inputs.failed_prewrite_quiesce_candidate_sha }}
+          FAILED_PREWRITE_QUIESCE_RUN_ID: ${{ inputs.failed_prewrite_quiesce_run_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DISPATCH_REF: ${{ github.ref }}
@@ -481,6 +499,15 @@ jobs:
           test "$CANDIDATE_SHA" != "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
           test "$AMBIGUOUS_QUIESCE_RUN_ID" = 34186930666
           test "$AMBIGUOUS_QUIESCE_RUN_ID" != "$RUN_ID"
+          test "$FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA" = \
+            de35797a41640a996971af0b1ad49e3c5372baa8
+          test "$FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA" != \
+            "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
+          test "$CANDIDATE_SHA" != "$FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA"
+          test "$FAILED_PREWRITE_QUIESCE_RUN_ID" = 34221811602
+          test "$FAILED_PREWRITE_QUIESCE_RUN_ID" != \
+            "$AMBIGUOUS_QUIESCE_RUN_ID"
+          test "$FAILED_PREWRITE_QUIESCE_RUN_ID" != "$RUN_ID"
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1
@@ -523,6 +550,8 @@ jobs:
             "$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite/sealed" \
             "$RUNNER_TEMP/pintpath-cold-prior" \
             "$RUNNER_TEMP/pintpath-cold-prior/sealed" \
+            "$RUNNER_TEMP/pintpath-cold-failed-prewrite" \
+            "$RUNNER_TEMP/pintpath-cold-failed-prewrite/sealed" \
             "$RUNNER_TEMP/pintpath-cold-legacy" \
             "$RUNNER_TEMP/pintpath-cold-legacy/sealed" \
             "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence" \
@@ -532,6 +561,8 @@ jobs:
         env:
           AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
           AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA: ${{ inputs.failed_prewrite_quiesce_candidate_sha }}
+          FAILED_PREWRITE_QUIESCE_RUN_ID: ${{ inputs.failed_prewrite_quiesce_run_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
@@ -546,6 +577,8 @@ jobs:
             --replacement-run-id "$REPLACEMENT_RUN_ID" \
             --prior-candidate-sha "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA" \
             --prior-run-id "$AMBIGUOUS_QUIESCE_RUN_ID" \
+            --failed-prewrite-candidate-sha "$FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA" \
+            --failed-prewrite-run-id "$FAILED_PREWRITE_QUIESCE_RUN_ID" \
             > "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
           chmod 600 "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"
 
@@ -569,6 +602,34 @@ jobs:
             cold-quiesce-receipt.json \
             cold-quiesce-intent.json \
             cold-quiesce-successor-bridge.json \
+            prerequisites-verification.json \
+            reviewed-authority.json
+          do
+            mapfile -d '' matches < <(find "$root/downloaded" -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            cp --no-dereference -- "${matches[0]}" "$root/sealed/$leaf"
+            cmp --silent -- "${matches[0]}" "$root/sealed/$leaf"
+            chmod 400 "$root/sealed/$leaf"
+          done
+
+      - name: Retrieve the exact failed-prewrite direct-predecessor artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.failed_prewrite_quiesce_run_id }}
+          name: pintpath-permanent-staging-cold-quiesce-${{ inputs.failed_prewrite_quiesce_candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-cold-failed-prewrite/downloaded
+
+      - name: Seal the exact failed-prewrite evidence bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-cold-failed-prewrite"
+          test -z "$(find "$root/downloaded" -type l -print -quit)"
+          test "$(find "$root/downloaded" -type f | wc -l | tr -d ' ')" = 2
+          for leaf in \
             prerequisites-verification.json \
             reviewed-authority.json
           do
@@ -674,6 +735,7 @@ jobs:
             --prior-quiesce-run-id "$AMBIGUOUS_QUIESCE_RUN_ID" \
             --legacy-artifact-dir "$RUNNER_TEMP/pintpath-cold-legacy/sealed" \
             --prior-artifact-dir "$RUNNER_TEMP/pintpath-cold-prior/sealed" \
+            --failed-prewrite-artifact-dir "$RUNNER_TEMP/pintpath-cold-failed-prewrite/sealed" \
             --prepare-terminal-file "$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite/sealed/cold-prepare-terminal.json" \
             --reviewed-authority-file "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json" \
             --evidence-dir "$RUNNER_TEMP/pintpath-permanent-staging-cold-evidence"
@@ -718,13 +780,14 @@ jobs:
             rmdir "$custody"
           fi
 
-      - name: Remove immediate prior and prepare artifact custody
+      - name: Remove immediate prior, failed-prewrite, and prepare artifact custody
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           for custody in \
             "$RUNNER_TEMP/pintpath-cold-prior" \
+            "$RUNNER_TEMP/pintpath-cold-failed-prewrite" \
             "$RUNNER_TEMP/pintpath-cold-quiesce-prerequisite"
           do
             if [[ -d "$custody" && ! -L "$custody" ]]; then
@@ -772,6 +835,8 @@ jobs:
           AMBIGUOUS_PREPARE_RUN_ID: ${{ inputs.ambiguous_prepare_run_id }}
           AMBIGUOUS_QUIESCE_CANDIDATE_SHA: ${{ inputs.ambiguous_quiesce_candidate_sha }}
           AMBIGUOUS_QUIESCE_RUN_ID: ${{ inputs.ambiguous_quiesce_run_id }}
+          FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA: ${{ inputs.failed_prewrite_quiesce_candidate_sha }}
+          FAILED_PREWRITE_QUIESCE_RUN_ID: ${{ inputs.failed_prewrite_quiesce_run_id }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DISPATCH_REF: ${{ github.ref }}
@@ -793,6 +858,8 @@ jobs:
           test "$PREPARE_RUN_ID" != "$RUN_ID"
           test "$AMBIGUOUS_QUIESCE_RUN_ID" != "$RUN_ID"
           test -z "$AMBIGUOUS_QUIESCE_CANDIDATE_SHA"
+          test -z "$FAILED_PREWRITE_QUIESCE_CANDIDATE_SHA"
+          test -z "$FAILED_PREWRITE_QUIESCE_RUN_ID"
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1

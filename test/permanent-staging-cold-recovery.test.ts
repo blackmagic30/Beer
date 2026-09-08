@@ -55,7 +55,7 @@ const OLD_SOURCE = COLD_RECOVERY_LOCK.sourceSha;
 const PREPARE_RUN = "1000";
 const REPLACEMENT_RUN = "500";
 const CURRENT_RUN = "9000";
-const NOW = Date.parse("2026-09-08T05:11:02.000Z");
+const NOW = Date.parse("2026-09-08T12:11:02.000Z");
 
 function sha(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -320,7 +320,7 @@ function coldPrepareVerification(
       reviewedHeadSha: "b".repeat(40),
       mergeCommitSha: CANDIDATE,
       treeSha: "c".repeat(40),
-      mergedAt: "2026-09-08T04:35:00.000Z",
+      mergedAt: "2026-09-08T12:00:00.000Z",
       authorId: 1,
       mergedById: 2,
     },
@@ -329,15 +329,15 @@ function coldPrepareVerification(
       githubEnvironment: "permanent-staging-scale-evidence",
       runId: CURRENT_RUN,
       runAttempt: 1,
-      startedAt: "2026-09-08T05:10:30.000Z",
+      startedAt: "2026-09-08T12:10:30.000Z",
     },
     prerequisites: [{
       kind: "cold-prepare",
       workflowPath: ".github/workflows/recover-permanent-staging-cold-zero.yml",
       runId: PREPARE_RUN,
       runAttempt: 1,
-      startedAt: "2026-09-08T05:00:00.000Z",
-      completedAt: "2026-09-08T05:10:00.000Z",
+      startedAt: "2026-09-08T12:05:00.000Z",
+      completedAt: "2026-09-08T12:10:00.000Z",
       artifactName: `pintpath-permanent-staging-cold-prepare-${CANDIDATE}`,
       artifactId: "7000",
       artifactDigest: `sha256:${"d".repeat(64)}`,
@@ -355,8 +355,8 @@ function coldPrepareVerification(
       },
       prerequisiteVerificationSha256: null,
     }],
-    verifiedAt: "2026-09-08T05:10:45.000Z",
-    expiresAt: "2026-09-08T05:25:45.000Z",
+    verifiedAt: "2026-09-08T12:10:45.000Z",
+    expiresAt: "2026-09-08T12:25:45.000Z",
     checks: {
       policiesExact: true,
       currentMainExact: true,
@@ -463,11 +463,11 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
     workflowRunId: currentRunId,
     workflowRunAttempt: 1,
     selectedColdPrepareRunId: PREPARE_RUN,
-    selectedColdPrepareRunStartedAt: "2026-09-08T05:00:00.000Z",
-    selectedColdPrepareRunCompletedAt: "2026-09-08T05:10:00.000Z",
+    selectedColdPrepareRunStartedAt: "2026-09-08T12:05:00.000Z",
+    selectedColdPrepareRunCompletedAt: "2026-09-08T12:10:00.000Z",
     selectedReplacementRunId: REPLACEMENT_RUN,
-    selectedReplacementRunStartedAt: "2026-09-08T04:40:00.000Z",
-    selectedReplacementRunCompletedAt: "2026-09-08T04:50:00.000Z",
+    selectedReplacementRunStartedAt: "2026-09-08T12:01:00.000Z",
+    selectedReplacementRunCompletedAt: "2026-09-08T12:03:00.000Z",
     priorAmbiguousColdQuiesceCandidateSha:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorCandidateSha,
     priorAmbiguousColdQuiesceReviewedHeadSha:
@@ -488,6 +488,34 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
       COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactName,
     priorAmbiguousColdQuiesceArtifactDigest:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactDigest,
+    failedPrewriteColdRecoveryCandidateSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteCandidateSha,
+    failedPrewriteColdRecoveryReviewedHeadSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReviewedHeadSha,
+    failedPrewriteColdRecoveryTreeSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteTreeSha,
+    failedPrewriteColdRecoveryPullRequestNumber:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewritePullRequestNumber,
+    failedPrewriteColdRecoveryCandidateMergedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteMergedAt,
+    failedPrewriteReplacementRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReplacementRunId,
+    failedPrewriteReplacementRunStartedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReplacementRunStartedAt,
+    failedPrewriteReplacementRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReplacementRunCompletedAt,
+    failedPrewriteColdPrepareRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewritePrepareRunId,
+    failedPrewriteColdQuiesceRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteQuiesceRunId,
+    failedPrewriteColdQuiesceRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteQuiesceRunCompletedAt,
+    failedPrewriteColdQuiesceArtifactId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteArtifactId,
+    failedPrewriteColdQuiesceArtifactName:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteArtifactName,
+    failedPrewriteColdQuiesceArtifactDigest:
+      COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteArtifactDigest,
     legacyColdRecoveryCandidateSha:
       COLD_QUIESCE_SUCCESSOR_BINDING.legacyCandidateSha,
     legacyColdRecoveryReviewedHeadSha:
@@ -539,8 +567,12 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
     coldQuiesceSuccessorPriorProviderProofRequired: true,
     coldQuiesceSuccessorLegacyToIntermediateParentExact: true,
     coldQuiesceSuccessorIntermediateToPriorParentExact: true,
-    coldQuiesceSuccessorCompleteFourCandidateLineageExact: true,
+    coldQuiesceSuccessorPriorToFailedPrewriteParentExact: true,
+    coldQuiesceSuccessorCompleteFiveCandidateLineageExact: true,
     coldQuiesceSuccessorIntermediateHistoryExact: true,
+    coldQuiesceSuccessorFailedPrewriteHistoryExact: true,
+    coldQuiesceSuccessorFailedPrewriteSkippedExact: true,
+    coldQuiesceSuccessorFailedPrewriteArtifactMetadataExact: true,
     coldQuiesceSuccessorBridgeRequired: true,
     completeRetainedHistoryExact: true,
     stagingLifecycleSealed: false,
@@ -587,6 +619,32 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
         COLD_QUIESCE_SUCCESSOR_BINDING
           .intermediateFailedReadOnlyPrepareReconcileRunId,
     },
+    failedPrewriteCandidate: {
+      candidateSha: COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteCandidateSha,
+      reviewedHeadSha:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReviewedHeadSha,
+      treeSha: COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteTreeSha,
+      pullRequestNumber:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewritePullRequestNumber,
+      mergedAt: COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteMergedAt,
+      replacementRunId:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReplacementRunId,
+      replacementRunStartedAt:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReplacementRunStartedAt,
+      replacementRunCompletedAt:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReplacementRunCompletedAt,
+      prepareRunId:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewritePrepareRunId,
+      prepareRunStartedAt:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewritePrepareRunStartedAt,
+      prepareRunCompletedAt:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewritePrepareRunCompletedAt,
+      quiesceRunId:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteQuiesceRunId,
+      quiesceRunCompletedAt:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteQuiesceRunCompletedAt,
+      writeStepDisposition: "skipped",
+    },
     legacyArtifact: {
       id: COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactId,
       name: COLD_QUIESCE_SUCCESSOR_BINDING.legacyArtifactName,
@@ -609,6 +667,15 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
         COLD_QUIESCE_SUCCESSOR_BINDING.priorPrerequisitesSha256,
       reviewedAuthoritySha256:
         COLD_QUIESCE_SUCCESSOR_BINDING.priorReviewedAuthoritySha256,
+    },
+    failedPrewriteArtifact: {
+      id: COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteArtifactId,
+      name: COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteArtifactName,
+      digest: COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteArtifactDigest,
+      reviewedAuthoritySha256:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewriteReviewedAuthoritySha256,
+      prerequisitesSha256:
+        COLD_QUIESCE_SUCCESSOR_BINDING.failedPrewritePrerequisitesSha256,
     },
     priorCliFailure: {
       cliVersion: "5.32.0",
@@ -640,13 +707,13 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
       runId: PREPARE_RUN,
       terminalSha256: "c".repeat(64),
       replacementRunId: REPLACEMENT_RUN,
-      startedAt: "2026-09-08T05:00:00.000Z",
-      completedAt: "2026-09-08T05:10:00.000Z",
+      startedAt: "2026-09-08T12:05:00.000Z",
+      completedAt: "2026-09-08T12:10:00.000Z",
     },
     providerNoWriteProof: {
       schemaVersion:
-        "pintpath-permanent-staging-cold-provider-no-write-proof/v1",
-      observedAt: "2026-09-08T05:11:01.000Z",
+        "pintpath-permanent-staging-cold-provider-no-write-proof/v2",
+      observedAt: "2026-09-08T12:11:01.000Z",
       environmentId: COLD_RECOVERY_LOCK.environmentId,
       serviceId: COLD_RECOVERY_LOCK.serviceId,
       querySha256: {
@@ -657,15 +724,15 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
       history: {
         pages: [{
           requestAfter: null,
-          count: 8,
+          count: 10,
           endCursor: "history-terminal-cursor",
           hasNextPage: false,
         }],
-        count: 8,
+        count: 10,
         rowsSha256: "4".repeat(64),
-        prefixCount: 6,
+        prefixCount: 8,
         prefixRowsSha256:
-          "f1270eaf4378364f1d91624515f7a0b370f9274254535619704a56d948bf609f",
+          "478526ce5fb6855911e7130e81d5c78a69edaa67988c85eed8582a9068a7c933",
         suffixEventIds: [
           "11111111-1111-4111-8111-111111111111",
           "22222222-2222-4222-8222-222222222222",
@@ -679,15 +746,15 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
           hasNextPage: true,
         }, {
           requestAfter: "patch-page-one-cursor",
-          count: 24,
+          count: 26,
           endCursor: "patch-terminal-cursor",
           hasNextPage: false,
         }],
-        count: 124,
+        count: 126,
         rowsSha256: "5".repeat(64),
-        prefixCount: 122,
+        prefixCount: 124,
         prefixRowsSha256:
-          "a560f185f77fb091da39314eb1f7f9f5ab3a4d2f6593752339649751f6c133db",
+          "8b36a81535a509f60fd2938a7bd2c8a2499ae9c9152d048db1ff93d41ac37f8b",
         suffixPatchIds: [
           "33333333-3333-4333-8333-333333333333",
           "44444444-4444-4444-8444-444444444444",
@@ -700,6 +767,9 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
       }, {
         startedAt: "2026-09-08T04:30:38.868Z",
         completedAt: "2026-09-08T04:32:22.210Z",
+      }, {
+        startedAt: "2026-09-08T11:39:07.000Z",
+        completedAt: "2026-09-08T11:44:07.000Z",
       }],
       liveStateSha256: sha(fullStateCanonical(state(null, true))),
       checks: {
@@ -709,6 +779,7 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
         historicalScalePositiveControlExact: true,
         legacyUnauthorizedRunNoWriteExact: true,
         priorUnauthorizedRunNoWriteExact: true,
+        failedPrewriteUnauthorizedRunNoWriteExact: true,
         authorizedSuffixExact: true,
         targetDeployAbsentFromSuffixExact: true,
         crossFetchedPatchesExact: true,
@@ -787,20 +858,26 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
     coldQuiesceSuccessorGraceHours: 24,
     coldQuiesceSuccessorDeadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
     coldQuiesceSuccessorWithinGraceExact: true,
-    verifiedAt: "2026-09-08T05:11:01.000Z",
+    verifiedAt: "2026-09-08T12:11:01.000Z",
     checks: {
       reviewedSuccessorAuthorityExact: true,
       directSuccessorLineageExact: true,
       legacyToIntermediateLineageExact: true,
       intermediateToPriorLineageExact: true,
-      completeFourCandidateLineageExact: true,
+      priorToFailedPrewriteLineageExact: true,
+      completeFiveCandidateLineageExact: true,
       legacyColdHistoryExact: true,
       intermediateColdHistoryExact: true,
       priorColdHistoryExact: true,
+      failedPrewriteColdHistoryExact: true,
+      failedPrewriteWriteStepSkippedExact: true,
       legacyArtifactMetadataExact: true,
       legacyArtifactContentsExact: true,
       priorArtifactMetadataExact: true,
       priorArtifactContentsExact: true,
+      failedPrewriteArtifactMetadataExact: true,
+      failedPrewriteArtifactContentsExact: true,
+      failedPrewriteReplacementAndPrepareBoundExact: true,
       currentPrepareTerminalExact: true,
       sourceAnchorsExact: true,
       priorCliGraphqlAuthorizationFailureExact: true,

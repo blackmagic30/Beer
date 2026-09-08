@@ -215,7 +215,7 @@ export const COLD_QUIESCE_SUCCESSOR_BINDING = Object.freeze({
   authorityOperation: "cold-recovery-successor-quiesce",
   bridgeOperation: "cold-quiesce-successor-bridge",
   bridgeSchema:
-    "pintpath-permanent-staging-cold-quiesce-successor-bridge/v3",
+    "pintpath-permanent-staging-cold-quiesce-successor-bridge/v4",
   legacyCandidateSha: "838e8c877dcafc0a822a12e5a26afa81c26924a3",
   legacyReviewedHeadSha: "cc2c5311d47f3e895173cb11ef094ef856e0cf07",
   legacyTreeSha: "9da75485e85addfec7096b1c04c52f6780d17b64",
@@ -255,6 +255,31 @@ export const COLD_QUIESCE_SUCCESSOR_BINDING = Object.freeze({
   priorMergedAt: "2026-09-08T04:04:40Z",
   priorPrepareRunId: "34186355641",
   priorQuiesceRunId: "34186930666",
+  failedPrewriteCandidateSha:
+    "de35797a41640a996971af0b1ad49e3c5372baa8",
+  failedPrewriteReviewedHeadSha:
+    "546b32711971666c9074d6c6bd0d2556f76f4bb6",
+  failedPrewriteTreeSha:
+    "efe8319526c25f28b6bcb8cc44bd559d0eed98e7",
+  failedPrewritePullRequestNumber: 95,
+  failedPrewriteMergedAt: "2026-09-08T11:10:55Z",
+  failedPrewriteReplacementRunId: "34220577080",
+  failedPrewriteReplacementRunStartedAt: "2026-09-08T11:25:07.000Z",
+  failedPrewriteReplacementRunCompletedAt: "2026-09-08T11:29:56.000Z",
+  failedPrewritePrepareRunId: "34221196430",
+  failedPrewritePrepareRunStartedAt: "2026-09-08T11:32:06.000Z",
+  failedPrewritePrepareRunCompletedAt: "2026-09-08T11:36:40.000Z",
+  failedPrewriteQuiesceRunId: "34221811602",
+  failedPrewriteQuiesceRunCompletedAt: "2026-09-08T11:44:07.000Z",
+  failedPrewriteArtifactId: "10054211585",
+  failedPrewriteArtifactName:
+    "pintpath-permanent-staging-cold-quiesce-de35797a41640a996971af0b1ad49e3c5372baa8",
+  failedPrewriteArtifactDigest:
+    "sha256:bbc8716da1caf68cc39307ac0cb2a07f1066b6cbb5d8159fbf56e0fe552e4ee0",
+  failedPrewriteReviewedAuthoritySha256:
+    "c48cce48db7753537a229f80430e66814720e1b6542811b2a84ca6ec4a3702ae",
+  failedPrewritePrerequisitesSha256:
+    "b43eacad64908504f54c8442dfaf9915c9c0d41aca26005a92afd0ff8dd92465",
   legacyArtifactId: "10030213299",
   legacyArtifactName:
     "pintpath-permanent-staging-cold-quiesce-838e8c877dcafc0a822a12e5a26afa81c26924a3",
@@ -314,6 +339,10 @@ export interface ColdQuiesceSuccessorBinding {
   readonly priorQuiesceRunId: string;
   readonly priorArtifactId: string;
   readonly priorArtifactDigest: string;
+  readonly failedPrewriteCandidateSha: string;
+  readonly failedPrewriteQuiesceRunId: string;
+  readonly failedPrewriteArtifactId: string;
+  readonly failedPrewriteArtifactDigest: string;
   readonly legacyCandidateSha: string;
   readonly legacyQuiesceRunId: string;
   readonly legacyArtifactId: string;
@@ -419,6 +448,12 @@ export function parseColdQuiesceSuccessorBinding(
       ? bridge.legacyArtifact
       : null;
     const priorArtifact = record(bridge.priorArtifact) ? bridge.priorArtifact : null;
+    const failedPrewrite = record(bridge.failedPrewriteCandidate)
+      ? bridge.failedPrewriteCandidate
+      : null;
+    const failedPrewriteArtifact = record(bridge.failedPrewriteArtifact)
+      ? bridge.failedPrewriteArtifact
+      : null;
     const prepare = record(bridge.currentPrepare) ? bridge.currentPrepare : null;
     const cliFailure = record(bridge.priorCliFailure) ? bridge.priorCliFailure : null;
     const proof = record(bridge.providerNoWriteProof)
@@ -516,6 +551,43 @@ export function parseColdQuiesceSuccessorBinding(
         expected.priorPrerequisitesSha256 ||
       priorArtifact.reviewedAuthoritySha256 !==
         expected.priorReviewedAuthoritySha256 ||
+      !exactKeys(failedPrewrite, [
+        "candidateSha", "reviewedHeadSha", "treeSha", "pullRequestNumber",
+        "mergedAt", "replacementRunId", "replacementRunStartedAt",
+        "replacementRunCompletedAt", "prepareRunId", "prepareRunStartedAt",
+        "prepareRunCompletedAt", "quiesceRunId", "quiesceRunCompletedAt",
+        "writeStepDisposition",
+      ]) || failedPrewrite.candidateSha !== expected.failedPrewriteCandidateSha ||
+      failedPrewrite.reviewedHeadSha !== expected.failedPrewriteReviewedHeadSha ||
+      failedPrewrite.treeSha !== expected.failedPrewriteTreeSha ||
+      failedPrewrite.pullRequestNumber !==
+        expected.failedPrewritePullRequestNumber ||
+      failedPrewrite.mergedAt !== expected.failedPrewriteMergedAt ||
+      failedPrewrite.replacementRunId !==
+        expected.failedPrewriteReplacementRunId ||
+      failedPrewrite.replacementRunStartedAt !==
+        expected.failedPrewriteReplacementRunStartedAt ||
+      failedPrewrite.replacementRunCompletedAt !==
+        expected.failedPrewriteReplacementRunCompletedAt ||
+      failedPrewrite.prepareRunId !== expected.failedPrewritePrepareRunId ||
+      failedPrewrite.prepareRunStartedAt !==
+        expected.failedPrewritePrepareRunStartedAt ||
+      failedPrewrite.prepareRunCompletedAt !==
+        expected.failedPrewritePrepareRunCompletedAt ||
+      failedPrewrite.quiesceRunId !== expected.failedPrewriteQuiesceRunId ||
+      failedPrewrite.quiesceRunCompletedAt !==
+        expected.failedPrewriteQuiesceRunCompletedAt ||
+      failedPrewrite.writeStepDisposition !== "skipped" ||
+      !exactKeys(failedPrewriteArtifact, [
+        "id", "name", "digest", "reviewedAuthoritySha256",
+        "prerequisitesSha256",
+      ]) || failedPrewriteArtifact.id !== expected.failedPrewriteArtifactId ||
+      failedPrewriteArtifact.name !== expected.failedPrewriteArtifactName ||
+      failedPrewriteArtifact.digest !== expected.failedPrewriteArtifactDigest ||
+      failedPrewriteArtifact.reviewedAuthoritySha256 !==
+        expected.failedPrewriteReviewedAuthoritySha256 ||
+      failedPrewriteArtifact.prerequisitesSha256 !==
+        expected.failedPrewritePrerequisitesSha256 ||
       !exactKeys(prepare, [
         "runId", "terminalSha256", "replacementRunId", "startedAt", "completedAt",
       ]) || prepare.runId !== currentPrepareRunId || !shaExact(prepare.terminalSha256) ||
@@ -561,7 +633,7 @@ export function parseColdQuiesceSuccessorBinding(
         "liveStateSha256", "checks", "secretMaterialIncluded",
         "secretDerivedCommitmentsIncluded",
       ]) || proof.schemaVersion !==
-        "pintpath-permanent-staging-cold-provider-no-write-proof/v1" ||
+        "pintpath-permanent-staging-cold-provider-no-write-proof/v2" ||
       proof.observedAt !== bridge.verifiedAt ||
       proof.environmentId !== COLD_RECOVERY_LOCK.environmentId ||
       proof.serviceId !== COLD_RECOVERY_LOCK.serviceId ||
@@ -572,19 +644,19 @@ export function parseColdQuiesceSuccessorBinding(
       !exactKeys(history, [
         "pages", "count", "rowsSha256", "prefixCount", "prefixRowsSha256",
         "suffixEventIds",
-      ]) || history.count !== 8 || history.prefixCount !== 6 ||
-      !providerPageChainExact(history.pages, 8) || !shaExact(history.rowsSha256) ||
+      ]) || history.count !== 10 || history.prefixCount !== 8 ||
+      !providerPageChainExact(history.pages, 10) || !shaExact(history.rowsSha256) ||
       history.prefixRowsSha256 !==
-        "f1270eaf4378364f1d91624515f7a0b370f9274254535619704a56d948bf609f" ||
+        "478526ce5fb6855911e7130e81d5c78a69edaa67988c85eed8582a9068a7c933" ||
       !Array.isArray(history.suffixEventIds) || history.suffixEventIds.length !== 2 ||
       history.suffixEventIds.some((id) => typeof id !== "string" || !UUID_PATTERN.test(id)) ||
       !exactKeys(patches, [
         "pages", "count", "rowsSha256", "prefixCount", "prefixRowsSha256",
         "suffixPatchIds", "crossFetchProjectionSha256",
-      ]) || patches.count !== 124 || patches.prefixCount !== 122 ||
-      !providerPageChainExact(patches.pages, 124) || !shaExact(patches.rowsSha256) ||
+      ]) || patches.count !== 126 || patches.prefixCount !== 124 ||
+      !providerPageChainExact(patches.pages, 126) || !shaExact(patches.rowsSha256) ||
       patches.prefixRowsSha256 !==
-        "a560f185f77fb091da39314eb1f7f9f5ab3a4d2f6593752339649751f6c133db" ||
+        "8b36a81535a509f60fd2938a7bd2c8a2499ae9c9152d048db1ff93d41ac37f8b" ||
       !Array.isArray(patches.suffixPatchIds) || patches.suffixPatchIds.length !== 2 ||
       patches.suffixPatchIds.some((id) => typeof id !== "string" || !UUID_PATTERN.test(id)) ||
       !shaExact(patches.crossFetchProjectionSha256) ||
@@ -597,12 +669,17 @@ export function parseColdQuiesceSuccessorBinding(
           startedAt: "2026-09-08T04:30:38.868Z",
           completedAt: "2026-09-08T04:32:22.210Z",
         },
+        {
+          startedAt: "2026-09-08T11:39:07.000Z",
+          completedAt: "2026-09-08T11:44:07.000Z",
+        },
       ]) || !shaExact(proof.liveStateSha256) ||
       !exactKeys(proofChecks, [
         "paginationCompleteExact", "chronologicalOrderExact",
         "historicalPrefixesExact", "historicalScalePositiveControlExact",
         "legacyUnauthorizedRunNoWriteExact",
-        "priorUnauthorizedRunNoWriteExact", "authorizedSuffixExact",
+        "priorUnauthorizedRunNoWriteExact",
+        "failedPrewriteUnauthorizedRunNoWriteExact", "authorizedSuffixExact",
         "targetDeployAbsentFromSuffixExact", "crossFetchedPatchesExact",
         "ledgerRecheckExact", "liveTopologyContinuityExact",
       ]) || Object.values(proofChecks).some((value) => value !== true) ||
@@ -652,10 +729,15 @@ export function parseColdQuiesceSuccessorBinding(
       !exactKeys(checks, [
         "reviewedSuccessorAuthorityExact", "directSuccessorLineageExact",
         "legacyToIntermediateLineageExact", "intermediateToPriorLineageExact",
-        "completeFourCandidateLineageExact", "legacyColdHistoryExact",
-        "intermediateColdHistoryExact", "priorColdHistoryExact",
+        "priorToFailedPrewriteLineageExact", "completeFiveCandidateLineageExact",
+        "legacyColdHistoryExact", "intermediateColdHistoryExact",
+        "priorColdHistoryExact", "failedPrewriteColdHistoryExact",
+        "failedPrewriteWriteStepSkippedExact",
         "legacyArtifactMetadataExact", "legacyArtifactContentsExact",
         "priorArtifactMetadataExact", "priorArtifactContentsExact",
+        "failedPrewriteArtifactMetadataExact",
+        "failedPrewriteArtifactContentsExact",
+        "failedPrewriteReplacementAndPrepareBoundExact",
         "currentPrepareTerminalExact",
         "sourceAnchorsExact", "priorCliGraphqlAuthorizationFailureExact",
         "providerHistoryCompleteExact", "providerNoWriteExact",
@@ -729,6 +811,34 @@ export function parseColdQuiesceSuccessorBinding(
         expected.priorArtifactName ||
       authority.priorAmbiguousColdQuiesceArtifactDigest !==
         expected.priorArtifactDigest ||
+      authority.failedPrewriteColdRecoveryCandidateSha !==
+        expected.failedPrewriteCandidateSha ||
+      authority.failedPrewriteColdRecoveryReviewedHeadSha !==
+        expected.failedPrewriteReviewedHeadSha ||
+      authority.failedPrewriteColdRecoveryTreeSha !==
+        expected.failedPrewriteTreeSha ||
+      authority.failedPrewriteColdRecoveryPullRequestNumber !==
+        expected.failedPrewritePullRequestNumber ||
+      authority.failedPrewriteColdRecoveryCandidateMergedAt !==
+        expected.failedPrewriteMergedAt ||
+      authority.failedPrewriteReplacementRunId !==
+        expected.failedPrewriteReplacementRunId ||
+      authority.failedPrewriteReplacementRunStartedAt !==
+        expected.failedPrewriteReplacementRunStartedAt ||
+      authority.failedPrewriteReplacementRunCompletedAt !==
+        expected.failedPrewriteReplacementRunCompletedAt ||
+      authority.failedPrewriteColdPrepareRunId !==
+        expected.failedPrewritePrepareRunId ||
+      authority.failedPrewriteColdQuiesceRunId !==
+        expected.failedPrewriteQuiesceRunId ||
+      authority.failedPrewriteColdQuiesceRunCompletedAt !==
+        expected.failedPrewriteQuiesceRunCompletedAt ||
+      authority.failedPrewriteColdQuiesceArtifactId !==
+        expected.failedPrewriteArtifactId ||
+      authority.failedPrewriteColdQuiesceArtifactName !==
+        expected.failedPrewriteArtifactName ||
+      authority.failedPrewriteColdQuiesceArtifactDigest !==
+        expected.failedPrewriteArtifactDigest ||
       authority.legacyAmbiguousColdQuiesceArtifactId !== expected.legacyArtifactId ||
       authority.legacyAmbiguousColdQuiesceArtifactName !== expected.legacyArtifactName ||
       authority.legacyAmbiguousColdQuiesceArtifactDigest !==
@@ -738,14 +848,19 @@ export function parseColdQuiesceSuccessorBinding(
       authority.coldQuiesceSuccessorDirectParentExact !== true ||
       authority.coldQuiesceSuccessorLegacyToIntermediateParentExact !== true ||
       authority.coldQuiesceSuccessorIntermediateToPriorParentExact !== true ||
-      authority.coldQuiesceSuccessorCompleteFourCandidateLineageExact !== true ||
+      authority.coldQuiesceSuccessorPriorToFailedPrewriteParentExact !== true ||
+      authority.coldQuiesceSuccessorCompleteFiveCandidateLineageExact !== true ||
       authority.coldQuiesceSuccessorLegacyHistoryExact !== true ||
       authority.coldQuiesceSuccessorIntermediateHistoryExact !== true ||
       authority.coldQuiesceSuccessorPriorHistoryExact !== true ||
+      authority.coldQuiesceSuccessorFailedPrewriteHistoryExact !== true ||
+      authority.coldQuiesceSuccessorFailedPrewriteSkippedExact !== true ||
       authority.coldQuiesceSuccessorAllRefsHistoryExact !== true ||
       authority.coldQuiesceSuccessorCurrentPrepareExact !== true ||
       authority.coldQuiesceSuccessorLegacyArtifactMetadataExact !== true ||
       authority.coldQuiesceSuccessorPriorArtifactMetadataExact !== true ||
+      authority.coldQuiesceSuccessorFailedPrewriteArtifactMetadataExact !==
+        true ||
       authority.coldQuiesceSuccessorPriorProviderProofRequired !== true ||
       authority.coldQuiesceSuccessorBridgeRequired !== true ||
       authority.completeRetainedHistoryExact !== true ||
@@ -763,6 +878,10 @@ export function parseColdQuiesceSuccessorBinding(
       priorQuiesceRunId: expected.priorQuiesceRunId,
       priorArtifactId: expected.priorArtifactId,
       priorArtifactDigest: expected.priorArtifactDigest,
+      failedPrewriteCandidateSha: expected.failedPrewriteCandidateSha,
+      failedPrewriteQuiesceRunId: expected.failedPrewriteQuiesceRunId,
+      failedPrewriteArtifactId: expected.failedPrewriteArtifactId,
+      failedPrewriteArtifactDigest: expected.failedPrewriteArtifactDigest,
       legacyCandidateSha: expected.legacyCandidateSha,
       legacyQuiesceRunId: expected.legacyQuiesceRunId,
       legacyArtifactId: expected.legacyArtifactId,
@@ -1008,6 +1127,29 @@ export function requiredRowsExact(rows: readonly ColdRecoveryVariableRow[]): boo
       rows.every((row) => row.name !== name));
 }
 
+export function coldRecoveryRowsExact(
+  value: unknown,
+): value is readonly ColdRecoveryVariableRow[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
+    return false;
+  }
+  const rows: ColdRecoveryVariableRow[] = [];
+  for (const item of value) {
+    const row = parseVariableRow(item);
+    if (!row) return false;
+    rows.push(row);
+  }
+  rows.sort((left, right) =>
+    `${left.serviceId ?? ""}:${left.name}:${left.id}`.localeCompare(
+      `${right.serviceId ?? ""}:${right.name}:${right.id}`,
+    ));
+  return canonical(rows) === canonical(value) &&
+    new Set(rows.map((row) => row.id)).size === rows.length &&
+    new Set(rows.map((row) => `${row.serviceId ?? ""}:${row.name}`)).size ===
+      rows.length &&
+    requiredRowsExact(rows);
+}
+
 export function serviceRoleSealedExact(
   rows: readonly ColdRecoveryVariableRow[],
 ): boolean {
@@ -1179,11 +1321,7 @@ export function parseColdRecoveryState(
     `${left.serviceId ?? ""}:${left.name}:${left.id}`.localeCompare(
       `${right.serviceId ?? ""}:${right.name}:${right.id}`,
     ));
-  if (
-    new Set(rows.map((row) => row.id)).size !== rows.length ||
-    new Set(rows.map((row) => `${row.serviceId ?? ""}:${row.name}`)).size !== rows.length ||
-    !requiredRowsExact(rows)
-  ) return null;
+  if (!coldRecoveryRowsExact(rows)) return null;
   return {
     environmentId: COLD_RECOVERY_LOCK.environmentId,
     serviceInstanceId: COLD_RECOVERY_LOCK.serviceInstanceId,

@@ -43,8 +43,8 @@ function currentAuthority(): string {
       ".github/workflows/recover-permanent-staging-cold-zero.yml",
     workflowRunId: CURRENT_RUN,
     workflowRunAttempt: 1,
-    workflowRunCreatedAt: "2026-09-08T05:11:00Z",
-    reviewedPullRequestMergedAt: "2026-09-08T05:00:00Z",
+    workflowRunCreatedAt: "2026-09-08T12:11:00Z",
+    reviewedPullRequestMergedAt: "2026-09-08T12:00:00Z",
     candidateHistoryMaximumAgeHours: 168,
     completeRetainedHistoryExact: true,
     safePriorSkippedWriteRunIds: [],
@@ -106,6 +106,34 @@ function currentAuthority(): string {
       COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactName,
     priorAmbiguousColdQuiesceArtifactDigest:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.priorArtifactDigest,
+    failedPrewriteColdRecoveryCandidateSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteCandidateSha,
+    failedPrewriteColdRecoveryReviewedHeadSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReviewedHeadSha,
+    failedPrewriteColdRecoveryTreeSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteTreeSha,
+    failedPrewriteColdRecoveryPullRequestNumber:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewritePullRequestNumber,
+    failedPrewriteColdRecoveryCandidateMergedAt:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteMergedAt,
+    failedPrewriteReplacementRunId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReplacementRunId,
+    failedPrewriteReplacementRunStartedAt:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReplacementRunStartedAt,
+    failedPrewriteReplacementRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteReplacementRunCompletedAt,
+    failedPrewriteColdPrepareRunId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewritePrepareRunId,
+    failedPrewriteColdQuiesceRunId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteQuiesceRunId,
+    failedPrewriteColdQuiesceRunCompletedAt:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteQuiesceRunCompletedAt,
+    failedPrewriteColdQuiesceArtifactId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactId,
+    failedPrewriteColdQuiesceArtifactName:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactName,
+    failedPrewriteColdQuiesceArtifactDigest:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactDigest,
     legacyAmbiguousColdQuiesceArtifactId:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactId,
     legacyAmbiguousColdQuiesceArtifactName:
@@ -113,21 +141,25 @@ function currentAuthority(): string {
     legacyAmbiguousColdQuiesceArtifactDigest:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.legacyArtifactDigest,
     selectedReplacementRunId: CURRENT_REPLACEMENT_RUN,
-    selectedReplacementRunStartedAt: "2026-09-08T04:40:00.000Z",
-    selectedReplacementRunCompletedAt: "2026-09-08T04:50:00.000Z",
-    selectedColdPrepareRunStartedAt: "2026-09-08T05:00:00.000Z",
-    selectedColdPrepareRunCompletedAt: "2026-09-08T05:10:00.000Z",
+    selectedReplacementRunStartedAt: "2026-09-08T12:01:00.000Z",
+    selectedReplacementRunCompletedAt: "2026-09-08T12:03:00.000Z",
+    selectedColdPrepareRunStartedAt: "2026-09-08T12:05:00.000Z",
+    selectedColdPrepareRunCompletedAt: "2026-09-08T12:10:00.000Z",
     coldQuiesceSuccessorDirectParentExact: true,
     coldQuiesceSuccessorLegacyToIntermediateParentExact: true,
     coldQuiesceSuccessorIntermediateToPriorParentExact: true,
-    coldQuiesceSuccessorCompleteFourCandidateLineageExact: true,
+    coldQuiesceSuccessorPriorToFailedPrewriteParentExact: true,
+    coldQuiesceSuccessorCompleteFiveCandidateLineageExact: true,
     coldQuiesceSuccessorLegacyHistoryExact: true,
     coldQuiesceSuccessorIntermediateHistoryExact: true,
     coldQuiesceSuccessorPriorHistoryExact: true,
+    coldQuiesceSuccessorFailedPrewriteHistoryExact: true,
+    coldQuiesceSuccessorFailedPrewriteSkippedExact: true,
     coldQuiesceSuccessorAllRefsHistoryExact: true,
     coldQuiesceSuccessorCurrentPrepareExact: true,
     coldQuiesceSuccessorLegacyArtifactMetadataExact: true,
     coldQuiesceSuccessorPriorArtifactMetadataExact: true,
+    coldQuiesceSuccessorFailedPrewriteArtifactMetadataExact: true,
     coldQuiesceSuccessorPriorProviderProofRequired: true,
     coldQuiesceSuccessorBridgeRequired: true,
     successfulStagingDeploymentRunIds: [],
@@ -183,6 +215,13 @@ function liveState(): ColdRecoveryState {
       serviceId: COLD_RECOVERY_LOCK.serviceId,
       isSealed: false,
       references: [],
+    }, {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "DATABASE_URL",
+      environmentId: COLD_RECOVERY_LOCK.environmentId,
+      serviceId: "c454955f-263b-4599-aee0-dc447a4d3d15",
+      isSealed: false,
+      references: [],
     }],
   };
 }
@@ -212,8 +251,8 @@ function testEnvironment(
 
 function providerProof(state: ColdRecoveryState) {
   return {
-    schemaVersion: "pintpath-permanent-staging-cold-provider-no-write-proof/v1" as const,
-    observedAt: "2026-09-08T05:11:01.000Z",
+    schemaVersion: "pintpath-permanent-staging-cold-provider-no-write-proof/v2" as const,
+    observedAt: "2026-09-08T12:11:01.000Z",
     environmentId: COLD_RECOVERY_LOCK.environmentId,
     serviceId: COLD_RECOVERY_LOCK.serviceId,
     querySha256: {
@@ -224,15 +263,15 @@ function providerProof(state: ColdRecoveryState) {
     history: {
       pages: [{
         requestAfter: null,
-        count: 8,
+        count: 10,
         endCursor: "history-terminal",
         hasNextPage: false,
       }],
-      count: 8,
+      count: 10,
       rowsSha256: "4".repeat(64),
-      prefixCount: 6,
+      prefixCount: 8,
       prefixRowsSha256:
-        "f1270eaf4378364f1d91624515f7a0b370f9274254535619704a56d948bf609f",
+        "478526ce5fb6855911e7130e81d5c78a69edaa67988c85eed8582a9068a7c933",
       suffixEventIds: [
         "11111111-1111-4111-8111-111111111111",
         "22222222-2222-4222-8222-222222222222",
@@ -246,15 +285,15 @@ function providerProof(state: ColdRecoveryState) {
         hasNextPage: true,
       }, {
         requestAfter: "patch-page-one",
-        count: 24,
+        count: 26,
         endCursor: "patch-terminal",
         hasNextPage: false,
       }],
-      count: 124,
+      count: 126,
       rowsSha256: "5".repeat(64),
-      prefixCount: 122,
+      prefixCount: 124,
       prefixRowsSha256:
-        "a560f185f77fb091da39314eb1f7f9f5ab3a4d2f6593752339649751f6c133db",
+        "8b36a81535a509f60fd2938a7bd2c8a2499ae9c9152d048db1ff93d41ac37f8b",
       suffixPatchIds: [
         "33333333-3333-4333-8333-333333333333",
         "44444444-4444-4444-8444-444444444444",
@@ -267,6 +306,9 @@ function providerProof(state: ColdRecoveryState) {
     }, {
       startedAt: "2026-09-08T04:30:38.868Z",
       completedAt: "2026-09-08T04:32:22.210Z",
+    }, {
+      startedAt: "2026-09-08T11:39:07.000Z",
+      completedAt: "2026-09-08T11:44:07.000Z",
     }],
     liveStateSha256: sha256(fullStateCanonical(state)),
     checks: {
@@ -276,6 +318,7 @@ function providerProof(state: ColdRecoveryState) {
       historicalScalePositiveControlExact: true,
       legacyUnauthorizedRunNoWriteExact: true,
       priorUnauthorizedRunNoWriteExact: true,
+      failedPrewriteUnauthorizedRunNoWriteExact: true,
       authorizedSuffixExact: true,
       targetDeployAbsentFromSuffixExact: true,
       crossFetchedPatchesExact: true,
@@ -293,9 +336,11 @@ function prepareFiles() {
   ));
   const legacy = path.join(root, "legacy");
   const prior = path.join(root, "prior");
+  const failedPrewrite = path.join(root, "failed-prewrite");
   const evidence = path.join(root, "evidence");
   fs.mkdirSync(legacy, { mode: 0o700 });
   fs.mkdirSync(prior, { mode: 0o700 });
+  fs.mkdirSync(failedPrewrite, { mode: 0o700 });
   fs.mkdirSync(evidence, { mode: 0o700 });
   const fixtures = [
     ["receipt", "cold-quiesce-receipt.json"],
@@ -321,6 +366,31 @@ function prepareFiles() {
     );
     fs.chmodSync(path.join(prior, leaf), 0o600);
   }
+  for (const leaf of [
+    "reviewed-authority",
+    "prerequisites",
+  ] as const) {
+    fs.copyFileSync(
+      path.resolve(
+        `test/fixtures/cold-quiesce-failed-prewrite-34221811602-${leaf}.json`,
+      ),
+      path.join(
+        failedPrewrite,
+        leaf === "reviewed-authority"
+          ? "reviewed-authority.json"
+          : "prerequisites-verification.json",
+      ),
+    );
+    fs.chmodSync(
+      path.join(
+        failedPrewrite,
+        leaf === "reviewed-authority"
+          ? "reviewed-authority.json"
+          : "prerequisites-verification.json",
+      ),
+      0o600,
+    );
+  }
   const authorityFile = path.join(root, "reviewed-authority.json");
   fs.writeFileSync(authorityFile, currentAuthority(), {
     encoding: "utf8",
@@ -334,8 +404,8 @@ function prepareFiles() {
     failureCode: null,
     candidateSha: CANDIDATE,
     sourceSha: COLD_RECOVERY_LOCK.sourceSha,
-    startedAt: "2026-09-08T05:05:00.000Z",
-    completedAt: "2026-09-08T05:06:00.000Z",
+    startedAt: "2026-09-08T12:06:00.000Z",
+    completedAt: "2026-09-08T12:07:00.000Z",
     attempts: 1,
     retryAllowed: false,
     replacementPrerequisite: {
@@ -359,6 +429,8 @@ function prepareFiles() {
     legacy,
     "--prior-artifact-dir",
     prior,
+    "--failed-prewrite-artifact-dir",
+    failedPrewrite,
     "--prepare-terminal-file",
     prepareTerminalFile,
     "--reviewed-authority-file",
@@ -366,7 +438,15 @@ function prepareFiles() {
     "--evidence-dir",
     evidence,
   ];
-  return { root, legacy, prior, evidence, authorityFile, argv };
+  return {
+    root,
+    legacy,
+    prior,
+    failedPrewrite,
+    evidence,
+    authorityFile,
+    argv,
+  };
 }
 
 function dependencies(
@@ -385,7 +465,7 @@ function dependencies(
     }),
     readState: vi.fn().mockResolvedValue(state),
     readProviderProof: vi.fn().mockResolvedValue(providerProof(state)),
-    now: () => new Date("2026-09-08T05:11:01.000Z"),
+    now: () => new Date("2026-09-08T12:11:01.000Z"),
     writeOutput: vi.fn(),
   };
 }
@@ -462,6 +542,23 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
           receiptSha256:
             COLD_QUIESCE_SUCCESSOR_BRIDGE.priorEvidence.receipt.sha256,
         },
+        failedPrewriteCandidate: {
+          candidateSha:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteCandidateSha,
+          quiesceRunId:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteQuiesceRunId,
+          writeStepDisposition: "skipped",
+        },
+        failedPrewriteArtifact: {
+          id: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactId,
+          digest: COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteArtifactDigest,
+          reviewedAuthoritySha256:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteEvidence
+              .reviewedAuthority.sha256,
+          prerequisitesSha256:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.failedPrewriteEvidence
+              .prerequisites.sha256,
+        },
         priorCliFailure: {
           cliVersion: "5.32.0",
           cliExitCode: 1,
@@ -506,9 +603,13 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
           directSuccessorLineageExact: true,
           legacyToIntermediateLineageExact: true,
           intermediateToPriorLineageExact: true,
-          completeFourCandidateLineageExact: true,
+          priorToFailedPrewriteLineageExact: true,
+          completeFiveCandidateLineageExact: true,
           intermediateColdHistoryExact: true,
+          failedPrewriteColdHistoryExact: true,
+          failedPrewriteWriteStepSkippedExact: true,
           priorArtifactContentsExact: true,
+          failedPrewriteArtifactContentsExact: true,
           sourceAnchorsExact: true,
           priorCliGraphqlAuthorizationFailureExact: true,
           providerHistoryCompleteExact: true,
@@ -550,6 +651,54 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
       expect(deps.readScope).not.toHaveBeenCalled();
       expect(deps.writeOutput).toHaveBeenCalledWith(expect.stringContaining(
         "cold_quiesce_successor_bridge_artifact_contents_invalid",
+      ));
+    } finally {
+      fs.rmSync(files.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a byte-substituted failed-prewrite artifact before live reads", async () => {
+    const files = prepareFiles();
+    try {
+      fs.appendFileSync(
+        path.join(files.failedPrewrite, "reviewed-authority.json"),
+        "\n",
+      );
+      const deps = dependencies();
+      expect(await runPermanentStagingColdQuiesceSuccessorBridge(
+        files.argv,
+        deps,
+      )).toBe(1);
+      expect(deps.readScope).not.toHaveBeenCalled();
+      expect(deps.writeOutput).toHaveBeenCalledWith(expect.stringContaining(
+        "cold_quiesce_successor_bridge_artifact_contents_invalid",
+      ));
+    } finally {
+      fs.rmSync(files.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects off-target sibling drift across the provider-proof reread", async () => {
+    const files = prepareFiles();
+    try {
+      const before = liveState();
+      const after = {
+        ...before,
+        rows: before.rows.map((item) => item.name === "DATABASE_URL"
+          ? { ...item, isSealed: true }
+          : item),
+      } satisfies ColdRecoveryState;
+      const deps = dependencies(before);
+      deps.readState
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(after);
+      expect(await runPermanentStagingColdQuiesceSuccessorBridge(
+        files.argv,
+        deps,
+      )).toBe(1);
+      expect(deps.readState).toHaveBeenCalledTimes(2);
+      expect(deps.writeOutput).toHaveBeenCalledWith(expect.stringContaining(
+        "cold_quiesce_successor_bridge_provider_history_invalid",
       ));
     } finally {
       fs.rmSync(files.root, { recursive: true, force: true });
@@ -601,7 +750,7 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
         CANDIDATE,
         CURRENT_RUN,
         CURRENT_PREPARE_RUN,
-        Date.parse("2026-09-08T05:11:02.000Z"),
+        Date.parse("2026-09-08T12:11:02.000Z"),
       )).not.toBeNull();
       const substituted = JSON.parse(source) as {
         intermediateCandidate: { candidateSha: string };
@@ -613,7 +762,7 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
         CANDIDATE,
         CURRENT_RUN,
         CURRENT_PREPARE_RUN,
-        Date.parse("2026-09-08T05:11:02.000Z"),
+        Date.parse("2026-09-08T12:11:02.000Z"),
       )).toBeNull();
     } finally {
       fs.rmSync(files.root, { recursive: true, force: true });
