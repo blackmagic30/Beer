@@ -20,6 +20,25 @@ job and a separate writer job. The writer may call `deploymentStop` once for
 deployment `6300a324-9407-4b1c-b651-749c47e9537f`; it cannot select another
 deployment, environment, service, or project.
 
+The first containment dispatch, run `34255228036`, stopped safely during
+GitHub-authority verification before the intent was prepared or persisted. Its
+apply job `102160681336` was completed as skipped with zero steps, so the
+Railway writer never existed or started. The recovery bridge authenticates that
+exact attempt, including its evaluated run name, complete job graph, and empty
+artifact inventory. It also binds workflow ID `353312302` to the active static
+workflow name and checked-in path. Recovery requires exactly two workflow dispatches: the
+current run-number `2` at attempt `1`, plus only failed run `34255228036` at
+attempt `1`. No other prior run or rerun is accepted. A started writer, an
+indeterminate job inventory, or any artifact on the failed run consumes the
+one-use authority.
+
+The repaired reviewed candidate must be a one-parent squash whose direct parent
+is the first containment merge `f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7`.
+That bridge parent is independently bound to tree
+`9978dca9491f7bf7bee77ce39debe1f713e89c53` and sole parent
+`606d33facb515dd10bc94c360e43c20beb999cc1`, preserving the original failed-Q
+lineage while keeping the repair candidate reviewable as a separate commit.
+
 Before the write, the workflow must authenticate all of the following:
 
 - exact current `main`, a clean checkout, run attempt `1`, and the external

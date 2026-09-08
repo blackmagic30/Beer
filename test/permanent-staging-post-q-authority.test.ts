@@ -19,6 +19,12 @@ import {
 const CANDIDATE = "a".repeat(40);
 const CURRENT_RUN_ID = "34240000000";
 const Q_SHA = "606d33facb515dd10bc94c360e43c20beb999cc1";
+const RECOVERY_BRIDGE_SHA = "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7";
+const RECOVERY_BRIDGE_TREE = "9978dca9491f7bf7bee77ce39debe1f713e89c53";
+const RECOVERY_BRIDGE_RUN_ID = "34255228036";
+const RECOVERY_BRIDGE_WORKFLOW_ID = 353312302;
+const RECOVERY_BRIDGE_PREPARE_JOB_ID = 102159216963;
+const RECOVERY_BRIDGE_APPLY_JOB_ID = 102160681336;
 const Q_TITLE = `Permanent staging cold recovery | quiesce | ${Q_SHA}`;
 const TOKEN = "github-test-token-with-safe-length";
 const REVIEWED_HEAD = "c".repeat(40);
@@ -160,24 +166,143 @@ function qArtifact() {
   };
 }
 
+function containmentRunName(candidateSha: string): string {
+  return `Permanent staging post-Q deployment stop | ${candidateSha}`;
+}
+
 function containmentRun(overrides: Record<string, unknown> = {}) {
+  const headSha = typeof overrides.head_sha === "string"
+    ? overrides.head_sha
+    : CANDIDATE;
   return {
     id: Number(CURRENT_RUN_ID),
-    workflow_id: 400000001,
-    run_number: 1,
+    workflow_id: RECOVERY_BRIDGE_WORKFLOW_ID,
+    run_number: 2,
     run_attempt: 1,
-    name: "Stop the exact post-Q permanent staging deployment",
-    display_title: `Permanent staging post-Q deployment stop | ${CANDIDATE}`,
+    name: containmentRunName(headSha),
+    display_title: containmentRunName(headSha),
     event: "workflow_dispatch",
     status: "in_progress",
     conclusion: null,
     head_branch: "main",
-    head_sha: CANDIDATE,
+    head_sha: headSha,
     path: ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
     repository: { id: 1215862300, full_name: "blackmagic30/Beer" },
     head_repository: { id: 1215862300, full_name: "blackmagic30/Beer" },
-    run_started_at: "2026-09-08T15:00:00Z",
+    actor: { id: 29029791, login: "blackmagic30" },
+    triggering_actor: { id: 29029791, login: "blackmagic30" },
+    check_suite_id: 92800000000,
+    created_at: "2026-09-08T17:30:00Z",
+    run_started_at: "2026-09-08T17:30:00Z",
+    updated_at: "2026-09-08T17:31:00Z",
     ...overrides,
+  };
+}
+
+function recoveryBridgeRun(overrides: Record<string, unknown> = {}) {
+  return containmentRun({
+    id: Number(RECOVERY_BRIDGE_RUN_ID),
+    run_number: 1,
+    run_attempt: 1,
+    head_sha: RECOVERY_BRIDGE_SHA,
+    status: "completed",
+    conclusion: "failure",
+    check_suite_id: 92795131798,
+    created_at: "2026-09-08T17:07:48Z",
+    run_started_at: "2026-09-08T17:07:48Z",
+    updated_at: "2026-09-08T17:12:11Z",
+    ...overrides,
+  });
+}
+
+function recoveryBridgePrepareSteps() {
+  const rows = [
+    [1, "Set up job", "success", "2026-09-08T17:07:54Z", "2026-09-08T17:07:55Z"],
+    [2, "Checkout the exact main candidate without persisted credentials", "success", "2026-09-08T17:07:55Z", "2026-09-08T17:07:58Z"],
+    [3, "Require exact one-attempt staging-only containment authority", "success", "2026-09-08T17:07:58Z", "2026-09-08T17:07:59Z"],
+    [4, "Setup the repository Node runtime", "success", "2026-09-08T17:07:59Z", "2026-09-08T17:08:00Z"],
+    [5, "Install immutable dependencies", "success", "2026-09-08T17:08:00Z", "2026-09-08T17:08:04Z"],
+    [6, "Run the complete repository gate before provider-token custody", "success", "2026-09-08T17:08:04Z", "2026-09-08T17:12:07Z"],
+    [7, "Create private Q, intent, and evidence custody", "success", "2026-09-08T17:12:07Z", "2026-09-08T17:12:07Z"],
+    [8, "Download the exact immutable failed-Q artifact", "success", "2026-09-08T17:12:07Z", "2026-09-08T17:12:08Z"],
+    [9, "Authenticate the exact failed Q run, sole writer, and artifact bytes", "failure", "2026-09-08T17:12:08Z", "2026-09-08T17:12:08Z"],
+    [10, "Prepare the exact post-Q stop intent with metadata credentials only", "skipped", "2026-09-08T17:12:08Z", "2026-09-08T17:12:08Z"],
+    [11, "Persist the exact stop intent before any stop credential exists", "skipped", "2026-09-08T17:12:08Z", "2026-09-08T17:12:08Z"],
+    [12, "Remove prepare Q custody", "success", "2026-09-08T17:12:08Z", "2026-09-08T17:12:08Z"],
+    [23, "Post Setup the repository Node runtime", "skipped", "2026-09-08T17:12:08Z", "2026-09-08T17:12:08Z"],
+    [24, "Post Checkout the exact main candidate without persisted credentials", "success", "2026-09-08T17:12:08Z", "2026-09-08T17:12:09Z"],
+    [25, "Complete job", "success", "2026-09-08T17:12:09Z", "2026-09-08T17:12:09Z"],
+  ] as const;
+  return rows.map(([number, name, conclusion, startedAt, completedAt]) => ({
+    number,
+    name,
+    status: "completed",
+    conclusion,
+    started_at: startedAt,
+    completed_at: completedAt,
+  }));
+}
+
+function recoveryBridgeJobs() {
+  const workflowName = containmentRunName(RECOVERY_BRIDGE_SHA);
+  return {
+    total_count: 2,
+    jobs: [
+      {
+        id: RECOVERY_BRIDGE_PREPARE_JOB_ID,
+        run_id: Number(RECOVERY_BRIDGE_RUN_ID),
+        run_attempt: 1,
+        workflow_name: workflowName,
+        head_sha: RECOVERY_BRIDGE_SHA,
+        name: "Authenticate Q and persist the exact stop intent",
+        status: "completed",
+        conclusion: "failure",
+        created_at: "2026-09-08T17:07:50Z",
+        started_at: "2026-09-08T17:07:53Z",
+        completed_at: "2026-09-08T17:12:10Z",
+        steps: recoveryBridgePrepareSteps(),
+      },
+      {
+        id: RECOVERY_BRIDGE_APPLY_JOB_ID,
+        run_id: Number(RECOVERY_BRIDGE_RUN_ID),
+        run_attempt: 1,
+        workflow_name: workflowName,
+        head_sha: RECOVERY_BRIDGE_SHA,
+        name: "Stop the one exact accidental staging deployment",
+        status: "completed",
+        conclusion: "skipped",
+        created_at: "2026-09-08T17:12:11Z",
+        started_at: "2026-09-08T17:12:11Z",
+        completed_at: "2026-09-08T17:12:10Z",
+        steps: [],
+      },
+    ],
+  };
+}
+
+function safePriorJobs(runId = 34239999999, runAttempt = 1) {
+  return {
+    total_count: 2,
+    jobs: [
+      {
+        id: runId + 60_000_000_000,
+        run_id: runId,
+        run_attempt: runAttempt,
+        name: "Authenticate Q and persist the exact stop intent",
+        status: "completed",
+        conclusion: "failure",
+        steps: [],
+      },
+      {
+        id: runId + 70_000_000_000,
+        run_id: runId,
+        run_attempt: runAttempt,
+        name: "Stop the one exact accidental staging deployment",
+        status: "completed",
+        conclusion: "skipped",
+        steps: [],
+      },
+    ],
   };
 }
 
@@ -193,6 +318,41 @@ function currentJobs() {
       conclusion: null,
       steps: [],
     }],
+  };
+}
+
+function applyPhaseCurrentJobs() {
+  return {
+    total_count: 2,
+    jobs: [
+      {
+        id: 102400000001,
+        run_id: Number(CURRENT_RUN_ID),
+        run_attempt: 1,
+        name: "Authenticate Q and persist the exact stop intent",
+        status: "completed",
+        conclusion: "success",
+        steps: [],
+      },
+      {
+        id: 102400000002,
+        run_id: Number(CURRENT_RUN_ID),
+        run_attempt: 1,
+        name: "Stop the one exact accidental staging deployment",
+        status: "in_progress",
+        conclusion: null,
+        started_at: "2026-09-08T17:31:00Z",
+        completed_at: null,
+        steps: [{
+          number: 12,
+          name: "Stop the exact accidental staging deployment once",
+          status: "pending",
+          conclusion: null,
+          started_at: null,
+          completed_at: null,
+        }],
+      },
+    ],
   };
 }
 
@@ -233,8 +393,12 @@ function githubFetch(overrides: {
   jobs?: unknown;
   artifact?: unknown;
   currentRun?: unknown;
+  bridgeRun?: unknown;
+  workflowMetadata?: unknown;
   containmentRuns?: unknown;
   currentJobs?: unknown;
+  bridgeJobs?: unknown;
+  bridgeArtifacts?: unknown;
   priorJobs?: unknown;
   link?: string;
 } = {}) {
@@ -250,15 +414,34 @@ function githubFetch(overrides: {
       ? overrides.jobs ?? qJobs()
       : url.endsWith(`/actions/runs/${CURRENT_RUN_ID}`)
       ? overrides.currentRun ?? containmentRun()
+      : url.endsWith(`/actions/runs/${RECOVERY_BRIDGE_RUN_ID}`)
+      ? overrides.bridgeRun ?? recoveryBridgeRun()
+      : url.endsWith(
+        `/actions/workflows/${RECOVERY_BRIDGE_WORKFLOW_ID}`,
+      )
+      ? overrides.workflowMetadata ?? {
+        id: RECOVERY_BRIDGE_WORKFLOW_ID,
+        name: "Stop the exact post-Q permanent staging deployment",
+        path: ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+        state: "active",
+      }
       : url.includes(
         "/actions/workflows/stop-permanent-staging-post-q-deployment.yml/runs?",
       )
       ? overrides.containmentRuns ?? {
-        total_count: 1,
-        workflow_runs: [containmentRun()],
+        total_count: 2,
+        workflow_runs: [containmentRun(), recoveryBridgeRun()],
       }
       : url.includes(`/actions/runs/${CURRENT_RUN_ID}/attempts/1/jobs?`)
       ? overrides.currentJobs ?? currentJobs()
+      : url.includes(
+        `/actions/runs/${RECOVERY_BRIDGE_RUN_ID}/attempts/1/jobs?`,
+      )
+      ? overrides.bridgeJobs ?? recoveryBridgeJobs()
+      : url.includes(
+        `/actions/runs/${RECOVERY_BRIDGE_RUN_ID}/artifacts?per_page=100&page=1`,
+      )
+      ? overrides.bridgeArtifacts ?? { total_count: 0, artifacts: [] }
       : url.includes("/actions/runs/34239999999/attempts/1/jobs?")
       ? overrides.priorJobs
       : overrides.artifact ?? qArtifact();
@@ -287,7 +470,11 @@ const baseArtifacts = new Map([
   ["release-readiness", "pintpath-automated-readiness-evidence"],
 ]);
 
-function reviewedCandidateFetch(mainSha = CANDIDATE) {
+function reviewedCandidateFetch(
+  mainSha = CANDIDATE,
+  recoveryBridgeCommitOverrides: Record<string, unknown> = {},
+  mergedAt = "2026-09-08T17:20:00Z",
+) {
   const checkByRun = new Map(requiredChecks.map((row, index) => [
     34241000000 + index,
     row,
@@ -317,13 +504,22 @@ function reviewedCandidateFetch(mainSha = CANDIDATE) {
         },
         user: { id: 1 },
         merged_by: { id: 2 },
-        merged_at: "2026-09-08T14:00:00Z",
+        merged_at: mergedAt,
       };
     } else if (url.pathname.endsWith(`/git/commits/${CANDIDATE}`)) {
+    value = {
+      sha: CANDIDATE,
+      tree: { sha: REVIEWED_TREE },
+      parents: [{ sha: RECOVERY_BRIDGE_SHA }],
+    };
+    } else if (url.pathname.endsWith(
+      `/git/commits/${RECOVERY_BRIDGE_SHA}`,
+    )) {
       value = {
-        sha: CANDIDATE,
-        tree: { sha: REVIEWED_TREE },
+        sha: RECOVERY_BRIDGE_SHA,
+        tree: { sha: RECOVERY_BRIDGE_TREE },
         parents: [{ sha: Q_SHA }],
+        ...recoveryBridgeCommitOverrides,
       };
     } else if (url.pathname.endsWith(`/git/commits/${REVIEWED_HEAD}`)) {
       value = {
@@ -348,8 +544,8 @@ function reviewedCandidateFetch(mainSha = CANDIDATE) {
           details_url:
             `https://github.com/blackmagic30/Beer/actions/runs/${runId}/job/1`,
           check_suite: { id: 9020000000 + index },
-          started_at: "2026-09-08T14:10:00Z",
-          completed_at: "2026-09-08T14:20:00Z",
+          started_at: "2026-09-08T17:21:00Z",
+          completed_at: "2026-09-08T17:25:00Z",
         }],
       };
     } else {
@@ -399,6 +595,30 @@ function reviewedCandidateFetch(mainSha = CANDIDATE) {
   });
 }
 
+function runAuthority(
+  overrides: Parameters<typeof githubFetch>[0] = {},
+) {
+  return verifyPermanentStagingPostQAuthority({
+    argv: argumentsFor(),
+    env: environment(),
+    fetchImpl: githubFetch(overrides),
+    now: () => Date.parse("2026-09-08T17:31:00.000Z"),
+    sealArtifact: vi.fn(() => ({
+      sealedDirectory: "/tmp/pintpath-post-q-authority/sealed",
+      members: POST_Q_ARTIFACT_MEMBERS.map((member) => ({
+        ...member,
+        sealedPath: member.path,
+      })),
+    })),
+    verifyCandidate: vi.fn(async () => ({
+      schemaVersion: POST_Q_REVIEWED_CANDIDATE_SCHEMA,
+    })),
+    writeAuthority: vi.fn(),
+    writeReviewedCandidate: vi.fn(),
+    writeOutput: vi.fn(),
+  });
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -412,18 +632,24 @@ describe("permanent-staging post-Q GitHub authority", () => {
       TOKEN,
       CANDIDATE,
       containmentRun(),
-      Date.parse("2026-09-08T15:01:00.000Z"),
+      Date.parse("2026-09-08T17:31:00.000Z"),
     );
     expect(authority).toMatchObject({
       schemaVersion: POST_Q_REVIEWED_CANDIDATE_SCHEMA,
       candidateSha: CANDIDATE,
-      directParentSha: Q_SHA,
+      directParentSha: RECOVERY_BRIDGE_SHA,
+      recoveryBridge: {
+        candidateSha: RECOVERY_BRIDGE_SHA,
+        treeSha: RECOVERY_BRIDGE_TREE,
+        soleParentSha: Q_SHA,
+      },
       authorizationDeadline: "2026-09-08T18:57:20.000Z",
       releasePolicySha256:
         "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90",
       checks: {
         soleParentSquashShapeExact: true,
         directParentExact: true,
+        recoveryBridgeExact: true,
         currentMainTipExact: true,
         baseRequiredCheckLineageExact: true,
         fixedDeadlineExact: true,
@@ -439,7 +665,7 @@ describe("permanent-staging post-Q GitHub authority", () => {
       TOKEN,
       CANDIDATE,
       containmentRun(),
-      Date.parse("2026-09-08T15:01:00.000Z"),
+      Date.parse("2026-09-08T17:31:00.000Z"),
     )).rejects.toThrow("post_q_authority_reviewed_candidate_invalid");
     await expect(verifyPostQReviewedCandidate(
       reviewedCandidateFetch(),
@@ -447,6 +673,25 @@ describe("permanent-staging post-Q GitHub authority", () => {
       CANDIDATE,
       containmentRun(),
       Date.parse("2026-09-08T18:57:20.000Z"),
+    )).rejects.toThrow("post_q_authority_reviewed_candidate_invalid");
+  });
+
+  it("rejects recovery-bridge tree or sole-parent substitution", async () => {
+    await expect(verifyPostQReviewedCandidate(
+      reviewedCandidateFetch(CANDIDATE, { tree: { sha: "b".repeat(40) } }),
+      TOKEN,
+      CANDIDATE,
+      containmentRun(),
+      Date.parse("2026-09-08T17:31:00.000Z"),
+    )).rejects.toThrow("post_q_authority_reviewed_candidate_invalid");
+    await expect(verifyPostQReviewedCandidate(
+      reviewedCandidateFetch(CANDIDATE, {
+        parents: [{ sha: "b".repeat(40) }],
+      }),
+      TOKEN,
+      CANDIDATE,
+      containmentRun(),
+      Date.parse("2026-09-08T17:31:00.000Z"),
     )).rejects.toThrow("post_q_authority_reviewed_candidate_invalid");
   });
 
@@ -525,10 +770,32 @@ describe("permanent-staging post-Q GitHub authority", () => {
       currentRunId: CURRENT_RUN_ID,
       containment: {
         runId: CURRENT_RUN_ID,
-        totalWorkflowDispatchRuns: 1,
-        priorAttempts: [],
+        runNumber: 2,
+        totalWorkflowDispatchRuns: 2,
+        priorAttempts: [{
+          runId: RECOVERY_BRIDGE_RUN_ID,
+          runAttempt: 1,
+          headSha: RECOVERY_BRIDGE_SHA,
+          writerDisposition: "completed_skipped",
+        }],
+        recoveryBridge: {
+          runId: RECOVERY_BRIDGE_RUN_ID,
+          runAttempt: 1,
+          workflowId: RECOVERY_BRIDGE_WORKFLOW_ID,
+          workflowPath:
+            ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+          headSha: RECOVERY_BRIDGE_SHA,
+          prepareJobId: String(RECOVERY_BRIDGE_PREPARE_JOB_ID),
+          applyJobId: String(RECOVERY_BRIDGE_APPLY_JOB_ID),
+          prepareFailedBeforeIntentExact: true,
+          applyCompletedSkippedWithoutStepsExact: true,
+          writerNeverExistedOrStartedExact: true,
+          artifactsAbsentExact: true,
+        },
+        workflowMetadataExact: true,
         currentWriterNotStartedExact: true,
         everyPriorWriterDefinitelySkippedExact: true,
+        priorCompletedBeforeWriterRunsDoNotConsumeAuthority: true,
         freshDispatchCannotRepeatWriteExact: true,
       },
       failedQ: {
@@ -577,247 +844,165 @@ describe("permanent-staging post-Q GitHub authority", () => {
     })).rejects.toThrow("post_q_authority_github_response_invalid");
   });
 
+  it("accepts only the exact pre-writer prepare and apply phases", async () => {
+    await expect(runAuthority()).resolves.toBeDefined();
+    await expect(runAuthority({
+      currentJobs: applyPhaseCurrentJobs(),
+    })).resolves.toBeDefined();
+  });
+
+  it("rejects indeterminate current writer states", async () => {
+    const emptyInProgressApply = applyPhaseCurrentJobs();
+    emptyInProgressApply.jobs[1]!.steps = [];
+    await expect(runAuthority({
+      currentJobs: emptyInProgressApply,
+    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+
+    const completedPrepareWithoutApply = currentJobs();
+    completedPrepareWithoutApply.jobs[0]!.status = "completed";
+    completedPrepareWithoutApply.jobs[0]!.conclusion = "success";
+    await expect(runAuthority({
+      currentJobs: completedPrepareWithoutApply,
+    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+  });
+
+  it("requires the recovery candidate merge after the pinned failed run", async () => {
+    await expect(verifyPostQReviewedCandidate(
+      reviewedCandidateFetch(
+        CANDIDATE,
+        {},
+        "2026-09-08T17:12:11Z",
+      ),
+      TOKEN,
+      CANDIDATE,
+      containmentRun(),
+      Date.parse("2026-09-08T17:31:00.000Z"),
+    )).rejects.toThrow("post_q_authority_reviewed_candidate_invalid");
+  });
+
   it("permanently rejects a fresh dispatch after any prior writer started", async () => {
-    const prior = containmentRun({
-      id: 34239999999,
-      run_number: 1,
+    const bridgeJobs = recoveryBridgeJobs();
+    const apply = bridgeJobs.jobs[1]!;
+    apply.status = "completed";
+    apply.conclusion = "failure";
+    apply.steps.push({
+      number: 1,
+      name: "Stop the exact accidental staging deployment once",
       status: "completed",
       conclusion: "failure",
-      head_sha: CANDIDATE,
+      started_at: "2026-09-08T17:12:11Z",
+      completed_at: "2026-09-08T17:12:12Z",
     });
-    const current = containmentRun({ run_number: 2 });
-    await expect(verifyPermanentStagingPostQAuthority({
-      argv: argumentsFor(),
-      env: environment(),
-      fetchImpl: githubFetch({
-        currentRun: current,
-        containmentRuns: {
-          total_count: 2,
-          workflow_runs: [current, prior],
-        },
-        priorJobs: {
-          total_count: 2,
-          jobs: [
-            {
-              id: 102399999991,
-              run_id: 34239999999,
-              run_attempt: 1,
-              name: "Authenticate Q and persist the exact stop intent",
-              status: "completed",
-              conclusion: "success",
-              steps: [],
-            },
-            {
-              id: 102399999992,
-              run_id: 34239999999,
-              run_attempt: 1,
-              name: "Stop the one exact accidental staging deployment",
-              status: "completed",
-              conclusion: "failure",
-              steps: [{
-                name: "Stop the exact accidental staging deployment once",
-                status: "completed",
-                conclusion: "failure",
-              }],
-            },
-          ],
-        },
-      }),
-      sealArtifact: vi.fn(),
-      verifyCandidate: vi.fn(),
-    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+
+    await expect(runAuthority({ bridgeJobs })).rejects.toThrow(
+      "post_q_authority_containment_authority_consumed",
+    );
   });
 
   it("consumes authority when a prior apply job ran even if the named writer was skipped", async () => {
-    const prior = containmentRun({
-      id: 34239999999,
-      run_number: 1,
+    const bridgeJobs = recoveryBridgeJobs();
+    const apply = bridgeJobs.jobs[1]!;
+    apply.status = "completed";
+    apply.conclusion = "failure";
+    apply.steps.push({
+      number: 1,
+      name: "An unclassified apply step",
       status: "completed",
-      conclusion: "failure",
-      head_sha: CANDIDATE,
+      conclusion: "success",
+      started_at: "2026-09-08T17:12:11Z",
+      completed_at: "2026-09-08T17:12:12Z",
     });
-    const current = containmentRun({ run_number: 2 });
-    await expect(verifyPermanentStagingPostQAuthority({
-      argv: argumentsFor(),
-      env: environment(),
-      fetchImpl: githubFetch({
-        currentRun: current,
-        containmentRuns: {
-          total_count: 2,
-          workflow_runs: [current, prior],
-        },
-        priorJobs: {
-          total_count: 2,
-          jobs: [
-            {
-              id: 102399999991,
-              run_id: 34239999999,
-              run_attempt: 1,
-              name: "Authenticate Q and persist the exact stop intent",
-              status: "completed",
-              conclusion: "success",
-              steps: [],
-            },
-            {
-              id: 102399999992,
-              run_id: 34239999999,
-              run_attempt: 1,
-              name: "Stop the one exact accidental staging deployment",
-              status: "completed",
-              conclusion: "failure",
-              steps: [
-                {
-                  name: "An unclassified apply step",
-                  status: "completed",
-                  conclusion: "success",
-                },
-                {
-                  name: "Stop the exact accidental staging deployment once",
-                  status: "completed",
-                  conclusion: "skipped",
-                },
-              ],
-            },
-          ],
-        },
-      }),
-      sealArtifact: vi.fn(),
-      verifyCandidate: vi.fn(),
-    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+
+    await expect(runAuthority({ bridgeJobs })).rejects.toThrow(
+      "post_q_authority_containment_authority_consumed",
+    );
   });
 
-  it("consumes authority for a prior run from any other candidate revision", async () => {
+  it("rejects any extra skipped run outside the exact two-run history", async () => {
     const prior = containmentRun({
       id: 34239999999,
-      run_number: 1,
+      run_number: 0,
       status: "completed",
       conclusion: "failure",
       head_sha: "b".repeat(40),
     });
-    const current = containmentRun({ run_number: 2 });
-    await expect(verifyPermanentStagingPostQAuthority({
-      argv: argumentsFor(),
-      env: environment(),
-      fetchImpl: githubFetch({
+    const current = containmentRun();
+    await expect(runAuthority({
         currentRun: current,
         containmentRuns: {
-          total_count: 2,
-          workflow_runs: [current, prior],
+          total_count: 3,
+          workflow_runs: [current, recoveryBridgeRun(), prior],
         },
-        priorJobs: {
-          total_count: 2,
-          jobs: [
-            {
-              id: 102399999991,
-              run_id: 34239999999,
-              run_attempt: 1,
-              name: "Authenticate Q and persist the exact stop intent",
-              status: "completed",
-              conclusion: "failure",
-              steps: [],
-            },
-            {
-              id: 102399999992,
-              run_id: 34239999999,
-              run_attempt: 1,
-              name: "Stop the one exact accidental staging deployment",
-              status: "completed",
-              conclusion: "skipped",
-              steps: [],
-            },
-          ],
-        },
-      }),
-      sealArtifact: vi.fn(),
-      verifyCandidate: vi.fn(),
-    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+        priorJobs: safePriorJobs(),
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
   });
 
-  it("reads every containment history page and every safe prior attempt", async () => {
-    const current = containmentRun({ run_number: 101 });
-    const priorRuns = Array.from({ length: 100 }, (_, index) => containmentRun({
-      id: 34230000000 + index,
-      run_number: index + 1,
-      status: "completed",
-      conclusion: "failure",
-      head_sha: CANDIDATE,
-    }));
-    const baseFetch = githubFetch({ currentRun: current });
-    const fetchImpl = vi.fn(async (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      const url = String(input);
-      if (url.includes(
-        "/actions/workflows/stop-permanent-staging-post-q-deployment.yml/runs?",
-      )) {
-        const page = new URL(url).searchParams.get("page");
-        const rows = page === "1"
-          ? [current, ...priorRuns.slice(0, 99)]
-          : page === "2"
-          ? priorRuns.slice(99)
-          : [];
-        return new Response(JSON.stringify({
-          total_count: 101,
-          workflow_runs: rows,
-        }), { status: 200 });
-      }
-      const priorMatch = /\/actions\/runs\/(3423\d+)\/attempts\/1\/jobs\?/.exec(url);
-      if (priorMatch) {
-        const runId = Number(priorMatch[1]);
-        return new Response(JSON.stringify({
-          total_count: 2,
-          jobs: [
-            {
-              id: runId + 60000000000,
-              run_id: runId,
-              run_attempt: 1,
-              name: "Authenticate Q and persist the exact stop intent",
-              status: "completed",
-              conclusion: "failure",
-              steps: [],
-            },
-            {
-              id: runId + 70000000000,
-              run_id: runId,
-              run_attempt: 1,
-              name: "Stop the one exact accidental staging deployment",
-              status: "completed",
-              conclusion: "skipped",
-              steps: [],
-            },
-          ],
-        }), { status: 200 });
-      }
-      return baseFetch(input, init);
+  it("rejects a rerun of either the current or recovery bridge run", async () => {
+    await expect(runAuthority({
+      currentRun: containmentRun({ run_attempt: 2 }),
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
+    const rerunBridge = recoveryBridgeRun({ run_attempt: 2 });
+    await expect(runAuthority({
+      containmentRuns: {
+        total_count: 2,
+        workflow_runs: [containmentRun(), rerunBridge],
+      },
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
+  });
+
+  it("rejects substituted run identity, job graph, and artifact inventory", async () => {
+    await expect(runAuthority({
+      currentRun: containmentRun({ name: "wrong-current-name" }),
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
+
+    const currentListing = containmentRun({
+      display_title: "wrong-current-title",
     });
-    const result = await verifyPermanentStagingPostQAuthority({
-      argv: argumentsFor(),
-      env: environment(),
-      fetchImpl,
-      now: () => Date.parse("2026-09-08T15:01:00.000Z"),
-      sealArtifact: vi.fn(() => ({
-        sealedDirectory: "/tmp/pintpath-post-q-authority/sealed",
-        members: POST_Q_ARTIFACT_MEMBERS.map((member) => ({
-          ...member,
-          sealedPath: member.path,
-        })),
-      })),
-      verifyCandidate: vi.fn(async () => ({
-        schemaVersion: POST_Q_REVIEWED_CANDIDATE_SCHEMA,
-      })),
-      writeAuthority: vi.fn(),
-      writeReviewedCandidate: vi.fn(),
-      writeOutput: vi.fn(),
-    });
-    expect(result.authority.containment).toMatchObject({
-      totalWorkflowDispatchRuns: 101,
-      allWorkflowRunPagesReadExact: true,
-      allRunAttemptJobPagesReadExact: true,
-    });
-    expect(result.authority.containment.priorAttempts).toHaveLength(100);
-    expect(fetchImpl.mock.calls.some(([input]) =>
-      String(input).includes("per_page=100&page=2"))).toBe(true);
+    await expect(runAuthority({
+      containmentRuns: {
+        total_count: 2,
+        workflow_runs: [currentListing, recoveryBridgeRun()],
+      },
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
+
+    await expect(runAuthority({
+      bridgeRun: recoveryBridgeRun({ actor: undefined }),
+    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+
+    const bridgeListing = recoveryBridgeRun({ triggering_actor: undefined });
+    await expect(runAuthority({
+      containmentRuns: {
+        total_count: 2,
+        workflow_runs: [containmentRun(), bridgeListing],
+      },
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
+
+    await expect(runAuthority({
+      bridgeRun: recoveryBridgeRun({ check_suite_id: 92795131799 }),
+    })).rejects.toThrow("post_q_authority_containment_authority_consumed");
+
+    await expect(runAuthority({
+      workflowMetadata: {
+        id: RECOVERY_BRIDGE_WORKFLOW_ID,
+        name: "Stop the exact post-Q permanent staging deployment",
+        path: ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+        state: "disabled_manually",
+      },
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
+
+    const bridgeJobs = recoveryBridgeJobs();
+    bridgeJobs.jobs[0]!.steps[8]!.completed_at =
+      "2026-09-08T17:12:09Z";
+    await expect(runAuthority({ bridgeJobs })).rejects.toThrow(
+      "post_q_authority_containment_authority_consumed",
+    );
+
+    await expect(runAuthority({
+      bridgeArtifacts: {
+        total_count: 1,
+        artifacts: [{ id: 1, name: "unexpected-intent" }],
+      },
+    })).rejects.toThrow("post_q_authority_containment_history_invalid");
   });
 
   it("seals an exact regular-file inventory into a private flat directory", () => {

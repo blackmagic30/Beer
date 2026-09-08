@@ -30,7 +30,10 @@ const Q_RUN_ID = "34229745722";
 const Q_WORKFLOW_ID = 344383802;
 const Q_RUN_NUMBER = 13;
 const Q_HEAD_SHA = "606d33facb515dd10bc94c360e43c20beb999cc1";
-const CONTAINMENT_DIRECT_PARENT_SHA = Q_HEAD_SHA;
+const CONTAINMENT_DIRECT_PARENT_SHA =
+  "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7";
+const CONTAINMENT_RECOVERY_PARENT_TREE_SHA =
+  "9978dca9491f7bf7bee77ce39debe1f713e89c53";
 const CONTAINMENT_AUTHORITY_DEADLINE = "2026-09-08T18:57:20.000Z";
 const RELEASE_POLICY_SHA256 =
   "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90";
@@ -48,12 +51,20 @@ const Q_JOB_NAME =
   "Quiesce the configured Europe replica from one to zero";
 const CONTAINMENT_WORKFLOW_PATH =
   ".github/workflows/stop-permanent-staging-post-q-deployment.yml";
+const CONTAINMENT_WORKFLOW_ID = 353312302;
 const CONTAINMENT_WORKFLOW_NAME =
   "Stop the exact post-Q permanent staging deployment";
+const CONTAINMENT_RECOVERY_RUN_ID = "34255228036";
+const CONTAINMENT_RECOVERY_RUN_NUMBER = 1;
+const CONTAINMENT_RECOVERY_RUN_CREATED_AT = "2026-09-08T17:07:48Z";
+const CONTAINMENT_RECOVERY_RUN_STARTED_AT = "2026-09-08T17:07:48Z";
+const CONTAINMENT_RECOVERY_RUN_COMPLETED_AT = "2026-09-08T17:12:11Z";
 const CONTAINMENT_PREPARE_JOB =
   "Authenticate Q and persist the exact stop intent";
+const CONTAINMENT_RECOVERY_PREPARE_JOB_ID = "102159216963";
 const CONTAINMENT_APPLY_JOB =
   "Stop the one exact accidental staging deployment";
+const CONTAINMENT_RECOVERY_APPLY_JOB_ID = "102160681336";
 const CONTAINMENT_WRITER_STEP =
   "Stop the exact accidental staging deployment once";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -142,6 +153,90 @@ const Q_SKIPPED_JOBS = Object.freeze([
   }),
 ]);
 
+const CONTAINMENT_RECOVERY_PREPARE_STEPS = Object.freeze([
+  Object.freeze([
+    1, "Set up job", "success",
+    "2026-09-08T17:07:54Z", "2026-09-08T17:07:55Z",
+  ]),
+  Object.freeze([
+    2,
+    "Checkout the exact main candidate without persisted credentials",
+    "success",
+    "2026-09-08T17:07:55Z",
+    "2026-09-08T17:07:58Z",
+  ]),
+  Object.freeze([
+    3,
+    "Require exact one-attempt staging-only containment authority",
+    "success",
+    "2026-09-08T17:07:58Z",
+    "2026-09-08T17:07:59Z",
+  ]),
+  Object.freeze([
+    4, "Setup the repository Node runtime", "success",
+    "2026-09-08T17:07:59Z", "2026-09-08T17:08:00Z",
+  ]),
+  Object.freeze([
+    5, "Install immutable dependencies", "success",
+    "2026-09-08T17:08:00Z", "2026-09-08T17:08:04Z",
+  ]),
+  Object.freeze([
+    6,
+    "Run the complete repository gate before provider-token custody",
+    "success",
+    "2026-09-08T17:08:04Z",
+    "2026-09-08T17:12:07Z",
+  ]),
+  Object.freeze([
+    7, "Create private Q, intent, and evidence custody", "success",
+    "2026-09-08T17:12:07Z", "2026-09-08T17:12:07Z",
+  ]),
+  Object.freeze([
+    8, "Download the exact immutable failed-Q artifact", "success",
+    "2026-09-08T17:12:07Z", "2026-09-08T17:12:08Z",
+  ]),
+  Object.freeze([
+    9,
+    "Authenticate the exact failed Q run, sole writer, and artifact bytes",
+    "failure",
+    "2026-09-08T17:12:08Z",
+    "2026-09-08T17:12:08Z",
+  ]),
+  Object.freeze([
+    10,
+    "Prepare the exact post-Q stop intent with metadata credentials only",
+    "skipped",
+    "2026-09-08T17:12:08Z",
+    "2026-09-08T17:12:08Z",
+  ]),
+  Object.freeze([
+    11,
+    "Persist the exact stop intent before any stop credential exists",
+    "skipped",
+    "2026-09-08T17:12:08Z",
+    "2026-09-08T17:12:08Z",
+  ]),
+  Object.freeze([
+    12, "Remove prepare Q custody", "success",
+    "2026-09-08T17:12:08Z", "2026-09-08T17:12:08Z",
+  ]),
+  Object.freeze([
+    23, "Post Setup the repository Node runtime", "skipped",
+    "2026-09-08T17:12:08Z", "2026-09-08T17:12:08Z",
+  ]),
+  Object.freeze([
+    24,
+    "Post Checkout the exact main candidate without persisted credentials",
+    "success",
+    "2026-09-08T17:12:08Z",
+    "2026-09-08T17:12:09Z",
+  ]),
+  Object.freeze([
+    25, "Complete job", "success",
+    "2026-09-08T17:12:09Z", "2026-09-08T17:12:09Z",
+  ]),
+]);
+
 function fail(code) {
   throw new Error(`post_q_authority_${code}`);
 }
@@ -156,6 +251,35 @@ function sha256(value) {
 
 function canonical(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function containmentRunTitle(headSha) {
+  return `Permanent staging post-Q deployment stop | ${headSha}`;
+}
+
+function containmentRunTitleExact(value, headSha) {
+  const expected = containmentRunTitle(headSha);
+  return value.name === expected && value.display_title === expected;
+}
+
+function githubActorIdentityExact(value) {
+  return ["actor", "triggering_actor"].every((field) =>
+    record(value[field]) && value[field].id === 29029791 &&
+      value[field].login === "blackmagic30");
+}
+
+function repositoryIdentityExact(value) {
+  return record(value.repository) && value.repository.id === REPOSITORY_ID &&
+    value.repository.full_name === REPOSITORY &&
+    record(value.head_repository) &&
+    value.head_repository.id === REPOSITORY_ID &&
+    value.head_repository.full_name === REPOSITORY;
+}
+
+function containmentWorkflowMetadataExact(value) {
+  return record(value) && value.id === CONTAINMENT_WORKFLOW_ID &&
+    value.name === CONTAINMENT_WORKFLOW_NAME &&
+    value.path === CONTAINMENT_WORKFLOW_PATH && value.state === "active";
 }
 
 function parseArguments(argv) {
@@ -263,32 +387,27 @@ async function githubGet(fetchImpl, env, resource, allowNext = false) {
 
 function currentContainmentRunExact(value, env, candidateSha) {
   return record(value) && value.id === Number(env.GITHUB_RUN_ID) &&
-    Number.isSafeInteger(value.workflow_id) && value.workflow_id > 0 &&
-    Number.isSafeInteger(value.run_number) && value.run_number > 0 &&
-    value.run_attempt === 1 && value.name === CONTAINMENT_WORKFLOW_NAME &&
-    value.display_title ===
-      `Permanent staging post-Q deployment stop | ${candidateSha}` &&
+    value.workflow_id === CONTAINMENT_WORKFLOW_ID &&
+    value.run_number === 2 &&
+    value.run_attempt === 1 && containmentRunTitleExact(value, candidateSha) &&
     value.event === "workflow_dispatch" &&
     value.status === "in_progress" && value.conclusion === null &&
     value.head_branch === "main" && value.head_sha === candidateSha &&
     value.path === CONTAINMENT_WORKFLOW_PATH &&
-    record(value.repository) && value.repository.id === REPOSITORY_ID &&
-    value.repository.full_name === REPOSITORY &&
-    record(value.head_repository) &&
-    value.head_repository.id === REPOSITORY_ID &&
-    value.head_repository.full_name === REPOSITORY;
+    repositoryIdentityExact(value) && githubActorIdentityExact(value);
 }
 
 function containmentRunListingRowExact(value, workflowId) {
   return record(value) && RUN_ID_PATTERN.test(String(value.id)) &&
-    value.workflow_id === workflowId &&
+    workflowId === CONTAINMENT_WORKFLOW_ID &&
+    value.workflow_id === CONTAINMENT_WORKFLOW_ID &&
     Number.isSafeInteger(value.run_number) && value.run_number > 0 &&
-    Number.isSafeInteger(value.run_attempt) && value.run_attempt > 0 &&
-    value.run_attempt <= 20 && value.name === CONTAINMENT_WORKFLOW_NAME &&
+    value.run_attempt === 1 && SHA_PATTERN.test(value.head_sha) &&
+    containmentRunTitleExact(value, value.head_sha) &&
     value.event === "workflow_dispatch" &&
     value.path === CONTAINMENT_WORKFLOW_PATH &&
-    typeof value.head_sha === "string" && SHA_PATTERN.test(value.head_sha) &&
-    typeof value.head_branch === "string" && value.head_branch.length > 0;
+    value.head_branch === "main" && repositoryIdentityExact(value) &&
+    githubActorIdentityExact(value);
 }
 
 async function completeContainmentRunHistory(fetchImpl, env, workflowId) {
@@ -363,11 +482,72 @@ async function completeAttemptJobs(fetchImpl, env, runId, runAttempt) {
 }
 
 function priorAttemptDefinitelySkipped(jobs) {
-  if (jobs.length !== 2 || new Set(jobs.map((job) => job.name)).size !== 2 ||
-    !jobs.some((job) => job.name === CONTAINMENT_PREPARE_JOB)) return false;
+  if (jobs.length !== 2 || new Set(jobs.map((job) => job.name)).size !== 2) {
+    return false;
+  }
+  const prepare = jobs.find((job) => job.name === CONTAINMENT_PREPARE_JOB);
   const apply = jobs.find((job) => job.name === CONTAINMENT_APPLY_JOB);
-  return record(apply) && apply.status === "completed" &&
+  return record(prepare) && prepare.status === "completed" &&
+    typeof prepare.conclusion === "string" && record(apply) &&
+    apply.status === "completed" &&
     apply.conclusion === "skipped" && apply.steps.length === 0;
+}
+
+function recoveryPrepareStepsExact(steps) {
+  return Array.isArray(steps) &&
+    steps.length === CONTAINMENT_RECOVERY_PREPARE_STEPS.length &&
+    steps.every((step, index) => {
+      const expected = CONTAINMENT_RECOVERY_PREPARE_STEPS[index];
+      return record(step) && step.number === expected[0] &&
+        step.name === expected[1] && step.status === "completed" &&
+        step.conclusion === expected[2] && step.started_at === expected[3] &&
+        step.completed_at === expected[4];
+    });
+}
+
+function recoveryBridgeRunExact(run, jobs) {
+  if (!record(run) || String(run.id) !== CONTAINMENT_RECOVERY_RUN_ID ||
+    run.workflow_id !== CONTAINMENT_WORKFLOW_ID ||
+    run.check_suite_id !== 92795131798 ||
+    run.run_number !== CONTAINMENT_RECOVERY_RUN_NUMBER ||
+    run.run_attempt !== 1 ||
+    !containmentRunTitleExact(run, CONTAINMENT_DIRECT_PARENT_SHA) ||
+    run.event !== "workflow_dispatch" || run.status !== "completed" ||
+    run.conclusion !== "failure" || run.head_branch !== "main" ||
+    run.head_sha !== CONTAINMENT_DIRECT_PARENT_SHA ||
+    run.path !== CONTAINMENT_WORKFLOW_PATH ||
+    run.created_at !== CONTAINMENT_RECOVERY_RUN_CREATED_AT ||
+    run.run_started_at !== CONTAINMENT_RECOVERY_RUN_STARTED_AT ||
+    run.updated_at !== CONTAINMENT_RECOVERY_RUN_COMPLETED_AT ||
+    !repositoryIdentityExact(run) || !githubActorIdentityExact(run) ||
+    jobs.length !== 2 ||
+    String(jobs[0]?.id) !== CONTAINMENT_RECOVERY_PREPARE_JOB_ID ||
+    String(jobs[1]?.id) !== CONTAINMENT_RECOVERY_APPLY_JOB_ID) return false;
+  const prepare = jobs[0];
+  const apply = jobs[1];
+  const expectedWorkflowName = containmentRunTitle(
+    CONTAINMENT_DIRECT_PARENT_SHA,
+  );
+  return record(prepare) && prepare.name === CONTAINMENT_PREPARE_JOB &&
+    prepare.run_id === Number(CONTAINMENT_RECOVERY_RUN_ID) &&
+    prepare.run_attempt === 1 &&
+    prepare.workflow_name === expectedWorkflowName &&
+    prepare.head_sha === CONTAINMENT_DIRECT_PARENT_SHA &&
+    prepare.status === "completed" && prepare.conclusion === "failure" &&
+    prepare.created_at === "2026-09-08T17:07:50Z" &&
+    prepare.started_at === "2026-09-08T17:07:53Z" &&
+    prepare.completed_at === "2026-09-08T17:12:10Z" &&
+    recoveryPrepareStepsExact(prepare.steps) && record(apply) &&
+    apply.name === CONTAINMENT_APPLY_JOB &&
+    apply.run_id === Number(CONTAINMENT_RECOVERY_RUN_ID) &&
+    apply.run_attempt === 1 &&
+    apply.workflow_name === expectedWorkflowName &&
+    apply.head_sha === CONTAINMENT_DIRECT_PARENT_SHA &&
+    apply.status === "completed" && apply.conclusion === "skipped" &&
+    apply.created_at === "2026-09-08T17:12:11Z" &&
+    apply.started_at === "2026-09-08T17:12:11Z" &&
+    apply.completed_at === "2026-09-08T17:12:10Z" &&
+    apply.steps.length === 0;
 }
 
 function currentWriterNotStarted(jobs) {
@@ -376,17 +556,27 @@ function currentWriterNotStarted(jobs) {
     jobs.some((job) => ![CONTAINMENT_PREPARE_JOB, CONTAINMENT_APPLY_JOB]
       .includes(job.name)) ||
     !jobs.some((job) => job.name === CONTAINMENT_PREPARE_JOB)) return false;
+  const prepare = jobs.find((job) => job.name === CONTAINMENT_PREPARE_JOB);
+  if (!record(prepare)) return false;
   const apply = jobs.find((job) => job.name === CONTAINMENT_APPLY_JOB);
-  if (apply === undefined) return true;
+  if (prepare.status === "in_progress" && prepare.conclusion === null) {
+    if (apply === undefined) return true;
+    return apply.status === "queued" && apply.conclusion === null &&
+      apply.started_at === null && apply.completed_at === null &&
+      apply.steps.length === 0;
+  }
+  if (prepare.status !== "completed" || prepare.conclusion !== "success" ||
+    !record(apply) || apply.status !== "in_progress" ||
+    apply.conclusion !== null ||
+    typeof apply.started_at !== "string" ||
+    !Number.isFinite(Date.parse(apply.started_at)) ||
+    apply.completed_at !== null) return false;
   const writers = apply.steps.filter((step) =>
     record(step) && step.name === CONTAINMENT_WRITER_STEP);
-  if (writers.length === 0) {
-    return ["queued", "in_progress"].includes(apply.status);
-  }
+  if (writers.length !== 1) return false;
   const writer = writers[0];
-  return writers.length === 1 && writer.status === "queued" &&
-    writer.conclusion === null && writer.started_at === null &&
-    writer.completed_at === null;
+  return writer.status === "pending" && writer.conclusion === null &&
+    writer.started_at === null && writer.completed_at === null;
 }
 
 async function verifyContainmentSingleUseAuthority(
@@ -398,21 +588,54 @@ async function verifyContainmentSingleUseAuthority(
   if (!currentContainmentRunExact(currentRun, env, candidateSha)) {
     fail("containment_history_invalid");
   }
-  const runs = await completeContainmentRunHistory(
-    fetchImpl,
-    env,
-    currentRun.workflow_id,
-  );
+  const [runs, recoveryRun, recoveryArtifacts, workflowMetadata] =
+    await Promise.all([
+    completeContainmentRunHistory(
+      fetchImpl,
+      env,
+      currentRun.workflow_id,
+    ),
+    githubGet(
+      fetchImpl,
+      env,
+      `/repos/${REPOSITORY}/actions/runs/${CONTAINMENT_RECOVERY_RUN_ID}`,
+    ),
+    githubGet(
+      fetchImpl,
+      env,
+      `/repos/${REPOSITORY}/actions/runs/${CONTAINMENT_RECOVERY_RUN_ID}` +
+        "/artifacts?per_page=100&page=1",
+    ),
+    githubGet(
+      fetchImpl,
+      env,
+      `/repos/${REPOSITORY}/actions/workflows/${CONTAINMENT_WORKFLOW_ID}`,
+    ),
+  ]);
+  if (runs.length !== 2 || !record(recoveryArtifacts) ||
+    recoveryArtifacts.total_count !== 0 ||
+    !Array.isArray(recoveryArtifacts.artifacts) ||
+    recoveryArtifacts.artifacts.length !== 0 ||
+    !containmentWorkflowMetadataExact(workflowMetadata)) {
+    fail("containment_history_invalid");
+  }
   const currentRows = runs.filter((run) =>
     String(run.id) === env.GITHUB_RUN_ID);
-  if (currentRows.length !== 1 || currentRows[0].run_attempt !== 1 ||
-    currentRows[0].head_sha !== candidateSha) {
+  const priorRows = runs.filter((run) =>
+    String(run.id) !== env.GITHUB_RUN_ID);
+  if (String(runs[0]?.id) !== env.GITHUB_RUN_ID ||
+    String(runs[1]?.id) !== CONTAINMENT_RECOVERY_RUN_ID ||
+    currentRows.length !== 1 ||
+    !currentContainmentRunExact(currentRows[0], env, candidateSha) ||
+    priorRows.length !== 1 ||
+    String(priorRows[0].id) !== CONTAINMENT_RECOVERY_RUN_ID) {
     fail("containment_history_invalid");
   }
   const priorAttempts = [];
+  let recoveryBridge = null;
   for (const run of runs) {
     if (String(run.id) === env.GITHUB_RUN_ID) continue;
-    if (run.status !== "completed" || run.head_sha !== candidateSha) {
+    if (run.status !== "completed" || typeof run.conclusion !== "string") {
       fail("containment_authority_consumed");
     }
     for (let attempt = 1; attempt <= run.run_attempt; attempt += 1) {
@@ -425,13 +648,35 @@ async function verifyContainmentSingleUseAuthority(
       if (!priorAttemptDefinitelySkipped(jobs)) {
         fail("containment_authority_consumed");
       }
+      if (String(run.id) === CONTAINMENT_RECOVERY_RUN_ID) {
+        if (recoveryBridge !== null ||
+          !recoveryBridgeRunExact(run, jobs) ||
+          !recoveryBridgeRunExact(recoveryRun, jobs)) {
+          fail("containment_authority_consumed");
+        }
+        recoveryBridge = Object.freeze({
+          runId: CONTAINMENT_RECOVERY_RUN_ID,
+          runAttempt: 1,
+          workflowId: CONTAINMENT_WORKFLOW_ID,
+          workflowPath: CONTAINMENT_WORKFLOW_PATH,
+          headSha: CONTAINMENT_DIRECT_PARENT_SHA,
+          prepareJobId: CONTAINMENT_RECOVERY_PREPARE_JOB_ID,
+          applyJobId: CONTAINMENT_RECOVERY_APPLY_JOB_ID,
+          prepareFailedBeforeIntentExact: true,
+          applyCompletedSkippedWithoutStepsExact: true,
+          writerNeverExistedOrStartedExact: true,
+          artifactsAbsentExact: true,
+        });
+      }
       priorAttempts.push({
         runId: String(run.id),
         runAttempt: attempt,
+        headSha: run.head_sha,
         writerDisposition: "completed_skipped",
       });
     }
   }
+  if (recoveryBridge === null) fail("containment_history_invalid");
   priorAttempts.sort((left, right) =>
     Number(left.runId) - Number(right.runId) ||
     left.runAttempt - right.runAttempt);
@@ -453,8 +698,11 @@ async function verifyContainmentSingleUseAuthority(
     headSha: candidateSha,
     totalWorkflowDispatchRuns: runs.length,
     priorAttempts: Object.freeze(priorAttempts),
+    recoveryBridge,
+    workflowMetadataExact: true,
     currentWriterNotStartedExact: true,
     everyPriorWriterDefinitelySkippedExact: true,
+    priorCompletedBeforeWriterRunsDoNotConsumeAuthority: true,
     allWorkflowRunPagesReadExact: true,
     allRunAttemptJobPagesReadExact: true,
     freshDispatchCannotRepeatWriteExact: true,
@@ -490,23 +738,34 @@ export async function verifyPostQReviewedCandidate(
   }
   const currentStartedAt = Date.parse(String(currentRun.run_started_at));
   const mergedAt = Date.parse(String(reviewedPullRequest.mergedAt));
+  const recoveryRunCompletedAt = Date.parse(
+    CONTAINMENT_RECOVERY_RUN_COMPLETED_AT,
+  );
   const deadline = Date.parse(CONTAINMENT_AUTHORITY_DEADLINE);
   if (!Number.isFinite(currentStartedAt) || !Number.isFinite(mergedAt) ||
-    !Number.isFinite(nowMs) || !Number.isFinite(deadline) ||
+    !Number.isFinite(recoveryRunCompletedAt) || !Number.isFinite(nowMs) ||
+    !Number.isFinite(deadline) || mergedAt <= recoveryRunCompletedAt ||
     mergedAt > currentStartedAt || currentStartedAt - mergedAt > 7 * 24 * 60 * 60 * 1000 ||
     nowMs < currentStartedAt - 5 * 60 * 1000 || nowMs >= deadline ||
     currentStartedAt >= deadline) {
     fail("reviewed_candidate_invalid");
   }
   let candidateCommit;
+  let recoveryParentCommit;
   let mainReference;
   try {
-    [candidateCommit, mainReference] = await Promise.all([
+    [candidateCommit, recoveryParentCommit, mainReference] = await Promise.all([
       releaseGithubGet(
         fetchImpl,
         token,
         REPOSITORY,
         `/git/commits/${candidateSha}`,
+      ),
+      releaseGithubGet(
+        fetchImpl,
+        token,
+        REPOSITORY,
+        `/git/commits/${CONTAINMENT_DIRECT_PARENT_SHA}`,
       ),
       releaseGithubGet(fetchImpl, token, REPOSITORY, "/git/ref/heads/main"),
     ]);
@@ -518,6 +777,13 @@ export async function verifyPostQReviewedCandidate(
     candidateCommit.tree.sha !== reviewedPullRequest.treeSha ||
     !Array.isArray(candidateCommit.parents) || candidateCommit.parents.length !== 1 ||
     candidateCommit.parents[0]?.sha !== CONTAINMENT_DIRECT_PARENT_SHA ||
+    !record(recoveryParentCommit) ||
+    recoveryParentCommit.sha !== CONTAINMENT_DIRECT_PARENT_SHA ||
+    !record(recoveryParentCommit.tree) ||
+    recoveryParentCommit.tree.sha !== CONTAINMENT_RECOVERY_PARENT_TREE_SHA ||
+    !Array.isArray(recoveryParentCommit.parents) ||
+    recoveryParentCommit.parents.length !== 1 ||
+    recoveryParentCommit.parents[0]?.sha !== Q_HEAD_SHA ||
     !record(mainReference) || mainReference.ref !== "refs/heads/main" ||
     !record(mainReference.object) || mainReference.object.type !== "commit" ||
     mainReference.object.sha !== candidateSha) {
@@ -623,6 +889,11 @@ export async function verifyPostQReviewedCandidate(
     reviewedPullRequest,
     releasePolicySha256: sha256(policySource),
     directParentSha: CONTAINMENT_DIRECT_PARENT_SHA,
+    recoveryBridge: {
+      candidateSha: CONTAINMENT_DIRECT_PARENT_SHA,
+      treeSha: CONTAINMENT_RECOVERY_PARENT_TREE_SHA,
+      soleParentSha: Q_HEAD_SHA,
+    },
     authorizationDeadline: CONTAINMENT_AUTHORITY_DEADLINE,
     currentContainmentRun: {
       runId: String(currentRun.id),
@@ -637,6 +908,7 @@ export async function verifyPostQReviewedCandidate(
       mergedPullRequestAndTreeExact: true,
       soleParentSquashShapeExact: true,
       directParentExact: true,
+      recoveryBridgeExact: true,
       currentMainTipExact: true,
       noLaterMainDriftExact: true,
       baseRequiredCheckLineageExact: true,
