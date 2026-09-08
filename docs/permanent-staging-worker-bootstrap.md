@@ -51,9 +51,17 @@ the prior terminal artifact.
 For the current policy-pinned cold/dead successor, replace only the normal
 prepare/quiesce entry with `recover-permanent-staging-cold-zero.yml`. Its one
 cross-candidate bridge pins predecessor candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`, an
-exact reviewed direct-child successor, a fresh same-candidate `prepare_run_id`,
-and deadline `2026-09-08T18:57:20Z`. Successor quiesce must pass those first two
+`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
+and reviewed intermediate candidate
+`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`. The intermediate's prepare
+`34180322982` may have written before acknowledgement failed; its
+`reconcile-prepare` run `34181145015` is a failed zero-write read-only attempt.
+The executable successor must be the exact reviewed direct child of the
+intermediate, perform a fresh same-candidate Supabase replacement and normal
+cold prepare, supply that fresh `prepare_run_id`, and finish before the
+unchanged `2026-09-08T18:57:20Z` deadline. Successor quiesce accepts exactly
+seven all-ref cold-recovery runs split `3 + 2 + 2` across predecessor,
+intermediate, and executable successor. It must pass the original predecessor
 values as `ambiguous_quiesce_candidate_sha` and
 `ambiguous_quiesce_run_id`, leave `ambiguous_prepare_run_id` empty, and retain
 the sealed successor bridge plus reviewed authority. The remaining fenced

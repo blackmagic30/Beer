@@ -200,10 +200,18 @@ receipt is accepted as the selected prepare for the later quiesce chain.
 
 The one authorized cross-candidate cold-quiesce successor is pinned even more
 narrowly. Its predecessor is candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, run `34153306935`; the successor
-candidate must be its exact reviewed direct child, use a fresh same-candidate
-`prepare_run_id`, and complete the successor bridge no later than
-`2026-09-08T18:57:20Z`. Dispatch successor `quiesce` with
+`838e8c877dcafc0a822a12e5a26afa81c26924a3`, run `34153306935`. Reviewed
+intermediate candidate `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`
+is the predecessor's exact direct child. Its prepare run `34180322982` may have
+written before losing its acknowledgement, and its reconciliation run
+`34181145015` is an exact failed zero-write read-only attempt. The executable
+successor must be the exact reviewed direct child of
+`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`, perform a
+fresh same-candidate Supabase replacement and normal cold prepare, and complete
+the successor bridge no later than `2026-09-08T18:57:20Z`. At successor
+quiesce, the complete all-ref cold-recovery history is exactly seven pinned
+runs split `3 + 2 + 2` across the predecessor, intermediate, and executable
+successor. Dispatch successor `quiesce` with
 `ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`,
 `ambiguous_quiesce_run_id=34153306935`, and an empty
 `ambiguous_prepare_run_id`. The sealed bridge and reviewed-authority bytes must
@@ -685,8 +693,14 @@ route open. The controlling policy is schema v2 at SHA-256
    changing the null runtime, then authenticate cold quiesce from null to zero.
    The sole cross-candidate bridge must use predecessor candidate
    `838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
-   an exact reviewed direct-child successor, a fresh successor
-   `prepare_run_id`, and deadline `2026-09-08T18:57:20Z`; pass the predecessor as
+   intermediate candidate `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`,
+   its ambiguous prepare `34180322982`, and its failed zero-write prepare
+   reconciliation `34181145015`. The executable successor must be the exact
+   reviewed direct child of
+   `919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`, perform a fresh same-candidate
+   replacement and normal prepare, supply that fresh `prepare_run_id`, and
+   finish before the unchanged `2026-09-08T18:57:20Z` deadline; pass the
+   original predecessor as
    `ambiguous_quiesce_candidate_sha` and `ambiguous_quiesce_run_id`, while
    leaving `ambiguous_prepare_run_id` empty.
    Upload the candidate only at explicit zero, then restore it from zero to one

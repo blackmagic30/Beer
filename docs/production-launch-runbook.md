@@ -1944,9 +1944,16 @@ path with empty staged patches. A sole healthy one-replica legacy deployment
 uses the normal path. The current exact failed/stopped cold/dead topology uses
 only `Recover dead permanent staging to explicit zero`; its one permitted
 cross-candidate bridge pins predecessor candidate
-`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`, an
-exact reviewed direct-child successor, a fresh same-candidate `prepare_run_id`,
-and deadline `2026-09-08T18:57:20Z`. For successor quiesce pass
+`838e8c877dcafc0a822a12e5a26afa81c26924a3`, predecessor run `34153306935`,
+and reviewed intermediate candidate
+`919cbbc9ed4a5bb1d99bc2624f5b534e31ddb604`. The intermediate's prepare
+`34180322982` may have written before acknowledgement failed, while its
+`reconcile-prepare` run `34181145015` failed without a provider write. The
+executable successor must be the exact reviewed direct child of the
+intermediate, perform a fresh same-candidate Supabase replacement and normal
+cold prepare, and supply that fresh `prepare_run_id`. Its quiesce authority
+requires exactly seven all-ref cold-recovery runs split `3 + 2 + 2`, and keeps
+the original deadline `2026-09-08T18:57:20Z`. For successor quiesce pass
 `ambiguous_quiesce_candidate_sha=838e8c877dcafc0a822a12e5a26afa81c26924a3`
 and `ambiguous_quiesce_run_id=34153306935`, and leave
 `ambiguous_prepare_run_id` empty. No generic failed deployment or ad-hoc Railway

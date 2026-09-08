@@ -27,6 +27,7 @@ import {
   parseColdQuiesceSuccessorBinding,
   parseSupabaseReplacementPrerequisite,
   policyExact,
+  readPrivateEvidence,
   requiredRowsExact,
   runScaleCommand,
   type ColdRecoveryState,
@@ -376,6 +377,21 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
       COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactDigest,
     priorAmbiguousColdQuiesceRunCompletedAt:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorCompletedAt,
+    intermediateColdRecoveryCandidateSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.intermediateCandidateSha,
+    intermediateColdRecoveryReviewedHeadSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.intermediateReviewedHeadSha,
+    intermediateColdRecoveryTreeSha:
+      COLD_QUIESCE_SUCCESSOR_BINDING.intermediateTreeSha,
+    intermediateColdRecoveryPullRequestNumber:
+      COLD_QUIESCE_SUCCESSOR_BINDING.intermediatePullRequestNumber,
+    intermediateColdRecoveryCandidateMergedAt:
+      COLD_QUIESCE_SUCCESSOR_BINDING.intermediateMergedAt,
+    intermediateAmbiguousColdPrepareRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING.intermediateAmbiguousPrepareRunId,
+    intermediateFailedReadOnlyColdPrepareReconcileRunId:
+      COLD_QUIESCE_SUCCESSOR_BINDING
+        .intermediateFailedReadOnlyPrepareReconcileRunId,
     coldQuiesceSuccessorGraceHours: 24,
     coldQuiesceSuccessorDeadline: COLD_QUIESCE_SUCCESSOR_BINDING.deadline,
     coldQuiesceSuccessorWithinGraceExact: true,
@@ -384,6 +400,9 @@ function coldQuiesceSuccessorAuthority(currentRunId = CURRENT_RUN): string {
     coldQuiesceSuccessorAllRefsHistoryExact: true,
     coldQuiesceSuccessorCurrentPrepareExact: true,
     coldQuiesceSuccessorArtifactMetadataExact: true,
+    coldQuiesceSuccessorPriorToIntermediateParentExact: true,
+    coldQuiesceSuccessorTwoHopLineageExact: true,
+    coldQuiesceSuccessorIntermediateHistoryExact: true,
     coldQuiesceSuccessorBridgeRequired: true,
     completeRetainedHistoryExact: true,
     stagingLifecycleSealed: false,
@@ -405,6 +424,20 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
     priorQuiesceRunId: COLD_QUIESCE_SUCCESSOR_BINDING.priorQuiesceRunId,
     priorReadOnlyReconcileRunId:
       COLD_QUIESCE_SUCCESSOR_BINDING.priorReadOnlyReconcileRunId,
+    intermediateCandidate: {
+      candidateSha: COLD_QUIESCE_SUCCESSOR_BINDING.intermediateCandidateSha,
+      reviewedHeadSha:
+        COLD_QUIESCE_SUCCESSOR_BINDING.intermediateReviewedHeadSha,
+      treeSha: COLD_QUIESCE_SUCCESSOR_BINDING.intermediateTreeSha,
+      pullRequestNumber:
+        COLD_QUIESCE_SUCCESSOR_BINDING.intermediatePullRequestNumber,
+      mergedAt: COLD_QUIESCE_SUCCESSOR_BINDING.intermediateMergedAt,
+      ambiguousPrepareRunId:
+        COLD_QUIESCE_SUCCESSOR_BINDING.intermediateAmbiguousPrepareRunId,
+      failedReadOnlyPrepareReconcileRunId:
+        COLD_QUIESCE_SUCCESSOR_BINDING
+          .intermediateFailedReadOnlyPrepareReconcileRunId,
+    },
     priorArtifact: {
       id: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactId,
       name: COLD_QUIESCE_SUCCESSOR_BINDING.priorArtifactName,
@@ -483,6 +516,9 @@ function coldQuiesceSuccessorBridge(currentRunId = CURRENT_RUN): string {
       configuredLiveTopologyExact: true,
       deploymentManifestIdentityExact: true,
       noSecondScaleWritePerformed: true,
+      priorToIntermediateLineageExact: true,
+      twoHopSuccessorLineageExact: true,
+      intermediateColdHistoryExact: true,
     },
     nextRequiredProof: "FRESH_REVIEWED_SUCCESSOR_CONFIGURED_ONE_TO_ZERO",
     secretMaterialIncluded: false,
@@ -662,12 +698,39 @@ describe("permanent-staging cold recovery", () => {
     );
     const reconcilePrepareJob = workflow.split("\n  reconcile-prepare:")[1]
       .split("\n  quiesce:")[0];
+    const reconcilePrepareAuthorityStep = reconcilePrepareJob.split(
+      "- name: Authenticate the prior ambiguous prepare and current read-only dispatch",
+    )[1].split("\n      - name:")[0];
+    expect(reconcilePrepareAuthorityStep).toContain("umask 077");
+    expect(reconcilePrepareAuthorityStep).toContain(
+      '> "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"\n' +
+        '          chmod 600 "$RUNNER_TEMP/pintpath-cold-github-candidate/reviewed-authority.json"',
+    );
     expect(reconcilePrepareJob).toContain(
       "Prove the lost prepare acknowledgement without another write",
     );
     expect(reconcilePrepareJob).not.toContain(
       "PINTPATH_RAILWAY_STAGING_VARIABLE_TOKEN",
     );
+  });
+
+  it("rejects public reconciliation authority custody and accepts mode 0600", () => {
+    const directory = fs.realpathSync(fs.mkdtempSync(
+      path.join(os.tmpdir(), "pintpath-cold-authority-mode-"),
+    ));
+    const filename = path.join(directory, "reviewed-authority.json");
+    const source = `${JSON.stringify({ ok: true })}\n`;
+    try {
+      fs.writeFileSync(filename, source, { encoding: "utf8", mode: 0o600 });
+      fs.chmodSync(filename, 0o644);
+      expect(() => readPrivateEvidence(filename)).toThrow(
+        "trusted_file_invalid",
+      );
+      fs.chmodSync(filename, 0o600);
+      expect(readPrivateEvidence(filename)).toBe(source);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("force-settles a CLI process group that ignores the timeout SIGTERM", async () => {

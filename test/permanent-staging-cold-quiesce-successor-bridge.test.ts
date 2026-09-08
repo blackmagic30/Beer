@@ -12,6 +12,7 @@ import {
 } from "../scripts/verify-permanent-staging-cold-quiesce-successor-bridge.js";
 import {
   COLD_RECOVERY_LOCK,
+  parseColdQuiesceSuccessorBinding,
   sha256,
   type ColdRecoveryState,
 } from "../scripts/lib/permanent-staging-cold-recovery.js";
@@ -32,14 +33,14 @@ function currentAuthority(): string {
     repository: COLD_RECOVERY_LOCK.repository,
     candidateSha: CANDIDATE,
     reviewedPrHeadSha: "b".repeat(40),
-    reviewedPullRequestNumber: 91,
+    reviewedPullRequestNumber: 92,
     operation: COLD_QUIESCE_SUCCESSOR_BRIDGE.operation,
     workflowPath:
       ".github/workflows/recover-permanent-staging-cold-zero.yml",
     workflowRunId: CURRENT_RUN,
     workflowRunAttempt: 1,
-    workflowRunCreatedAt: "2026-09-08T00:10:00Z",
-    reviewedPullRequestMergedAt: "2026-09-08T00:00:00Z",
+    workflowRunCreatedAt: "2026-09-08T03:10:00Z",
+    reviewedPullRequestMergedAt: "2026-09-08T03:00:00Z",
     candidateHistoryMaximumAgeHours: 168,
     completeRetainedHistoryExact: true,
     safePriorSkippedWriteRunIds: [],
@@ -67,6 +68,21 @@ function currentAuthority(): string {
     selectedColdPrepareRunId: CURRENT_PREPARE_RUN,
     priorFailedReadOnlyColdQuiesceReconcileRunId:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.priorReadOnlyReconcileRunId,
+    intermediateColdRecoveryCandidateSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateCandidateSha,
+    intermediateColdRecoveryReviewedHeadSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateReviewedHeadSha,
+    intermediateColdRecoveryTreeSha:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateTreeSha,
+    intermediateColdRecoveryPullRequestNumber:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediatePullRequestNumber,
+    intermediateColdRecoveryCandidateMergedAt:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateMergedAt,
+    intermediateAmbiguousColdPrepareRunId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateAmbiguousPrepareRunId,
+    intermediateFailedReadOnlyColdPrepareReconcileRunId:
+      COLD_QUIESCE_SUCCESSOR_BRIDGE
+        .intermediateFailedReadOnlyPrepareReconcileRunId,
     priorAmbiguousColdQuiesceArtifactId:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactId,
     priorAmbiguousColdQuiesceArtifactName:
@@ -74,7 +90,10 @@ function currentAuthority(): string {
     priorAmbiguousColdQuiesceArtifactDigest:
       COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactDigest,
     coldQuiesceSuccessorDirectParentExact: true,
+    coldQuiesceSuccessorPriorToIntermediateParentExact: true,
+    coldQuiesceSuccessorTwoHopLineageExact: true,
     coldQuiesceSuccessorPriorHistoryExact: true,
+    coldQuiesceSuccessorIntermediateHistoryExact: true,
     coldQuiesceSuccessorAllRefsHistoryExact: true,
     coldQuiesceSuccessorCurrentPrepareExact: true,
     coldQuiesceSuccessorArtifactMetadataExact: true,
@@ -207,7 +226,7 @@ function dependencies(
       },
     }),
     readState: vi.fn().mockResolvedValue(state),
-    now: () => new Date("2026-09-08T00:10:01.000Z"),
+    now: () => new Date("2026-09-08T03:10:01.000Z"),
     writeOutput: vi.fn(),
   };
 }
@@ -237,6 +256,21 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
         coldQuiesceSuccessorDeadline:
           COLD_QUIESCE_SUCCESSOR_BRIDGE.successorDeadline,
         coldQuiesceSuccessorWithinGraceExact: true,
+        intermediateCandidate: {
+          candidateSha:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateCandidateSha,
+          reviewedHeadSha:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateReviewedHeadSha,
+          treeSha: COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateTreeSha,
+          pullRequestNumber:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediatePullRequestNumber,
+          mergedAt: COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateMergedAt,
+          ambiguousPrepareRunId:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE.intermediateAmbiguousPrepareRunId,
+          failedReadOnlyPrepareReconcileRunId:
+            COLD_QUIESCE_SUCCESSOR_BRIDGE
+              .intermediateFailedReadOnlyPrepareReconcileRunId,
+        },
         priorArtifact: {
           id: COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactId,
           digest: COLD_QUIESCE_SUCCESSOR_BRIDGE.artifactDigest,
@@ -273,6 +307,10 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
           },
         },
         checks: {
+          directSuccessorLineageExact: true,
+          priorToIntermediateLineageExact: true,
+          twoHopSuccessorLineageExact: true,
+          intermediateColdHistoryExact: true,
           priorArtifactContentsExact: true,
           sourceAnchorsExact: true,
           priorCliDeterministicPrecommitBarrierExact: true,
@@ -311,6 +349,70 @@ describe("permanent-staging cold-quiesce successor bridge", () => {
       expect(deps.writeOutput).toHaveBeenCalledWith(expect.stringContaining(
         "cold_quiesce_successor_bridge_artifact_contents_invalid",
       ));
+    } finally {
+      fs.rmSync(files.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects substituted intermediate-candidate authority before live reads", async () => {
+    const files = prepareFiles();
+    try {
+      const authority = JSON.parse(fs.readFileSync(
+        files.authorityFile,
+        "utf8",
+      )) as Record<string, unknown>;
+      authority.intermediateColdRecoveryCandidateSha = "b".repeat(40);
+      fs.writeFileSync(
+        files.authorityFile,
+        `${JSON.stringify(authority)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      const deps = dependencies();
+      expect(await runPermanentStagingColdQuiesceSuccessorBridge(
+        files.argv,
+        deps,
+      )).toBe(1);
+      expect(deps.readScope).not.toHaveBeenCalled();
+      expect(deps.writeOutput).toHaveBeenCalledWith(expect.stringContaining(
+        "cold_quiesce_successor_bridge_reviewed_authority_invalid",
+      ));
+    } finally {
+      fs.rmSync(files.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a substituted intermediate-candidate binding", async () => {
+    const files = prepareFiles();
+    try {
+      expect(await runPermanentStagingColdQuiesceSuccessorBridge(
+        files.argv,
+        dependencies(),
+      )).toBe(0);
+      const bridgeFile = path.join(
+        files.evidence,
+        "cold-quiesce-successor-bridge.json",
+      );
+      const source = fs.readFileSync(bridgeFile, "utf8");
+      expect(parseColdQuiesceSuccessorBinding(
+        source,
+        currentAuthority(),
+        CANDIDATE,
+        CURRENT_RUN,
+        CURRENT_PREPARE_RUN,
+        Date.parse("2026-09-08T03:10:02.000Z"),
+      )).not.toBeNull();
+      const substituted = JSON.parse(source) as {
+        intermediateCandidate: { candidateSha: string };
+      };
+      substituted.intermediateCandidate.candidateSha = "b".repeat(40);
+      expect(parseColdQuiesceSuccessorBinding(
+        `${JSON.stringify(substituted, null, 2)}\n`,
+        currentAuthority(),
+        CANDIDATE,
+        CURRENT_RUN,
+        CURRENT_PREPARE_RUN,
+        Date.parse("2026-09-08T03:10:02.000Z"),
+      )).toBeNull();
     } finally {
       fs.rmSync(files.root, { recursive: true, force: true });
     }
