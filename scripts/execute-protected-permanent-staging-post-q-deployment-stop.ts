@@ -1073,10 +1073,10 @@ function snapshotCommitmentExact(value: unknown, stopped: boolean): boolean {
     domain: POST_Q_DEPLOYMENT_STOP_LOCK.domain,
     targetPort: POST_Q_DEPLOYMENT_STOP_LOCK.targetPort,
   }];
-  const expectedActiveDeployments = stopped ? [] : [{
+  const expectedActiveDeployments = [{
     id: POST_Q_DEPLOYMENT_STOP_LOCK.deploymentId,
     status: "SUCCESS",
-    deploymentStopped: false,
+    deploymentStopped: stopped,
   }];
   if (!exactRecord(value, SNAPSHOT_COMMITMENT_KEYS) ||
     value.stateProjectionSchema !== POST_Q_DEPLOYMENT_STOP_STATE_PROJECTION_SCHEMA ||
@@ -1127,7 +1127,7 @@ function snapshotCommitmentExact(value: unknown, stopped: boolean): boolean {
     value.latestDeployment.snapshotId !== POST_Q_DEPLOYMENT_STOP_LOCK.snapshotId ||
     value.latestDeployment.deploymentStopped !== stopped ||
     !Array.isArray(value.activeDeployments) ||
-    value.activeDeployments.length !== (stopped ? 0 : 1) ||
+    value.activeDeployments.length !== 1 ||
     !exactRecord(value.deployment, [
       "id", "projectId", "environmentId", "serviceId", "snapshotId",
       "commitHash", "imageDigest", "patchId",

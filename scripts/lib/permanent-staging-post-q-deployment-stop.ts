@@ -49,7 +49,7 @@ export const POST_Q_DEPLOYMENT_STOP_LOCK = Object.freeze({
     stateSha256:
       "c5301d50929dd463a45868b5e7c4db869eec9b95113f609b4631fc24ba629425",
     stoppedStateSha256:
-      "133afe93ed56697ea4ea621e5c07112833084c8994ac9073fce919dc89f5717b",
+      "af3946255e5b29e1a46487b49b347143a90148d9429eebef59a645db61796ae4",
     environmentConfigSha256:
       "8ab34441af1ec87d5068ce0155975a9fea46a192537b70c54677e64f60ae183e",
     stagedPatchSha256:
@@ -1634,6 +1634,7 @@ export function stoppedSnapshotExact(
   before: PostQDeploymentStopSnapshot,
   after: PostQDeploymentStopSnapshot,
 ): boolean {
+  const active = after.activeDeployments[0];
   return opaqueObservedEnvironmentConfigExact(before, after) &&
     canonicalPostQEvidence(snapshotCollateral(after)) ===
       canonicalPostQEvidence(snapshotCollateral(before)) &&
@@ -1642,7 +1643,9 @@ export function stoppedSnapshotExact(
     before.latestDeployment.status === "SUCCESS" &&
     after.latestDeployment.status === "SUCCESS" &&
     after.latestDeployment.deploymentStopped === true &&
-    after.activeDeployments.length === 0;
+    after.activeDeployments.length === 1 &&
+    active?.id === before.latestDeployment.id &&
+    active.status === "SUCCESS" && active.deploymentStopped === true;
 }
 
 function parseHistoryNode(value: unknown): Json | null {
@@ -2072,7 +2075,7 @@ export async function probePostQRuntimeAbsence(
           },
           cache: "no-store",
           redirect: "error",
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(25_000),
         });
       const source = await boundedBody(response);
       return {
@@ -2313,11 +2316,11 @@ export async function reconcileStoppedDeployment(input: {
   });
   for (let round = 1; round <= POST_Q_DEPLOYMENT_STOP_LOCK.maximumPollRounds;
     round += 1) {
-    if (!checkpoint(75_000)) {
+    if (!checkpoint(85_000)) {
       return result(false, round - 1);
     }
     latest = await input.readSnapshot();
-    if (!checkpoint(55_000)) {
+    if (!checkpoint(65_000)) {
       return result(false, round);
     }
     runtime = latest !== null && stoppedSnapshotExact(input.before, latest)
@@ -2409,12 +2412,12 @@ export async function reconcileStoppedDeployment(input: {
     }
     if (round < POST_Q_DEPLOYMENT_STOP_LOCK.maximumPollRounds) {
       if (!checkpoint(
-        POST_Q_DEPLOYMENT_STOP_LOCK.stableObservationIntervalMs + 75_000,
+        POST_Q_DEPLOYMENT_STOP_LOCK.stableObservationIntervalMs + 85_000,
       )) {
         return result(false, round);
       }
       await input.sleep(POST_Q_DEPLOYMENT_STOP_LOCK.stableObservationIntervalMs);
-      if (!checkpoint(75_000)) {
+      if (!checkpoint(85_000)) {
         return result(false, round);
       }
     }

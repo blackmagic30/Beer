@@ -6,6 +6,49 @@ Production remains read-only metadata throughout. V4 is a distinct successor:
 it archives the failed V3 attempt but does not reuse its consumed workflow
 authority or claim that its unused deployment-stop authority was exercised.
 
+## Run 3 outcome and post-stop correction
+
+Run `34315605886` was dispatched once from reviewed candidate
+`9d31897301ba41f2cab6b6aa71e1cc6a3f52b1ff` and completed with a failure on
+2026-09-09. The sole writer made exactly one acknowledged `deploymentStop`
+request for the authorized staging deployment; retry remains forbidden. Its
+intent artifact is `10090041640` with digest
+`sha256:a893d1912dcf76965cb63f8fbe52e0e1ae8f0283f4750b69f0751c825f5d98be`.
+Its terminal artifact is `10090225671` with digest
+`sha256:6b628296c06ddd10b2525c58aa9308fdc90f05aed63de7caeac5bb6519da2d0d`.
+
+The stop succeeded at Railway, but the original verifier encoded two incorrect
+provider timing assumptions. Railway retained the stopped deployment as the
+sole `activeDeployments` row with `deploymentStopped: true`, rather than
+removing the row, and its explicit stopped-domain HTTP 502 fallback arrived at
+about 15.8 seconds, just after the original 15-second probe timeout. The inner
+terminal therefore truthfully recorded `reconciliation_failed` after one
+acknowledged attempt; the outer finalizer then rejected that unmodelled stopped
+shape and degraded the result to `terminal_evidence_failed`.
+
+The corrected contract pins the observed stopped-state digest, accepts only the
+exact retained stopped target row, allows 25 seconds for a concrete non-2xx
+fallback, and reserves the corresponding 85-second worst-case I/O window. It
+also preserves the valid inner `reconciliation_failed` receipt during
+credential-free finalization. This correction does not turn run 3 into a
+successful historical run, create its missing completion markers, or authorize
+another writer. Run 3 and its artifacts remain immutable incident evidence and
+must not be rerun.
+
+A separate read-only operator audit at `2026-09-09T06:05:26Z`,
+`2026-09-09T06:05:57Z`, and `2026-09-09T06:06:25Z` observed the same target on
+all three rounds: `SUCCESS` with `deploymentStopped: true`, the sole retained
+active row carrying the same stopped state, and only `EXITED`/`REMOVED`
+instances. Cache-busted `/health`, `/startup`, and `/ready` requests all returned
+Railway's explicit 502 fallback. The provider ledger remained exactly H14/P127
+with history digest
+`c148abfa11eda85933b6f80ec3a682bd58afe8cf03ca17c8c55b72d6fdda7296`
+and patch digest
+`8625b57c0a91e83447b3194992642a129c9d55470e203cc41fddff67a2680bbf`.
+The run's production/staging boundary postflight also remained byte-identical to
+preflight. This audit establishes the current stopped state without rewriting
+run 3's historical conclusion.
+
 ## Why the canonical workflow is reused
 
 GitHub identifies
@@ -163,8 +206,11 @@ noncanonical history/attempt and fails before the writer.
 Success requires the original-prefix durable intent artifact, exactly one
 acknowledged staging-only `deploymentStop`, inner and outer terminal/completion
 pairs, three stable provider observations showing the exact deployment stopped
-and zero active deployments, unchanged target/off-target boundaries, and
-unchanged production metadata. Runtime route absence is supplemental evidence.
+and retained as the sole `activeDeployments` row with `deploymentStopped: true`,
+unchanged target/off-target boundaries, and unchanged production metadata. Each
+runtime route probe permits 25 seconds for Railway's explicit stopped-domain
+fallback response, while still requiring a concrete non-2xx status; transport
+errors never count as runtime absence.
 
 This action cannot satisfy or widen F, V, S, A, or D prerequisites and cannot
 dispatch a downstream workflow. The next permitted proof remains a separately

@@ -56,7 +56,7 @@ The incident state hash uses the fixed
 the live baseline. Its exact pre-stop digest is
 `c5301d50929dd463a45868b5e7c4db869eec9b95113f609b4631fc24ba629425`;
 the sole permitted stopped transition has digest
-`133afe93ed56697ea4ea621e5c07112833084c8994ac9073fce919dc89f5717b`.
+`af3946255e5b29e1a46487b49b347143a90148d9429eebef59a645db61796ae4`.
 Full environment config and the empty staged patch are bound by separate
 hashes; adding fields to the normalized snapshot must not silently redefine the
 incident state projection.
@@ -73,13 +73,16 @@ hashes, and exact before/terminal collateral equality.
 After the one allowed write, the workflow performs bounded read-only polling.
 Success requires three identical provider-terminal observations spanning at
 least 20 seconds: the exact deployment is stopped with status `SUCCESS`, there
-are no active deployments, and environment config, topology, source, variables,
+is exactly one `activeDeployments` row for that same deployment with
+`deploymentStopped: true`, and environment config, topology, source, variables,
 staged patch, and the environment patch ledger are unchanged. The same bounded
 window must also show cache-busted, explicit HTTP responses with non-2xx status
-from `/health`, `/startup`, and `/ready`. A DNS, TLS, connect, timeout, redirect,
-or body-read failure has no usable HTTP status and therefore cannot count as
-route absence. Route absence is a required operational confirmation, but it can
-never establish stopped state without the provider proof. An ambiguous
+from `/health`, `/startup`, and `/ready`. Each route probe permits 25 seconds so
+Railway's stopped-domain fallback can return its explicit response within the
+85-second per-round reserve. A DNS, TLS, connect, timeout, redirect, or
+body-read failure has no usable HTTP status and therefore cannot count as route
+absence. Route absence is a required operational confirmation, but it can never
+establish stopped state without the provider proof. An ambiguous
 acknowledgement, a route that remains live through the observation budget, an
 unreachable observer, or any drift is terminal and must not be retried. No
 deployment-history event shape is assumed for `deploymentStop`: a single new
@@ -90,7 +93,7 @@ Each observation records the unique probe-URL and response-body commitments,
 but those deliberately varying hashes are excluded from the stable-state
 comparison; only the required non-serving status for every route participates.
 The convergence loop is capped at 28 rounds and 300 actual monotonic seconds.
-It starts no round without the fixed 75-second worst-case read reserve and reads
+It starts no round without the fixed 85-second worst-case read reserve and reads
 at most two bounded pages from either provider ledger, so an in-flight read
 cannot be hidden by clamping an over-budget duration.
 

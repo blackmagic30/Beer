@@ -336,13 +336,17 @@ function exactScope() {
 
 function stoppedSnapshot() {
   const before = liveSnapshot();
+  const active = before.activeDeployments[0]!;
   return {
     ...before,
     latestDeployment: {
       ...before.latestDeployment,
       deploymentStopped: true,
     },
-    activeDeployments: [],
+    activeDeployments: [{
+      ...active,
+      deploymentStopped: true,
+    }],
   };
 }
 
@@ -438,6 +442,25 @@ function authenticatedSnapshotCommitment(
     domains: snapshot.domains,
     variableRows: snapshot.rows.length,
     ...snapshotEvidenceHashes(snapshot),
+  };
+}
+
+function run3TerminalSnapshotCommitment(): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(path.resolve(
+    import.meta.dirname,
+    "fixtures/permanent-staging-post-q-run3-terminal-snapshot.json",
+  ), "utf8")) as Record<string, unknown>;
+}
+
+function run3CommitmentForTestSnapshot(
+  snapshot: ReturnType<typeof stoppedSnapshot>,
+): Record<string, unknown> {
+  return {
+    ...run3TerminalSnapshotCommitment(),
+    // The pre-stop raw provider fixture cannot reproduce run 3's complete
+    // opaque config. All other commitment fields reproduce run 3 exactly.
+    observedEnvironmentConfigSha256:
+      snapshot.observedEnvironmentConfigSha256,
   };
 }
 
@@ -714,7 +737,11 @@ function parsedConfigMutation(
   mutate(source.data.environment.config);
   if (stopped) {
     source.data.serviceInstance.latestDeployment.deploymentStopped = true;
-    source.data.serviceInstance.activeDeployments = [];
+    source.data.serviceInstance.activeDeployments =
+      source.data.serviceInstance.activeDeployments.map((deployment) => ({
+        ...deployment,
+        deploymentStopped: true,
+      }));
   }
   return parsePostQDeploymentStopSnapshot(source);
 }
@@ -1165,6 +1192,57 @@ describe("permanent-staging post-Q deployment stop", () => {
     });
     expect(snapshot.deployment.patchId).toBeNull();
     expect(snapshot.rows).toHaveLength(97);
+  });
+
+  it("matches the exact stopped snapshot commitment observed in run 34315605886", () => {
+    const before = liveSnapshot();
+    const after = stoppedSnapshot();
+
+    expect(stoppedSnapshotExact(before, after)).toBe(true);
+    expect(snapshotStateSha256(after)).toBe(
+      "af3946255e5b29e1a46487b49b347143a90148d9429eebef59a645db61796ae4",
+    );
+    expect(snapshotStateSha256(after)).toBe(
+      POST_Q_DEPLOYMENT_STOP_LOCK.baseline.stoppedStateSha256,
+    );
+    expect(run3TerminalSnapshotCommitment().observedEnvironmentConfigSha256).toBe(
+      "b2b76403f4c9d87044dc1cb9b17df5d16c881c2cc6c138eae4cb57ec6ecec4e6",
+    );
+    expect(authenticatedSnapshotCommitment(after)).toEqual(
+      run3CommitmentForTestSnapshot(after),
+    );
+    expect(stoppedSnapshotExact(before, {
+      ...after,
+      activeDeployments: [],
+    })).toBe(false);
+    expect(stoppedSnapshotExact(before, {
+      ...after,
+      activeDeployments: [{
+        ...after.activeDeployments[0]!,
+        deploymentStopped: false,
+      }],
+    })).toBe(false);
+    expect(stoppedSnapshotExact(before, {
+      ...after,
+      activeDeployments: [{
+        ...after.activeDeployments[0]!,
+        id: "00000000-0000-4000-8000-000000000001",
+      }],
+    })).toBe(false);
+    expect(stoppedSnapshotExact(before, {
+      ...after,
+      activeDeployments: [{
+        ...after.activeDeployments[0]!,
+        status: "FAILED",
+      }],
+    })).toBe(false);
+    expect(stoppedSnapshotExact(before, {
+      ...after,
+      activeDeployments: [
+        after.activeDeployments[0]!,
+        after.activeDeployments[0]!,
+      ],
+    })).toBe(false);
   });
 
   it("pins target deploy separately and dynamically commits all safe config", () => {
@@ -1676,6 +1754,57 @@ describe("permanent-staging post-Q deployment stop", () => {
     });
   });
 
+  it("allows Railway's 15.8-second stopped-domain 502 within the 25-second probe timeout", async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(
+      (milliseconds) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), milliseconds);
+        return controller.signal;
+      },
+    );
+    let completedResponses = 0;
+    const fetchImpl = vi.fn((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const responseTimer = setTimeout(() => {
+          completedResponses += 1;
+          resolve(new Response("Application failed to respond", {
+            status: 502,
+            headers: { "content-type": "text/plain" },
+          }));
+        }, 15_800);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(responseTimer);
+          reject(new Error("probe_aborted"));
+        }, { once: true });
+      }));
+    let nonce = 0;
+
+    try {
+      const pending = probePostQRuntimeAbsence(
+        fetchImpl as unknown as typeof fetch,
+        () => String(++nonce).padStart(32, "0"),
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(completedResponses).toBe(0);
+      await vi.advanceTimersByTimeAsync(800);
+
+      await expect(pending).resolves.toMatchObject({
+        absent: true,
+        requests: {
+          "/health": { statusCode: 502 },
+          "/startup": { statusCode: 502 },
+          "/ready": { statusCode: 502 },
+        },
+      });
+      expect(timeout).toHaveBeenCalledTimes(3);
+      expect(timeout.mock.calls).toEqual([[25_000], [25_000], [25_000]]);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("lets one 2xx route veto absence and ignores dynamic hashes when non-2xx status projections converge", async () => {
     const before = liveSnapshot();
     const after = stoppedSnapshot();
@@ -1784,14 +1913,7 @@ describe("permanent-staging post-Q deployment stop", () => {
 
   it("requires three identical observations at 10-second intervals spanning 20 seconds", async () => {
     const before = liveSnapshot();
-    const after = {
-      ...before,
-      latestDeployment: {
-        ...before.latestDeployment,
-        deploymentStopped: true,
-      },
-      activeDeployments: [],
-    };
+    const after = stoppedSnapshot();
     expect(stoppedSnapshotExact(before, after)).toBe(true);
     expect(stoppedSnapshotExact(before, {
       ...after,
@@ -1848,14 +1970,7 @@ describe("permanent-staging post-Q deployment stop", () => {
 
   it("rejects observations closer than the required interval", async () => {
     const before = liveSnapshot();
-    const after = {
-      ...before,
-      latestDeployment: {
-        ...before.latestDeployment,
-        deploymentStopped: true,
-      },
-      activeDeployments: [],
-    };
+    const after = stoppedSnapshot();
     const ledger: ProviderLedger = { historyRows: [], patchRows: [] };
     let monotonicMs = 0;
 
@@ -1951,6 +2066,31 @@ describe("permanent-staging post-Q deployment stop", () => {
       if (slowStep === "runtime") expect(readLedger).not.toHaveBeenCalled();
     },
   );
+
+  it("does not start a reconciliation round without the full 85-second I/O reserve", async () => {
+    const readSnapshot = vi.fn().mockResolvedValue(stoppedSnapshot());
+    const result = await reconcileStoppedDeployment({
+      before: liveSnapshot(),
+      beforeLedger: { historyRows: [], patchRows: [] },
+      requestStartedAt: "2026-09-08T15:00:00.000Z",
+      readSnapshot,
+      readLedger: vi.fn().mockResolvedValue({ historyRows: [], patchRows: [] }),
+      probeRuntime: vi.fn().mockResolvedValue(runtimeAbsenceEvidence()),
+      sleep: vi.fn().mockResolvedValue(undefined),
+      monotonicNow: vi.fn()
+        .mockReturnValueOnce(0)
+        .mockReturnValue(215_001),
+      wallNow: vi.fn(() => TEST_NOW),
+    });
+
+    expect(result).toMatchObject({
+      exact: false,
+      rounds: 0,
+      stableObservations: 0,
+      totalObservationSpanMs: 215_001,
+    });
+    expect(readSnapshot).not.toHaveBeenCalled();
+  });
 
   it("parses the complete reviewed containment authority emitted by the verifier", () => {
     const source = reviewedAuthoritySource();
@@ -2574,6 +2714,78 @@ describe("permanent-staging post-Q deployment stop", () => {
         attempts: 1,
       });
     }
+  });
+
+  it("preserves run 34315605886's stopped-row reconciliation failure in finalize", async () => {
+    const run3StoppedSnapshot = stoppedSnapshot();
+    const applied = runnerHarness({
+      phase: "apply",
+      reconciliation: {
+        exact: false,
+        rounds: 23,
+        stableObservations: 0,
+        stableSpanMs: 0,
+        snapshot: run3StoppedSnapshot,
+        runtime: null,
+        ledger: null,
+        ledgerEvidence: null,
+        observations: [],
+        totalObservationSpanMs: 223_278.511276,
+      },
+    });
+
+    await expect(runProtectedPermanentStagingPostQDeploymentStop(
+      applied.overrides,
+    )).resolves.toBe(1);
+    const inner = writtenEvidence(applied, "stop-apply-terminal.json");
+    expect(inner.value).toMatchObject({
+      outcome: "mutation_uncertain",
+      failureCode: "reconciliation_failed",
+      attempts: 1,
+      retryAllowed: false,
+      providerEvidence: {
+        terminalSnapshot: run3CommitmentForTestSnapshot(run3StoppedSnapshot),
+        terminalLedger: null,
+        terminalLedgerEvidence: null,
+        observations: [],
+        stableObservationCount: 0,
+        stableObservationSpanMs: 0,
+        totalObservationSpanMs: 223_278.511276,
+        pollRounds: 23,
+        runtime: null,
+      },
+    });
+
+    const finalized = runnerHarness({
+      phase: "finalize",
+      applyTerminalSource: inner.source,
+    });
+    await expect(runProtectedPermanentStagingPostQDeploymentStop(
+      finalized.overrides,
+    )).resolves.toBe(1);
+    expectNoProviderCalls(finalized);
+    expect(outputReceiptFrom(finalized)).toMatchObject({
+      outcome: "mutation_uncertain",
+      failureCode: "reconciliation_failed",
+      attempts: 1,
+      checks: {
+        acknowledgementExact: true,
+        providerTerminalConvergenceExact: false,
+        stableRuntimeAbsenceExact: false,
+        ledgerPostflightExact: false,
+        terminalEvidenceExact: true,
+      },
+    });
+    expect(writtenEvidence(finalized, "stop-terminal.json").value).toMatchObject({
+      outcome: "mutation_uncertain",
+      failureCode: "reconciliation_failed",
+      attempts: 1,
+      applyTerminal: {
+        sha256: postQSha256(inner.source),
+        receipt: inner.value,
+      },
+      nextRequiredProof: null,
+    });
   });
 
   it("never reports pending success when the apply terminal cannot be written", async () => {

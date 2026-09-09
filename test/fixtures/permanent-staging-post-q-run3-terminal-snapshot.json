@@ -1,0 +1,62 @@
+{
+  "activeDeployments": [
+    {
+      "deploymentStopped": true,
+      "id": "6300a324-9407-4b1c-b651-749c47e9537f",
+      "status": "SUCCESS"
+    }
+  ],
+  "collateralVariablesSha256": "76aeec3ee15ddb7c6f628d841815ab1a86d2e04b7685b9ec2ce165bcb500bf7f",
+  "configuredRegions": [
+    {
+      "numReplicas": 1,
+      "region": "us-west2"
+    }
+  ],
+  "deployment": {
+    "commitHash": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "id": "6300a324-9407-4b1c-b651-749c47e9537f",
+    "imageDigest": "sha256:35787ff955a6f2f729ebe7e2220a6146d9429d2ab37e2a88b86225ff0681816e",
+    "patchId": null,
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "snapshotId": "92c2253a-60c4-47fb-8053-a2aee33fc944"
+  },
+  "deploymentRegions": [
+    {
+      "numReplicas": 1,
+      "region": "us-west2"
+    }
+  ],
+  "domains": [
+    {
+      "domain": "beer-staging.up.railway.app",
+      "id": "afbb2417-c6df-48e3-9987-271b10ab2962",
+      "kind": "service",
+      "targetPort": 8080
+    }
+  ],
+  "environmentConfigProjectionSchema": "pintpath-permanent-staging-post-q-target-deploy-config-projection/v1",
+  "environmentConfigSha256": "8ab34441af1ec87d5068ce0155975a9fea46a192537b70c54677e64f60ae183e",
+  "latestDeployment": {
+    "deploymentStopped": true,
+    "id": "6300a324-9407-4b1c-b651-749c47e9537f",
+    "snapshotId": "92c2253a-60c4-47fb-8053-a2aee33fc944",
+    "status": "SUCCESS"
+  },
+  "observedEnvironmentConfigProjectionSchema": "pintpath-permanent-staging-post-q-observed-environment-config/v1",
+  "observedEnvironmentConfigSha256": "b2b76403f4c9d87044dc1cb9b17df5d16c881c2cc6c138eae4cb57ec6ecec4e6",
+  "offTargetVariablesSha256": "2e09efb56d0101fd30c7d1d217e52e51f1b75efefa5342b5472b28ddedc476e7",
+  "source": {
+    "image": null,
+    "repo": null
+  },
+  "sourceIdentitySha256": "d4fd7186aeed76717f612e2671cd6ec5bc20086d819a6644ad73e4934baea205",
+  "stagedPatchSha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+  "stateProjectionSchema": "pintpath-permanent-staging-post-q-state-projection/v1",
+  "stateSha256": "af3946255e5b29e1a46487b49b347143a90148d9429eebef59a645db61796ae4",
+  "topologySha256": "63b2f7cf3dd9f12b05ab9f695555764d5908d3048cdc98be3938499daa079ea9",
+  "variableInventorySha256": "2164ff3f0b321e8de557e91394fc96dced4100d84405f1c32174a567ade9fc15",
+  "variableRows": 97
+}
