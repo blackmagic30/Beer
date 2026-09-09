@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "pintpath-reviewed-user-authorization-provenance/v2",
+  "threadId": "01a0840a-3590-74d1-9567-0e9eec01a9a4",
+  "messages": [
+    "Codex was running for multiple days on two prompts and I had no clue what it did I just stopped them recently because they were eatting away at tokens and the logs were massive. Can you check what they had done, finish of what they were currently working on so there’s no error in the code or bug and tell me what it was doing"
+  ],
+  "provenanceUse": "pintpath-post-q-staging-stop-successor-v4-reviewed-context",
+  "cryptographicUserSignatureClaimed": false
+}

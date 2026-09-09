@@ -835,7 +835,7 @@ describe("post-deadline post-Q staging containment v3", () => {
     }
   });
 
-  it("uses the canonical workflow with only v3 authority/runtime and compatible intent name", () => {
+  it("keeps v3 archived while the canonical workflow uses only v4 authority/runtime", () => {
     const workflow = read(
       ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
     );
@@ -843,10 +843,10 @@ describe("post-deadline post-Q staging containment v3", () => {
     expect(workflow).toContain("authorization_id:");
     expect(workflow).toContain("authorization_source_sha256:");
     expect(workflow.match(
-      /scripts\/verify-permanent-staging-post-q-authority-v3\.mjs/gu,
+      /scripts\/verify-permanent-staging-post-q-authority-v4\.mjs/gu,
     )).toHaveLength(3);
     expect(workflow.match(
-      /scripts\/execute-protected-permanent-staging-post-q-deployment-stop-v3\.ts/gu,
+      /scripts\/execute-protected-permanent-staging-post-q-deployment-stop-v4\.ts/gu,
     )).toHaveLength(3);
     expect(workflow).not.toMatch(
       /scripts\/verify-permanent-staging-post-q-authority\.mjs/gu,
