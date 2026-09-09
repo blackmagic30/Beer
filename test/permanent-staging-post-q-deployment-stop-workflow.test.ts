@@ -8,11 +8,13 @@ const root = path.resolve(import.meta.dirname, "..");
 const workflowPath =
   ".github/workflows/stop-permanent-staging-post-q-deployment.yml";
 const activePolicyPath =
-  "ops/railway/permanent-staging-post-q-deployment-stop-policy-v3.json";
+  "ops/railway/permanent-staging-post-q-deployment-stop-policy-v4.json";
 const archivedV1PolicyPath =
   "ops/railway/permanent-staging-post-q-deployment-stop-policy.json";
 const archivedV2PolicyPath =
   "ops/railway/permanent-staging-post-q-deployment-stop-policy-v2.json";
+const archivedV3PolicyPath =
+  "ops/railway/permanent-staging-post-q-deployment-stop-policy-v3.json";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -40,7 +42,7 @@ function expectLocalArchiveExact(value: unknown): void {
 }
 
 describe("post-Q permanent staging deployment-stop workflow", () => {
-  it("binds the sole manual run-2 writer to active V3 authority", () => {
+  it("binds the sole manual run-3 writer to active V4 authority", () => {
     const workflow = read(workflowPath);
     const policy = json(activePolicyPath);
 
@@ -62,7 +64,7 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
     );
     expect(
       workflow.match(
-        /scripts\/verify-permanent-staging-post-q-authority-v3\.mjs/gu,
+        /scripts\/verify-permanent-staging-post-q-authority-v4\.mjs/gu,
       ),
     ).toHaveLength(3);
     expect(workflow.match(/--downloaded-dir /gu)).toHaveLength(3);
@@ -82,14 +84,14 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
         "PINTPATH_EXTERNAL_RAILWAY_MUTATION_FREEZE_ATTESTATION:",
       );
       expect(step).toContain(
-        "scripts/verify-permanent-staging-post-q-authority-v3.mjs",
+        "scripts/verify-permanent-staging-post-q-authority-v4.mjs",
       );
     }
 
     expect(policy).toMatchObject({
       schemaVersion:
-        "pintpath-permanent-staging-post-q-deployment-stop-policy/v3",
-      policyId: "pintpath-permanent-staging-post-q-deployment-stop-successor-v3",
+        "pintpath-permanent-staging-post-q-deployment-stop-policy/v4",
+      policyId: "pintpath-permanent-staging-post-q-deployment-stop-successor-v4",
       activationState: "GITHUB_ENVIRONMENT_PROTECTED",
       repository: "blackmagic30/Beer",
       requiredRef: "refs/heads/main",
@@ -99,12 +101,18 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
       workflow: {
         path: workflowPath,
         workflowId: 353312302,
-        requiredRunNumber: 2,
-        requiredTotalHistoryRows: 2,
+        requiredRunNumber: 3,
+        requiredTotalHistoryRows: 3,
         historyQueryEventFilterAllowed: false,
         currentWriterMustNotHaveStarted: true,
         rerunAllowed: false,
-        newDispatchAfterRun2Allowed: false,
+        currentWriterVerificationPhases: [
+          "prepare",
+          "apply-reauth",
+          "apply-prewrite",
+        ],
+        applyPrewriteFutureWriterStatesAllowed: ["pending"],
+        newDispatchAfterRun3Allowed: false,
       },
       secretMaterialAllowed: false,
       secretDerivedCommitmentsAllowed: false,
@@ -129,7 +137,8 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
     );
     expect(workflow.match(/npm run check/gu)).toHaveLength(2);
     expect(workflow).toContain("--phase prepare");
-    expect(workflow.match(/--phase apply/gu)).toHaveLength(1);
+    expect(workflow.match(/--phase apply(?:-reauth|-prewrite)?(?: |$)/gmu))
+      .toHaveLength(3);
     expect(workflow.match(/--phase finalize/gu)).toHaveLength(1);
     expect(
       workflow.match(/Stop the exact accidental staging deployment once/gu),
@@ -167,7 +176,7 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
     const stopCredential = workflow.indexOf(
       "PINTPATH_RAILWAY_STAGING_SCALE_TOKEN",
     );
-    const applyInvocation = workflow.indexOf("--phase apply");
+    const applyInvocation = workflow.indexOf("--phase apply", writer);
     const terminalUpload = workflow.indexOf(
       "Upload bounded secret-free stop intent and terminal evidence",
     );
@@ -261,16 +270,20 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
     });
   });
 
-  it("archives V1/V2 immutably and requires a fresh direct-child candidate", () => {
+  it("archives V1/V2/V3 and requires a fresh child of failed V3", () => {
     const policy = json(activePolicyPath);
     const archivedV1 = policy.archivedV1 as JsonRecord;
     const archivedV2 = policy.archivedV2 as JsonRecord;
+    const archivedV3 = policy.archivedV3 as JsonRecord;
 
     expect(json(archivedV1PolicyPath).schemaVersion).toBe(
       "pintpath-permanent-staging-post-q-deployment-stop-policy/v1",
     );
     expect(json(archivedV2PolicyPath).schemaVersion).toBe(
       "pintpath-permanent-staging-post-q-deployment-stop-policy/v2",
+    );
+    expect(json(archivedV3PolicyPath).schemaVersion).toBe(
+      "pintpath-permanent-staging-post-q-deployment-stop-policy/v3",
     );
     expect(archivedV1).toMatchObject({
       policyPath: archivedV1PolicyPath,
@@ -319,11 +332,40 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
       expectLocalArchiveExact(archivedV2[key]);
     }
 
+    expect(archivedV3).toMatchObject({
+      candidateSha: "c6f0f66302a96086c5a60962224af739050e8ff1",
+      candidateTreeSha: "73028c14f816ed9599606add3d131a25737db2d2",
+      candidateSoleParentSha: "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
+      failedRun: {
+        runId: 34304764597,
+        runNumber: 2,
+        runAttempt: 1,
+        conclusion: "failure",
+        failedStepNumber: 9,
+        writerStepNumber: 15,
+        deploymentStopAttempts: 0,
+        writerNeverStartedExact: true,
+        rerunCanQualify: false,
+      },
+      authorityConsumed: true,
+      deploymentStopAuthorityConsumed: false,
+      canonicalRun3SuccessorRequired: true,
+    });
+    for (const key of [
+      "authorization",
+      "policy",
+      "verifier",
+      "authorityLibrary",
+      "executor",
+    ]) {
+      expectLocalArchiveExact(archivedV3[key]);
+    }
+
     expect(policy).toMatchObject({
-      inheritedV2Contracts: {
-        sourcePolicyPath: archivedV2PolicyPath,
+      inheritedV3Contracts: {
+        sourcePolicyPath: archivedV3PolicyPath,
         sourcePolicyByteSha256:
-          "5f4c4bc20c8ef68ed77f51ad92a11cede00122e3274e4408eb8ea858d6a07e4b",
+          "e7c0adec553e42e28ff2ae877835aa3255cfaa2ee8584f64c08ebe7983d901dd",
         failedQArtifactAndReceiptExact: true,
         expiredV1RunNoWriteExact: true,
         postQBaselineExact: true,
@@ -337,13 +379,13 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
       candidateLineage: {
         candidateMustBeCurrentMainTip: true,
         candidateMustBeSoleParentSquash: true,
-        directParentSha: "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
-        directParentTreeSha: "410fd437bb0c459049f08bbff63ee605f2e65c9e",
+        directParentSha: "c6f0f66302a96086c5a60962224af739050e8ff1",
+        directParentTreeSha: "73028c14f816ed9599606add3d131a25737db2d2",
         directParentSoleParentSha:
-          "d27275f4c101b764c6016e8b378969c14719258e",
+          "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
         freshReviewedPullRequestRequired: true,
-        freshPullRequestNumberMustBeGreaterThan: 99,
-        freshMergeMustFollowIneligibleRunCompletion: true,
+        freshPullRequestNumberMustBeGreaterThan: 102,
+        freshMergeMustFollowFailedV3RunCompletion: true,
         freshBaseChecksRequired: 8,
         freshBaseArtifactsRequired: 3,
       },
@@ -399,15 +441,15 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
       },
       authorization: {
         authorizationId:
-          "pintpath-post-q-staging-stop-reauthorization-2026-09-10/v3",
+          "pintpath-post-q-staging-stop-reauthorization-2026-09-09/v4",
         sourcePath:
-          "ops/railway/permanent-staging-post-q-deployment-stop-authorization-v3.json",
-        sourceThreadId: "01a02140-8628-7d30-9374-8d29d4a9f3a3",
+          "ops/railway/permanent-staging-post-q-deployment-stop-authorization-v4.json",
+        sourceThreadId: "01a0840a-3590-74d1-9567-0e9eec01a9a4",
         sourceSchemaVersion:
           "pintpath-reviewed-user-authorization-provenance/v2",
-        sourceSizeBytes: 394,
+        sourceSizeBytes: 613,
         sourceSha256:
-          "d2c7b4c9d700a1d7c5219dd6c4245d5900154421497b8c637ac93f9215662549",
+          "ccaf9c49e38f97368f6187d7c3ff1c853cffe8334fdfaf3478835c7e93f4028c",
         reviewedProvenanceOnly: true,
         cryptographicUserSignatureClaimed: false,
       },
@@ -452,6 +494,7 @@ describe("post-Q permanent staging deployment-stop workflow", () => {
       path.basename(activePolicyPath),
       path.basename(archivedV1PolicyPath),
       path.basename(archivedV2PolicyPath),
+      path.basename(archivedV3PolicyPath),
     ]);
     const otherContracts = [
       ...fs

@@ -114,7 +114,7 @@ describe("post-deadline post-Q staging containment v2", () => {
     })).toBe(false);
   });
 
-  it("keeps v2 immutable while the canonical workflow advances in place to v3", () => {
+  it("keeps v2 immutable while the canonical workflow advances in place to v4", () => {
     expect(hash(read(
       "ops/railway/permanent-staging-post-q-deployment-stop-authorization-v2.json",
     ))).toBe("4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779");
@@ -136,10 +136,10 @@ describe("post-deadline post-Q staging containment v2", () => {
     expect(workflow).toContain("authorization_id:");
     expect(workflow).toContain("authorization_source_sha256:");
     expect(workflow.match(
-      /scripts\/verify-permanent-staging-post-q-authority-v3\.mjs/gu,
+      /scripts\/verify-permanent-staging-post-q-authority-v4\.mjs/gu,
     )).toHaveLength(3);
     expect(workflow.match(
-      /scripts\/execute-protected-permanent-staging-post-q-deployment-stop-v3\.ts/gu,
+      /scripts\/execute-protected-permanent-staging-post-q-deployment-stop-v4\.ts/gu,
     )).toHaveLength(3);
     expect(workflow).not.toContain(
       "scripts/verify-permanent-staging-post-q-authority-v2.mjs",
