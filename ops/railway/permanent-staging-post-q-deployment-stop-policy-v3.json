@@ -1,0 +1,237 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-post-q-deployment-stop-policy/v3",
+  "policyId": "pintpath-permanent-staging-post-q-deployment-stop-successor-v3",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "repository": "blackmagic30/Beer",
+  "requiredRef": "refs/heads/main",
+  "requiredRunAttempt": 1,
+  "githubEnvironment": "permanent-staging-scale-evidence",
+  "concurrencyGroup": "pintpath-permanent-staging-key-rollout",
+  "workflow": {
+    "path": ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+    "workflowId": 353312302,
+    "requiredRunNumber": 2,
+    "requiredTotalHistoryRows": 2,
+    "historyQueryEventFilterAllowed": false,
+    "currentWriterMustNotHaveStarted": true,
+    "rerunAllowed": false,
+    "newDispatchAfterRun2Allowed": false
+  },
+  "archivedV1": {
+    "policyPath": "ops/railway/permanent-staging-post-q-deployment-stop-policy.json",
+    "policyByteSha256": "e8bb67ef71e49f3179f1fe0cb8a6eeceb09f7cae05376b2e74b8b1eae0f7b2e1",
+    "verifierPath": "scripts/verify-permanent-staging-post-q-authority.mjs",
+    "verifierByteSha256": "f5a12c286573226a86445d1bd8960f96be92a75aedc10f705e20ee9e95f8c6a3",
+    "authorityDeadline": "2026-09-08T18:57:20.000Z",
+    "expired": true,
+    "reused": false
+  },
+  "archivedV2": {
+    "candidateSha": "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
+    "candidateTreeSha": "410fd437bb0c459049f08bbff63ee605f2e65c9e",
+    "candidateSoleParentSha": "d27275f4c101b764c6016e8b378969c14719258e",
+    "authorization": {
+      "path": "ops/railway/permanent-staging-post-q-deployment-stop-authorization-v2.json",
+      "blobOid": "69a56dfcd32afaaef2998884ba7df6051dc8b67e",
+      "sizeBytes": 267,
+      "byteSha256": "4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779"
+    },
+    "policy": {
+      "path": "ops/railway/permanent-staging-post-q-deployment-stop-policy-v2.json",
+      "blobOid": "4f2b1447129bf73788d16f6c37057d89e392a520",
+      "sizeBytes": 6141,
+      "byteSha256": "5f4c4bc20c8ef68ed77f51ad92a11cede00122e3274e4408eb8ea858d6a07e4b"
+    },
+    "verifier": {
+      "path": "scripts/verify-permanent-staging-post-q-authority-v2.mjs",
+      "blobOid": "306c9536ebd320205542072474959ff67c2738e9",
+      "sizeBytes": 56752,
+      "byteSha256": "50eccd00ae5059568da11421d75546ed4691ab30399d8bb6a36a2c626cc3105f"
+    },
+    "authorityLibrary": {
+      "path": "scripts/lib/permanent-staging-post-q-deployment-stop-authority-v2.ts",
+      "blobOid": "b16a9ee516d64e67d8ccdf566f2148334e0626ba",
+      "sizeBytes": 23328,
+      "byteSha256": "412890199755cc95f9f69cd9c6ca15d1b16716b1f3c12fcefed5102e665a9389"
+    },
+    "executor": {
+      "path": "scripts/execute-protected-permanent-staging-post-q-deployment-stop-v2.ts",
+      "blobOid": "e8696a21e3f6b5124acf3d91fcd692a9b87e2902",
+      "sizeBytes": 987,
+      "byteSha256": "4b4b41cb81e18862c6b340d2e78e0a940f9c41c2396cc38d77af8b8808f87b87"
+    },
+    "canonicalWorkflow": {
+      "path": ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+      "blobOid": "6633205b7fdf36edae8986d6fa08c9a48e8a95c9",
+      "sizeBytes": 30062,
+      "byteSha256": "712cca911de33b915defb3939dedd95a6c53a57e03e7e596d009437071d7ada5"
+    },
+    "pullRequest": {
+      "number": 99,
+      "reviewedHeadSha": "3b844ce9e5839251552419c3610a797bd1a1f3c7",
+      "mergeCommitSha": "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
+      "baseSha": "d27275f4c101b764c6016e8b378969c14719258e",
+      "mergedAt": "2026-09-08T21:35:27Z",
+      "authorId": 29029791,
+      "mergedById": 29029791,
+      "approvalRequirement": "not_required"
+    },
+    "ineligibility": {
+      "reason": "required_attempt_1_build_test_scan_failed",
+      "workflowId": 275221294,
+      "workflowPath": ".github/workflows/ci.yml",
+      "runId": 34281452199,
+      "runNumber": 563,
+      "runAttempt": 1,
+      "checkSuiteId": 92869213373,
+      "event": "push",
+      "headBranch": "main",
+      "status": "completed",
+      "conclusion": "failure",
+      "startedAt": "2026-09-08T21:35:31Z",
+      "completedAt": "2026-09-08T21:43:26Z",
+      "failedJobId": 102248030722,
+      "failedJobName": "build-test-scan",
+      "failedJobStartedAt": "2026-09-08T21:39:21Z",
+      "failedJobCompletedAt": "2026-09-08T21:43:25Z",
+      "successfulBuildStepNumber": 8,
+      "successfulBuildStepName": "Build, test, and scan",
+      "successfulBuildStepStatus": "completed",
+      "successfulBuildStepConclusion": "success",
+      "successfulBuildStepStartedAt": "2026-09-08T21:39:51Z",
+      "successfulBuildStepCompletedAt": "2026-09-08T21:43:06Z",
+      "failedStepNumber": 11,
+      "failedStepName": "Dependency audit",
+      "failedStepStartedAt": "2026-09-08T21:43:22Z",
+      "failedStepCompletedAt": "2026-09-08T21:43:23Z",
+      "canonicalWorkflowRunAbsent": true,
+      "authorityConsumed": false,
+      "rerunCanQualify": false
+    }
+  },
+  "inheritedV2Contracts": {
+    "sourcePolicyPath": "ops/railway/permanent-staging-post-q-deployment-stop-policy-v2.json",
+    "sourcePolicyByteSha256": "5f4c4bc20c8ef68ed77f51ad92a11cede00122e3274e4408eb8ea858d6a07e4b",
+    "failedQArtifactAndReceiptExact": true,
+    "expiredV1RunNoWriteExact": true,
+    "postQBaselineExact": true,
+    "providerTargetAndOffTargetBoundaryExact": true,
+    "credentialSeparationExact": true,
+    "singleDeploymentStopAttemptExact": true,
+    "durableIntentAndTerminalContractsExact": true,
+    "postWriteReconciliationAndFinalizationExact": true,
+    "productionMutationForbiddenExact": true,
+    "successorOverridesOnly": [
+      "authority schema and provenance",
+      "candidate lineage",
+      "archived v2 ineligibility evidence",
+      "derived deadline",
+      "target deploy-only static eligibility projection",
+      "strict full-environment dynamic collateral commitment"
+    ]
+  },
+  "environmentConfigProjection": {
+    "sourceQueryDecryptVariables": false,
+    "canonicalSerialization": "recursively-sorted-keys-pretty-json-plus-LF",
+    "staticEligibilityProjection": {
+      "schemaVersion": "pintpath-permanent-staging-post-q-target-deploy-config-projection/v1",
+      "scope": "exact-target-service-deploy-object",
+      "projectionSizeBytes": 540,
+      "projectionSha256": "8ab34441af1ec87d5068ce0155975a9fea46a192537b70c54677e64f60ae183e",
+      "historicalFullEnvironmentHashRequired": false
+    },
+    "dynamicCollateralCommitment": {
+      "schemaVersion": "pintpath-permanent-staging-post-q-observed-environment-config/v1",
+      "exactKnownRootServiceVolumeAndNestedPathsRequired": true,
+      "unknownOrMissingPathRejected": true,
+      "numericBooleanAndNullMetadataValuesHashed": true,
+      "allProviderStringValuesRedactedBeforeHashing": true,
+      "rawProviderStringsComparedOnlyInProcess": true,
+      "rawProviderStringsPersistedOrHashed": false,
+      "exactPerServiceVariableNameSetsRequired": true,
+      "variableValueMustBeNull": true,
+      "onlyKnownPasswordGeneratorsMayBeStrings": true,
+      "generatorGrammarExact": "secret(32,lowercase-then-uppercase-ascii)",
+      "generatorProjectedAsSemanticDescriptor": true,
+      "rawGeneratorPersistedOrHashed": false,
+      "preflightPrewriteAndEveryTerminalObservationEqualityRequired": true,
+      "historicalDigestPinned": false,
+      "onlySchemaAndDigestPersisted": true
+    },
+    "sourceIdentityBoundSeparately": true,
+    "networkingDomainsBoundSeparately": true,
+    "exactVariableMetadataRowsAndCollateralBoundSeparately": true,
+    "stagedPatchBoundSeparately": true,
+    "secretMaterialIncluded": false,
+    "secretDerivedCommitmentsIncluded": false
+  },
+  "authorization": {
+    "authorizationId": "pintpath-post-q-staging-stop-reauthorization-2026-09-10/v3",
+    "sourcePath": "ops/railway/permanent-staging-post-q-deployment-stop-authorization-v3.json",
+    "sourceThreadId": "01a02140-8628-7d30-9374-8d29d4a9f3a3",
+    "sourceSchemaVersion": "pintpath-reviewed-user-authorization-provenance/v2",
+    "sourceSizeBytes": 394,
+    "sourceSha256": "d2c7b4c9d700a1d7c5219dd6c4245d5900154421497b8c637ac93f9215662549",
+    "sourceSerialization": "JSON.stringify(value,null,2)+LF",
+    "reviewedProvenanceOnly": true,
+    "cryptographicUserSignatureClaimed": false,
+    "actionConfirmation": "REAUTHORIZE_ONE_STAGING_DEPLOYMENT_STOP_6300A324_9407_4B1C_B651_749C47E9537F_FOR_{candidateSha}_UNDER_V3_FROM_01A02140_8628_7D30_9374_8D29D4A9F3A3"
+  },
+  "candidateLineage": {
+    "candidateMustBeCurrentMainTip": true,
+    "candidateMustBeSoleParentSquash": true,
+    "directParentSha": "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
+    "directParentTreeSha": "410fd437bb0c459049f08bbff63ee605f2e65c9e",
+    "directParentSoleParentSha": "d27275f4c101b764c6016e8b378969c14719258e",
+    "preV2CandidateSha": "d27275f4c101b764c6016e8b378969c14719258e",
+    "preV2CandidateTreeSha": "53808bdd995a6ff1d2204e01f7639b103dbd5a76",
+    "preV2CandidateSoleParentSha": "f8640f6b3c5fb4c152dbd771eedb01a6e0df16d7",
+    "recoveryTreeSha": "9978dca9491f7bf7bee77ce39debe1f713e89c53",
+    "recoverySoleParentSha": "606d33facb515dd10bc94c360e43c20beb999cc1",
+    "freshReviewedPullRequestRequired": true,
+    "freshPullRequestNumberMustBeGreaterThan": 99,
+    "freshMergeMustFollowIneligibleRunCompletion": true,
+    "freshBaseChecksRequired": 8,
+    "freshBaseArtifactsRequired": 3
+  },
+  "deadline": {
+    "explicitExpiry": "2026-09-10T08:00:00.000Z",
+    "maximumAfterPullRequestMergeSeconds": 14400,
+    "maximumAfterRunStartSeconds": 5400,
+    "derivation": "min(pull_request_merged_at_plus_4h,current_run_started_at_plus_90m,explicit_expiry)",
+    "persistDerivedDeadline": true,
+    "rederiveImmediatelyBeforeWriter": true,
+    "expirySuppressesPostWriteReconciliation": false,
+    "expirySuppressesFinalization": false
+  },
+  "target": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "forbiddenProductionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "serviceInstanceId": "5a2f3970-2850-44e0-9b6c-f5c7627dde13",
+    "deploymentId": "6300a324-9407-4b1c-b651-749c47e9537f",
+    "snapshotId": "92c2253a-60c4-47fb-8053-a2aee33fc944",
+    "sourceSha": "12c0d24f6619a0286e16b8daf56fc27aaa1e3aba",
+    "imageDigest": "sha256:35787ff955a6f2f729ebe7e2220a6146d9429d2ab37e2a88b86225ff0681816e"
+  },
+  "operation": {
+    "mutation": "deploymentStop",
+    "maximumAttempts": 1,
+    "automaticRetryAllowed": false,
+    "durableIntentArtifactPrefix": "pintpath-permanent-staging-post-q-deployment-stop-intent-",
+    "prepareCredentials": [
+      "PINTPATH_RAILWAY_STAGING_METADATA_TOKEN",
+      "PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN"
+    ],
+    "applyCredentials": [
+      "PINTPATH_RAILWAY_STAGING_SCALE_TOKEN"
+    ],
+    "productionWriteCredentialAllowed": false,
+    "productionMutationAllowed": false,
+    "postWriteReconciliationRequired": true,
+    "terminalFinalizationRequired": true
+  },
+  "secretMaterialAllowed": false,
+  "secretDerivedCommitmentsAllowed": false
+}

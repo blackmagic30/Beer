@@ -20,6 +20,10 @@ export const POST_Q_DEPLOYMENT_STOP_EXECUTOR_SCHEMA =
   "pintpath-permanent-staging-post-q-deployment-stop-executor/v1" as const;
 export const POST_Q_DEPLOYMENT_STOP_STATE_PROJECTION_SCHEMA =
   "pintpath-permanent-staging-post-q-state-projection/v1" as const;
+export const POST_Q_DEPLOYMENT_STOP_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA =
+  "pintpath-permanent-staging-post-q-target-deploy-config-projection/v1" as const;
+export const POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA =
+  "pintpath-permanent-staging-post-q-observed-environment-config/v1" as const;
 
 export const POST_Q_DEPLOYMENT_STOP_LOCK = Object.freeze({
   repository: "blackmagic30/Beer",
@@ -237,6 +241,9 @@ export interface PostQDeploymentStopSnapshot {
   };
   readonly rows: readonly ColdRecoveryVariableRow[];
   readonly environmentConfigSha256: string;
+  readonly observedEnvironmentConfigProjectionSchema:
+    typeof POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA;
+  readonly observedEnvironmentConfigSha256: string;
   readonly stagedPatchSha256: string;
 }
 
@@ -813,6 +820,395 @@ export function postQSha256(value: string | Uint8Array): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+/**
+ * Hashes only the target service's Railway `deploy` config entry.
+ *
+ * The static historical eligibility lock intentionally retains only the exact
+ * target `deploy` object. A separate dynamic, secret-safe full-environment
+ * commitment below binds unrelated root keys, sibling services, target build
+ * and networking metadata, variables, and volumes across the write boundary.
+ * The source query uses `decryptVariables:false`, and only secret-free hashes
+ * and semantic projections (never provider strings) are persisted in evidence.
+ */
+export function postQTargetServiceConfigSha256(
+  environmentConfig: unknown,
+): string | null {
+  if (!record(environmentConfig) || !record(environmentConfig.services)) {
+    return null;
+  }
+  const targetService = environmentConfig.services[
+    POST_Q_DEPLOYMENT_STOP_LOCK.serviceId
+  ];
+  if (!record(targetService) || !record(targetService.deploy)) return null;
+  const deploy = targetService.deploy;
+  if (!exact(deploy, [
+    "drainingSeconds", "ipv6EgressEnabled", "limitOverride",
+    "multiRegionConfig", "overlapSeconds", "runtime", "useLegacyStacker",
+  ]) || !exact(deploy.limitOverride, ["containers"]) ||
+    !exact(deploy.limitOverride.containers, ["cpu", "memoryBytes"]) ||
+    !exact(deploy.multiRegionConfig, [POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion]) ||
+    !exact(
+      deploy.multiRegionConfig[POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion],
+      ["numReplicas", "stackerAssignment"],
+    )) return null;
+  const region = deploy.multiRegionConfig[
+    POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion
+  ] as Json;
+  const source = canonicalPostQEvidence({
+    services: {
+      [POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]: {
+        deploy: {
+          drainingSeconds: deploy.drainingSeconds,
+          ipv6EgressEnabled: deploy.ipv6EgressEnabled,
+          limitOverride: {
+            containers: {
+              cpu: deploy.limitOverride.containers.cpu,
+              memoryBytes: deploy.limitOverride.containers.memoryBytes,
+            },
+          },
+          multiRegionConfig: {
+            [POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion]: {
+              numReplicas: region.numReplicas,
+              stackerAssignment: region.stackerAssignment,
+            },
+          },
+          overlapSeconds: deploy.overlapSeconds,
+          runtime: deploy.runtime,
+          useLegacyStacker: deploy.useLegacyStacker,
+        },
+      },
+    },
+  });
+  return Buffer.byteLength(source) <= 64 * 1024 ? postQSha256(source) : null;
+}
+
+const OBSERVED_ENVIRONMENT_CONFIG_MAX_BYTES = 512 * 1024;
+const POSTGRES_SERVICE_ID =
+  "c454955f-263b-4599-aee0-dc447a4d3d15" as const;
+const REDIS_SERVICE_ID =
+  "d6351cec-fe04-4a6f-8e05-1cc164ea1e73" as const;
+const POSTGRES_VOLUME_ID =
+  "cf75fb86-7df5-4b8c-8d86-dc5462076cdc" as const;
+const REDIS_VOLUME_ID =
+  "372b736a-fa8b-4ca0-88bc-68760fc98d69" as const;
+const TARGET_CONFIG_VARIABLE_NAMES = Object.freeze([
+  "ACCOUNT_DELETION_NOTICE_MODE", "ACCOUNT_DELETION_REHEARSAL_ENABLED",
+  "ADMIN_EMAILS", "ADMIN_SHARED_SECRET", "ALCOHOL_GAMIFICATION_ENABLED",
+  "ALLOW_DEMO_BILLING_IN_PRODUCTION",
+  "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION",
+  "ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION",
+  "BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD", "COMMERCIAL_LAUNCH_ENABLED",
+  "CONSUMER_PAID_ENROLLMENT_ENABLED", "CONTRIBUTOR_UNLOCK_DAYS",
+  "CONTRIBUTOR_UNLOCK_POINTS", "DATABASE_URL", "DEMO_BILLING_MODE",
+  "FIELD_TEST_MODE", "FREE_PRICE_REVEALS_PER_DAY", "GOOGLE_MAPS_API_KEY",
+  "GOOGLE_MAPS_MAP_ID", "GOOGLE_PLACES_API_KEY", "HOST",
+  "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "NODE_ENV",
+  "OFFSITE_BACKUP_INTERVAL_HOURS", "OFFSITE_BACKUP_RETENTION_DAYS",
+  "OPENAI_API_KEY", "PARSE_CONFIDENCE_THRESHOLD",
+  "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+  "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", "PINTPATH_DATABASE_RESOURCE_ID",
+  "PINTPATH_EXPECTED_DATABASE_RESOURCE_ID",
+  "PINTPATH_EXPECTED_DATABASE_URL_SHA256", "PINTPATH_EXPECTED_REDIS_RESOURCE_ID",
+  "PINTPATH_EXPECTED_REDIS_URL_SHA256",
+  "PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS",
+  "PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S",
+  "PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS",
+  "PINTPATH_FORBIDDEN_REDIS_URL_SHA256S", "PINTPATH_IDENTITY_REGISTRY_PHASE",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256",
+  "PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID",
+  "PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID",
+  "PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID",
+  "PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256", "PINTPATH_REDIS_RESOURCE_ID",
+  "PINT_POINTS_REWARDS_ENABLED", "PORT", "POS_WEBHOOK_SIGNING_SECRET",
+  "PUBLIC_BASE_URL", "REDIS_KEY_NAMESPACE", "REDIS_URL",
+  "REPORT_DELIVERY_SCHEDULE_ENABLED", "REPORT_EMAIL_FROM",
+  "REPORT_EMAIL_MODE", "REPORT_EMAIL_REPLY_TO", "REPORT_TIMEZONE",
+  "REQUIRE_ADMIN_MFA_IN_PRODUCTION", "REQUIRE_REDIS_RATE_LIMITING",
+  "REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION", "RESEND_API_KEY",
+  "RESTORE_REHEARSAL_MODE", "SOURCE_EVIDENCE_SIGNING_SECRET",
+  "STRIPE_PRICE_MONTHLY", "STRIPE_PRICE_YEARLY", "STRIPE_PRO_PRICE_ID",
+  "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "SUPABASE_ANON_KEY",
+  "SUPABASE_RESULTS_TABLE", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_URL",
+  "TRUST_PROXY", "VENUE_PRO_TRIAL_DAYS",
+  "VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD",
+] as const);
+const POSTGRES_CONFIG_VARIABLE_NAMES = Object.freeze([
+  "DATABASE_URL", "PGDATA", "PGDATABASE", "PGHOST", "PGPASSWORD", "PGPORT",
+  "PGUSER", "PINTPATH_RUNTIME_DATABASE_URL", "PINTPATH_RUNTIME_PASSWORD",
+  "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER",
+  "RAILWAY_DEPLOYMENT_DRAINING_SECONDS", "SSL_CERT_DAYS",
+] as const);
+const REDIS_CONFIG_VARIABLE_NAMES = Object.freeze([
+  "REDISHOST", "REDISPASSWORD", "REDISPORT", "REDISUSER", "REDIS_PASSWORD",
+  "REDIS_PUBLIC_URL", "REDIS_URL",
+] as const);
+const OPAQUE_GENERATOR_SEMANTICS = Object.freeze({
+  function: "secret",
+  length: 32,
+  alphabet: "lowercase-then-uppercase-ascii",
+});
+const OBSERVED_CONFIG_OPAQUE_STATE = Symbol("post-q-observed-config-opaque-state");
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function stringValue(value: unknown): value is string {
+  return safeString(value, 16_384);
+}
+
+function buildConfigExact(value: unknown): boolean {
+  return exact(value, ["buildEnvironment", "builder"]) &&
+    stringValue(value.buildEnvironment) && stringValue(value.builder);
+}
+
+function containerLimitExact(value: unknown): boolean {
+  return exact(value, ["containers"]) &&
+    exact(value.containers, ["cpu", "memoryBytes"]) &&
+    finiteNumber(value.containers.cpu) &&
+    finiteNumber(value.containers.memoryBytes);
+}
+
+function regionReplicaExact(value: unknown, region: string): boolean {
+  return exact(value, [region]) && record(value[region]) &&
+    exact(value[region], ["numReplicas"]) &&
+    finiteNumber(value[region].numReplicas);
+}
+
+function targetDeployConfigExact(value: unknown): boolean {
+  if (!exact(value, [
+    "drainingSeconds", "ipv6EgressEnabled", "limitOverride",
+    "multiRegionConfig", "overlapSeconds", "runtime", "useLegacyStacker",
+  ]) || !finiteNumber(value.drainingSeconds) ||
+    typeof value.ipv6EgressEnabled !== "boolean" ||
+    !containerLimitExact(value.limitOverride) ||
+    !exact(value.multiRegionConfig, [POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion]) ||
+    !exact(
+      value.multiRegionConfig[POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion],
+      ["numReplicas", "stackerAssignment"],
+    )) return false;
+  const region = value.multiRegionConfig[
+    POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion
+  ] as Json;
+  return finiteNumber(region.numReplicas) && region.stackerAssignment === null &&
+    finiteNumber(value.overlapSeconds) && stringValue(value.runtime) &&
+    typeof value.useLegacyStacker === "boolean";
+}
+
+function siblingDeployConfigExact(
+  value: unknown,
+  commandKey: "requiredMountPath" | "startCommand",
+): boolean {
+  return exact(value, [
+    "ipv6EgressEnabled", "limitOverride", "multiRegionConfig", commandKey,
+    "runtime", "useLegacyStacker",
+  ]) && typeof value.ipv6EgressEnabled === "boolean" &&
+    containerLimitExact(value.limitOverride) &&
+    regionReplicaExact(value.multiRegionConfig, "asia-southeast1-eqsg3a") &&
+    stringValue(value[commandKey]) && stringValue(value.runtime) &&
+    typeof value.useLegacyStacker === "boolean";
+}
+
+function optionArrayExact(value: unknown, length: number): boolean {
+  return Array.isArray(value) && value.length === length &&
+    value.every(finiteNumber);
+}
+
+function haConversionConfigExact(value: unknown): boolean {
+  if (!exact(value, ["description", "edge", "internal", "replica"]) ||
+    !stringValue(value.description) ||
+    !exact(value.edge, [
+      "defaultValue", "description", "label", "nodeLabel", "options",
+    ]) || !finiteNumber(value.edge.defaultValue) ||
+    !stringValue(value.edge.description) || !stringValue(value.edge.label) ||
+    !stringValue(value.edge.nodeLabel) || !optionArrayExact(value.edge.options, 4) ||
+    !exact(value.internal, ["defaultValue", "label", "nodeLabel", "options"]) ||
+    !finiteNumber(value.internal.defaultValue) ||
+    !stringValue(value.internal.label) || !stringValue(value.internal.nodeLabel) ||
+    !optionArrayExact(value.internal.options, 4) ||
+    !exact(value.replica, [
+      "defaultValue", "description", "label", "nodeLabel", "options",
+    ])) return false;
+  return finiteNumber(value.replica.defaultValue) &&
+    stringValue(value.replica.description) && stringValue(value.replica.label) &&
+    stringValue(value.replica.nodeLabel) &&
+    optionArrayExact(value.replica.options, 6);
+}
+
+function updateSourceExact(value: unknown, targetVersion: boolean): boolean {
+  if (!exact(value, ["autoUpdates", "image"]) || !stringValue(value.image) ||
+    !exact(value.autoUpdates, [
+      "remediationNotice", "schedule", "tagMode", "type",
+    ]) || !stringValue(value.autoUpdates.tagMode) ||
+    !stringValue(value.autoUpdates.type) ||
+    !Array.isArray(value.autoUpdates.schedule) ||
+    value.autoUpdates.schedule.length !== 2 ||
+    !value.autoUpdates.schedule.every((row) =>
+      exact(row, ["day", "endHour", "startHour"]) &&
+      finiteNumber(row.day) && finiteNumber(row.endHour) &&
+      finiteNumber(row.startHour))) return false;
+  const autoUpdates = value.autoUpdates as Json;
+  const noticeKeys = [
+    "armedAt", "currentVersion", "cveId", "severity", "targetImage",
+    ...(targetVersion ? ["targetVersion"] : []),
+  ];
+  return exact(autoUpdates.remediationNotice, noticeKeys) &&
+    noticeKeys.every((key) =>
+      stringValue((autoUpdates.remediationNotice as Json)[key]));
+}
+
+function variableMapExact(
+  value: unknown,
+  serviceId: string,
+): boolean {
+  if (!record(value)) return false;
+  const expectedNames = serviceId === POST_Q_DEPLOYMENT_STOP_LOCK.serviceId
+    ? TARGET_CONFIG_VARIABLE_NAMES
+    : serviceId === POSTGRES_SERVICE_ID
+    ? POSTGRES_CONFIG_VARIABLE_NAMES
+    : REDIS_CONFIG_VARIABLE_NAMES;
+  if (!exact(value, expectedNames)) return false;
+  for (const [name, row] of Object.entries(value)) {
+    if (!/^[A-Z][A-Z0-9_]{0,255}$/u.test(name) ||
+      !exact(row, ["generator", "value"]) || row.value !== null) return false;
+    const generatorExpected = serviceId === POSTGRES_SERVICE_ID &&
+        name === "POSTGRES_PASSWORD" ||
+      serviceId === REDIS_SERVICE_ID && name === "REDIS_PASSWORD";
+    if (generatorExpected) {
+      if (row.generator !==
+        '${{ secret(32, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") }}') {
+        return false;
+      }
+    } else if (row.generator !== null) return false;
+  }
+  return true;
+}
+
+function volumeMountsExact(value: unknown, volumeId: string): boolean {
+  return exact(value, [volumeId]) && exact(value[volumeId], ["mountPath"]) &&
+    stringValue(value[volumeId].mountPath);
+}
+
+function volumeConfigExact(value: unknown): boolean {
+  if (!exact(value, ["alerts", "allowOnlineResize", "region", "sizeMB"]) ||
+    !exact(value.alerts, ["usage"]) ||
+    !exact(value.alerts.usage, ["100", "80", "95"])) return false;
+  const usage = value.alerts.usage as Json;
+  return ["100", "80", "95"].every((key) => exact(usage[key], [])) &&
+    typeof value.allowOnlineResize === "boolean" &&
+    stringValue(value.region) && finiteNumber(value.sizeMB);
+}
+
+function observedEnvironmentConfigEvidence(environmentConfig: unknown): {
+  readonly projection: Json;
+  readonly opaqueStringState: string;
+} | null {
+  if (!exact(environmentConfig, [
+    "privateNetworkDisabled", "services", "sharedVariables", "volumes",
+  ]) || typeof environmentConfig.privateNetworkDisabled !== "boolean" ||
+    !exact(environmentConfig.sharedVariables, []) ||
+    !exact(environmentConfig.services, [
+      POST_Q_DEPLOYMENT_STOP_LOCK.serviceId, POSTGRES_SERVICE_ID,
+      REDIS_SERVICE_ID,
+    ]) || !exact(environmentConfig.volumes, [
+      POSTGRES_VOLUME_ID, REDIS_VOLUME_ID,
+    ])) return null;
+  const target = environmentConfig.services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId];
+  const postgres = environmentConfig.services[POSTGRES_SERVICE_ID];
+  const redis = environmentConfig.services[REDIS_SERVICE_ID];
+  if (!exact(target, ["build", "deploy", "networking", "variables"]) ||
+    !buildConfigExact(target.build) || !targetDeployConfigExact(target.deploy) ||
+    !exact(target.networking, ["privateNetworkEndpoint", "serviceDomains"]) ||
+    !stringValue(target.networking.privateNetworkEndpoint) ||
+    !exact(target.networking.serviceDomains, [POST_Q_DEPLOYMENT_STOP_LOCK.domain]) ||
+    !exact(target.networking.serviceDomains[POST_Q_DEPLOYMENT_STOP_LOCK.domain], ["port"]) ||
+    !finiteNumber(
+      (target.networking.serviceDomains[
+        POST_Q_DEPLOYMENT_STOP_LOCK.domain
+      ] as Json).port,
+    ) || !variableMapExact(
+      target.variables,
+      POST_Q_DEPLOYMENT_STOP_LOCK.serviceId,
+    ) || !exact(postgres, [
+      "build", "deploy", "haConversionConfig", "haTemplateCode", "networking",
+      "source", "variables", "volumeMounts",
+    ]) || !buildConfigExact(postgres.build) ||
+    !siblingDeployConfigExact(postgres.deploy, "requiredMountPath") ||
+    !haConversionConfigExact(postgres.haConversionConfig) ||
+    !stringValue(postgres.haTemplateCode) ||
+    !exact(postgres.networking, ["privateNetworkEndpoint"]) ||
+    !stringValue(postgres.networking.privateNetworkEndpoint) ||
+    !updateSourceExact(postgres.source, true) ||
+    !variableMapExact(postgres.variables, POSTGRES_SERVICE_ID) ||
+    !volumeMountsExact(postgres.volumeMounts, POSTGRES_VOLUME_ID) ||
+    !exact(redis, [
+      "build", "deploy", "haTemplateCode", "networking", "source",
+      "variables", "volumeMounts",
+    ]) || !buildConfigExact(redis.build) ||
+    !siblingDeployConfigExact(redis.deploy, "startCommand") ||
+    !stringValue(redis.haTemplateCode) ||
+    !exact(redis.networking, ["privateNetworkEndpoint", "tcpProxies"]) ||
+    !stringValue(redis.networking.privateNetworkEndpoint) ||
+    !exact(redis.networking.tcpProxies, ["6379"]) ||
+    !exact(redis.networking.tcpProxies["6379"], []) ||
+    !updateSourceExact(redis.source, false) ||
+    !variableMapExact(redis.variables, REDIS_SERVICE_ID) ||
+    !volumeMountsExact(redis.volumeMounts, REDIS_VOLUME_ID) ||
+    !volumeConfigExact(environmentConfig.volumes[POSTGRES_VOLUME_ID]) ||
+    !volumeConfigExact(environmentConfig.volumes[REDIS_VOLUME_ID])) return null;
+
+  const opaqueStrings: Array<readonly [string, string]> = [];
+  const project = (value: unknown, path: string): unknown => {
+    if (typeof value === "string") {
+      opaqueStrings.push([path, value]);
+      return { stringValue: "present-redacted" };
+    }
+    if (Array.isArray(value)) {
+      return value.map((item, index) => project(item, `${path}/${index}`));
+    }
+    if (!record(value)) return value;
+    return Object.fromEntries(Object.keys(value).map((key) => [
+      key,
+      project(value[key], `${path}/${key}`),
+    ]));
+  };
+  const projection = project(environmentConfig, "") as Json;
+  for (const [serviceId, name] of [
+    [POSTGRES_SERVICE_ID, "POSTGRES_PASSWORD"],
+    [REDIS_SERVICE_ID, "REDIS_PASSWORD"],
+  ] as const) {
+    const services = projection.services as Json;
+    const service = services[serviceId] as Json;
+    const variables = service.variables as Json;
+    const row = variables[name] as Json;
+    row.generator = OPAQUE_GENERATOR_SEMANTICS;
+  }
+  return {
+    projection,
+    opaqueStringState: canonicalPostQEvidence(opaqueStrings.sort((left, right) =>
+      left[0].localeCompare(right[0]))),
+  };
+}
+
+/**
+ * Dynamically commits the complete provider config returned with
+ * `decryptVariables:false` without creating a historical baseline dependency.
+ * Potential secret-bearing leaves must be absent or null. Only this digest and
+ * its schema are retained; the provider config bytes are never persisted.
+ */
+export function postQObservedEnvironmentConfigSha256(
+  environmentConfig: unknown,
+): string | null {
+  const evidence = observedEnvironmentConfigEvidence(environmentConfig);
+  if (evidence === null) return null;
+  const source = canonicalPostQEvidence(evidence.projection);
+  return Buffer.byteLength(source) <= OBSERVED_ENVIRONMENT_CONFIG_MAX_BYTES
+    ? postQSha256(source)
+    : null;
+}
+
 function patchKeyShape(value: unknown): unknown {
   if (value === null) return "null";
   if (Array.isArray(value)) {
@@ -961,13 +1357,28 @@ export function parsePostQDeploymentStopSnapshot(
     !record(deployment.meta) ||
     deployment.meta.commitHash !== POST_Q_DEPLOYMENT_STOP_LOCK.sourceSha ||
     deployment.meta.imageDigest !== POST_Q_DEPLOYMENT_STOP_LOCK.imageDigest ||
-    deployment.meta.patchId !== POST_Q_DEPLOYMENT_STOP_LOCK.deploymentPatchId) return null;
-  const environmentConfigSource = canonicalPostQEvidence(environment.config);
-  const environmentConfigSha256 = postQSha256(environmentConfigSource);
+    Object.hasOwn(deployment.meta, "patchId") &&
+      deployment.meta.patchId !== null) return null;
+  const environmentConfigSha256 = postQTargetServiceConfigSha256(
+    environment.config,
+  );
+  const observedEnvironmentConfig = observedEnvironmentConfigEvidence(
+    environment.config,
+  );
+  const observedEnvironmentConfigSource = observedEnvironmentConfig === null
+    ? null
+    : canonicalPostQEvidence(observedEnvironmentConfig.projection);
+  const observedEnvironmentConfigSha256 =
+    observedEnvironmentConfigSource === null ||
+      Buffer.byteLength(observedEnvironmentConfigSource) >
+        OBSERVED_ENVIRONMENT_CONFIG_MAX_BYTES
+      ? null
+      : postQSha256(observedEnvironmentConfigSource);
   const stagedPatchSha256 = postQSha256(canonicalPostQEvidence(staged.patch));
-  if (Buffer.byteLength(environmentConfigSource) > 64 * 1024 ||
-    environmentConfigSha256 !==
+  if (observedEnvironmentConfig === null ||
+    environmentConfigSha256 === null || environmentConfigSha256 !==
       POST_Q_DEPLOYMENT_STOP_LOCK.baseline.environmentConfigSha256 ||
+    observedEnvironmentConfigSha256 === null ||
     stagedPatchSha256 !==
       POST_Q_DEPLOYMENT_STOP_LOCK.baseline.stagedPatchSha256) return null;
 
@@ -1034,7 +1445,7 @@ export function parsePostQDeploymentStopSnapshot(
   domains.sort((left, right) => `${left.kind}:${left.id}`.localeCompare(
     `${right.kind}:${right.id}`,
   ));
-  return {
+  const snapshot: PostQDeploymentStopSnapshot = {
     environmentId: POST_Q_DEPLOYMENT_STOP_LOCK.environmentId,
     serviceInstanceId: POST_Q_DEPLOYMENT_STOP_LOCK.serviceInstanceId,
     serviceId: POST_Q_DEPLOYMENT_STOP_LOCK.serviceId,
@@ -1063,8 +1474,31 @@ export function parsePostQDeploymentStopSnapshot(
     },
     rows,
     environmentConfigSha256,
+    observedEnvironmentConfigProjectionSchema:
+      POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
+    observedEnvironmentConfigSha256,
     stagedPatchSha256,
   };
+  Object.defineProperty(snapshot, OBSERVED_CONFIG_OPAQUE_STATE, {
+    value: observedEnvironmentConfig.opaqueStringState,
+    enumerable: true,
+    configurable: false,
+    writable: false,
+  });
+  return snapshot;
+}
+
+function opaqueObservedEnvironmentConfigExact(
+  left: PostQDeploymentStopSnapshot,
+  right: PostQDeploymentStopSnapshot,
+): boolean {
+  const leftState = (left as unknown as Record<symbol, unknown>)[
+    OBSERVED_CONFIG_OPAQUE_STATE
+  ];
+  const rightState = (right as unknown as Record<symbol, unknown>)[
+    OBSERVED_CONFIG_OPAQUE_STATE
+  ];
+  return typeof leftState === "string" && leftState === rightState;
 }
 
 export function snapshotStateSha256(snapshot: PostQDeploymentStopSnapshot): string {
@@ -1110,6 +1544,7 @@ export function snapshotEvidenceHashes(
   readonly collateralVariablesSha256: string;
   readonly offTargetVariablesSha256: string;
   readonly environmentConfigSha256: string;
+  readonly observedEnvironmentConfigSha256: string;
   readonly stagedPatchSha256: string;
   readonly sourceIdentitySha256: string;
 } {
@@ -1121,6 +1556,8 @@ export function snapshotEvidenceHashes(
     offTargetVariablesSha256:
       postQSha256(canonicalPostQEvidence(offTargetRows(snapshot.rows))),
     environmentConfigSha256: snapshot.environmentConfigSha256,
+    observedEnvironmentConfigSha256:
+      snapshot.observedEnvironmentConfigSha256,
     stagedPatchSha256: snapshot.stagedPatchSha256,
     sourceIdentitySha256: postQSha256(canonicalPostQEvidence({
       source: snapshot.source,
@@ -1136,7 +1573,10 @@ export function snapshotBaselineExact(
   const active = snapshot.activeDeployments[0];
   const targetRows = snapshot.rows.filter((row) => row.serviceId === lock.serviceId);
   const unrelated = offTargetRows(snapshot.rows);
-  return snapshotStateSha256(snapshot) === lock.baseline.stateSha256 &&
+  return typeof (snapshot as unknown as Record<symbol, unknown>)[
+      OBSERVED_CONFIG_OPAQUE_STATE
+    ] === "string" &&
+    snapshotStateSha256(snapshot) === lock.baseline.stateSha256 &&
     snapshotTopologySha256(snapshot) === lock.baseline.topologySha256 &&
     postQSha256(canonicalPostQEvidence(snapshot.rows)) ===
       lock.baseline.variableInventorySha256 &&
@@ -1151,6 +1591,9 @@ export function snapshotBaselineExact(
       lock.baseline.nullServiceVariableRows &&
     snapshot.environmentConfigSha256 ===
       lock.baseline.environmentConfigSha256 &&
+    snapshot.observedEnvironmentConfigProjectionSchema ===
+      POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA &&
+    SHA256.test(snapshot.observedEnvironmentConfigSha256) &&
     snapshot.stagedPatchSha256 === lock.baseline.stagedPatchSha256 &&
     snapshotEvidenceHashes(snapshot).sourceIdentitySha256 ===
       lock.baseline.sourceIdentitySha256 &&
@@ -1179,6 +1622,10 @@ function snapshotCollateral(snapshot: PostQDeploymentStopSnapshot): unknown {
     deployment: snapshot.deployment,
     rows: snapshot.rows,
     environmentConfigSha256: snapshot.environmentConfigSha256,
+    observedEnvironmentConfigProjectionSchema:
+      snapshot.observedEnvironmentConfigProjectionSchema,
+    observedEnvironmentConfigSha256:
+      snapshot.observedEnvironmentConfigSha256,
     stagedPatchSha256: snapshot.stagedPatchSha256,
   };
 }
@@ -1187,7 +1634,8 @@ export function stoppedSnapshotExact(
   before: PostQDeploymentStopSnapshot,
   after: PostQDeploymentStopSnapshot,
 ): boolean {
-  return canonicalPostQEvidence(snapshotCollateral(after)) ===
+  return opaqueObservedEnvironmentConfigExact(before, after) &&
+    canonicalPostQEvidence(snapshotCollateral(after)) ===
       canonicalPostQEvidence(snapshotCollateral(before)) &&
     after.latestDeployment.id === before.latestDeployment.id &&
     after.latestDeployment.snapshotId === before.latestDeployment.snapshotId &&
@@ -1807,6 +2255,7 @@ export async function reconcileStoppedDeployment(input: {
     readonly topologySha256: string;
     readonly historyRowsSha256: string;
     readonly patchRowsSha256: string;
+    readonly observedEnvironmentConfigSha256: string;
     readonly runtimeResponseSha256s: RuntimeAbsenceEvidence["responseSha256s"];
     readonly runtimeRequests: RuntimeAbsenceEvidence["requests"];
   }[];
@@ -1829,6 +2278,7 @@ export async function reconcileStoppedDeployment(input: {
     topologySha256: string;
     historyRowsSha256: string;
     patchRowsSha256: string;
+    observedEnvironmentConfigSha256: string;
     runtimeResponseSha256s: RuntimeAbsenceEvidence["responseSha256s"];
     runtimeRequests: RuntimeAbsenceEvidence["requests"];
   }> = [];
@@ -1932,6 +2382,8 @@ export async function reconcileStoppedDeployment(input: {
         topologySha256: snapshotTopologySha256(latest),
         historyRowsSha256: latestLedgerEvidence.historyRowsSha256,
         patchRowsSha256: latestLedgerEvidence.patchRowsSha256,
+        observedEnvironmentConfigSha256:
+          latest.observedEnvironmentConfigSha256,
         runtimeResponseSha256s: runtime.responseSha256s,
         runtimeRequests: runtime.requests,
       });
@@ -1949,8 +2401,9 @@ export async function reconcileStoppedDeployment(input: {
       previousWallAt = null;
       observations = [];
       if (latest !== null &&
-        canonicalPostQEvidence(snapshotCollateral(latest)) !==
-          canonicalPostQEvidence(snapshotCollateral(input.before))) {
+        (!opaqueObservedEnvironmentConfigExact(input.before, latest) ||
+          canonicalPostQEvidence(snapshotCollateral(latest)) !==
+            canonicalPostQEvidence(snapshotCollateral(input.before)))) {
         return result(false, round);
       }
     }
@@ -1975,6 +2428,7 @@ export const postQDeploymentStopInternals = Object.freeze({
   patchKeyShape,
   parseHistoryNode,
   parsePatchNode,
+  opaqueObservedEnvironmentConfigExact,
   snapshotCollateral,
   sortKeys,
 });

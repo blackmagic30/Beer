@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "pintpath-reviewed-user-authorization-provenance/v2",
+  "threadId": "01a02140-8628-7d30-9374-8d29d4a9f3a3",
+  "messages": [
+    "you are always authorised until we are prod ready",
+    "perfect so can we continue with pint path readyness?"
+  ],
+  "provenanceUse": "pintpath-post-q-staging-stop-successor-v3-reviewed-context",
+  "cryptographicUserSignatureClaimed": false
+}

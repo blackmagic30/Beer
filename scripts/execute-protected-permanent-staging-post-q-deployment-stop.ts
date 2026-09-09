@@ -14,7 +14,9 @@ import {
   POST_Q_DEPLOYMENT_STOP_APPLY_TERMINAL_SCHEMA,
   postQTokenScopeExact,
   POST_Q_DEPLOYMENT_STOP_EXECUTOR_SCHEMA,
+  POST_Q_DEPLOYMENT_STOP_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
   POST_Q_DEPLOYMENT_STOP_LOCK,
+  POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
   POST_Q_DEPLOYMENT_STOP_OPERATION,
   POST_Q_DEPLOYMENT_STOP_Q_LEAVES,
   POST_Q_DEPLOYMENT_STOP_STATE_PROJECTION_SCHEMA,
@@ -358,7 +360,11 @@ function sameSnapshot(
   left: PostQDeploymentStopSnapshot,
   right: PostQDeploymentStopSnapshot,
 ): boolean {
-  return canonicalPostQEvidence(left) === canonicalPostQEvidence(right);
+  return canonicalPostQEvidence(left) === canonicalPostQEvidence(right) &&
+    postQDeploymentStopInternals.opaqueObservedEnvironmentConfigExact(
+      left,
+      right,
+    );
 }
 
 function sameLedger(left: ProviderLedger, right: ProviderLedger): boolean {
@@ -370,6 +376,10 @@ function snapshotCommitment(snapshot: PostQDeploymentStopSnapshot | null) {
   const evidenceHashes = snapshotEvidenceHashes(snapshot);
   return {
     stateProjectionSchema: POST_Q_DEPLOYMENT_STOP_STATE_PROJECTION_SCHEMA,
+    environmentConfigProjectionSchema:
+      POST_Q_DEPLOYMENT_STOP_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
+    observedEnvironmentConfigProjectionSchema:
+      POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
     stateSha256: snapshotStateSha256(snapshot),
     topologySha256: snapshotTopologySha256(snapshot),
     configuredRegions: snapshot.configuredRegions,
@@ -410,6 +420,12 @@ function exactRecord(value: unknown, keys: readonly string[]):
   return typeof value === "object" && value !== null && !Array.isArray(value) &&
     Object.keys(value).length === keys.length &&
     keys.every((key) => Object.hasOwn(value, key));
+}
+
+function canonicalTimestamp(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) &&
+    Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
 function boundaryReceiptExact(source: string): boolean {
@@ -851,7 +867,11 @@ async function apply(
         reconciliation.snapshot,
       );
       const unchanged = canonicalPostQEvidence(beforeCollateral) ===
-        canonicalPostQEvidence(afterCollateral);
+          canonicalPostQEvidence(afterCollateral) &&
+        postQDeploymentStopInternals.opaqueObservedEnvironmentConfigExact(
+          before,
+          reconciliation.snapshot,
+        );
       checks.topologyUnchanged = unchanged;
       checks.variablesUnchanged = unchanged;
       checks.sourceUnchanged = unchanged;
@@ -1020,11 +1040,14 @@ async function apply(
 }
 
 const SNAPSHOT_COMMITMENT_KEYS = Object.freeze([
-  "stateProjectionSchema", "stateSha256", "topologySha256",
+  "stateProjectionSchema", "environmentConfigProjectionSchema",
+  "observedEnvironmentConfigProjectionSchema",
+  "stateSha256", "topologySha256",
   "configuredRegions", "deploymentRegions", "source", "deployment",
   "latestDeployment", "activeDeployments", "domains", "variableRows",
   "variableInventorySha256", "collateralVariablesSha256",
   "offTargetVariablesSha256", "environmentConfigSha256",
+  "observedEnvironmentConfigSha256",
   "stagedPatchSha256", "sourceIdentitySha256",
 ] as const);
 
@@ -1057,6 +1080,10 @@ function snapshotCommitmentExact(value: unknown, stopped: boolean): boolean {
   }];
   if (!exactRecord(value, SNAPSHOT_COMMITMENT_KEYS) ||
     value.stateProjectionSchema !== POST_Q_DEPLOYMENT_STOP_STATE_PROJECTION_SCHEMA ||
+    value.environmentConfigProjectionSchema !==
+      POST_Q_DEPLOYMENT_STOP_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA ||
+    value.observedEnvironmentConfigProjectionSchema !==
+      POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA ||
     !SHA256_PATTERN.test(String(value.stateSha256)) ||
     value.topologySha256 !== POST_Q_DEPLOYMENT_STOP_LOCK.baseline.topologySha256 ||
     value.topologySha256 !== postQSha256(canonicalPostQEvidence({
@@ -1073,6 +1100,7 @@ function snapshotCommitmentExact(value: unknown, stopped: boolean): boolean {
       POST_Q_DEPLOYMENT_STOP_LOCK.baseline.offTargetVariablesSha256 ||
     value.environmentConfigSha256 !==
       POST_Q_DEPLOYMENT_STOP_LOCK.baseline.environmentConfigSha256 ||
+    !SHA256_PATTERN.test(String(value.observedEnvironmentConfigSha256)) ||
     value.stagedPatchSha256 !==
       POST_Q_DEPLOYMENT_STOP_LOCK.baseline.stagedPatchSha256 ||
     value.sourceIdentitySha256 !==
@@ -1135,6 +1163,7 @@ interface ProviderObservationEvidence {
   readonly topologySha256: string;
   readonly historyRowsSha256: string;
   readonly patchRowsSha256: string;
+  readonly observedEnvironmentConfigSha256: string;
   readonly runtimeResponseSha256s: Record<RuntimeRoute, string | null>;
   readonly runtimeRequests: RuntimeRequestRecord;
 }
@@ -1184,15 +1213,16 @@ function providerObservationStructuralExact(
 ): value is ProviderObservationEvidence {
   if (!exactRecord(value, [
     "observedAt", "monotonicMs", "snapshotSha256", "topologySha256",
-    "historyRowsSha256", "patchRowsSha256", "runtimeResponseSha256s",
+    "historyRowsSha256", "patchRowsSha256",
+    "observedEnvironmentConfigSha256", "runtimeResponseSha256s",
     "runtimeRequests",
-  ]) || typeof value.observedAt !== "string" ||
-    !Number.isFinite(Date.parse(value.observedAt)) ||
+  ]) || !canonicalTimestamp(value.observedAt) ||
     typeof value.monotonicMs !== "number" || !Number.isFinite(value.monotonicMs) ||
     value.monotonicMs < 0 || !SHA256_PATTERN.test(String(value.snapshotSha256)) ||
     !SHA256_PATTERN.test(String(value.topologySha256)) ||
     !SHA256_PATTERN.test(String(value.historyRowsSha256)) ||
     !SHA256_PATTERN.test(String(value.patchRowsSha256)) ||
+    !SHA256_PATTERN.test(String(value.observedEnvironmentConfigSha256)) ||
     !exactRecord(value.runtimeResponseSha256s, RUNTIME_ROUTES) ||
     !runtimeRequestSetStructuralExact(value.runtimeRequests)) return false;
   const runtimeResponseSha256s = value.runtimeResponseSha256s as Record<
@@ -1292,7 +1322,9 @@ function successfulProviderEvidenceExact(
       observation.historyRowsSha256 !==
         POST_Q_DEPLOYMENT_STOP_LOCK.baseline.historyRowsSha256 ||
       observation.patchRowsSha256 !==
-        POST_Q_DEPLOYMENT_STOP_LOCK.baseline.patchRowsSha256) return false;
+        POST_Q_DEPLOYMENT_STOP_LOCK.baseline.patchRowsSha256 ||
+      observation.observedEnvironmentConfigSha256 !==
+        terminalSnapshot.observedEnvironmentConfigSha256) return false;
     const wall = Date.parse(observation.observedAt);
     if (wall < Date.parse(requestStartedAt) || previousWall !== null &&
       wall < previousWall || previousMonotonic !== null &&
@@ -1629,13 +1661,11 @@ function applyTerminalExact(
       const failureCode = value.failureCode as FailureCode;
       if (value.outcome !== "mutation_uncertain" || value.attempts !== 1 ||
         !APPLY_POST_ATTEMPT_FAILURE_CODES.has(failureCode) ||
-        typeof value.requestWindow.startedAt !== "string" ||
-        !Number.isFinite(Date.parse(value.requestWindow.startedAt)) ||
+        !canonicalTimestamp(value.requestWindow.startedAt) ||
         Date.parse(value.requestWindow.startedAt) >=
           Date.parse(expected.reviewedAuthority.authorizationDeadline) ||
         !(value.requestWindow.completedAt === null ||
-          typeof value.requestWindow.completedAt === "string" &&
-          Number.isFinite(Date.parse(value.requestWindow.completedAt)) &&
+          canonicalTimestamp(value.requestWindow.completedAt) &&
           Date.parse(value.requestWindow.completedAt) >=
             Date.parse(value.requestWindow.startedAt)) ||
         !stopAttemptExact(value.stopRequest, expected.intent) ||
@@ -1654,7 +1684,7 @@ function applyTerminalExact(
         receiptChecks.postflightAttempted !== true ||
         receiptChecks.boundaryPostflightExact !== false) return null;
       if (providerEvidence.observations.length > 0) {
-        if (typeof value.requestWindow.completedAt !== "string" ||
+        if (!canonicalTimestamp(value.requestWindow.completedAt) ||
           Date.parse(providerEvidence.observations[0]!.observedAt) <
             Date.parse(value.requestWindow.completedAt)) return null;
       }
@@ -1677,10 +1707,8 @@ function applyTerminalExact(
     }
     if (value.failureCode !== null || value.attempts !== 1 ||
       !exactRecord(value.requestWindow, ["startedAt", "completedAt"]) ||
-      typeof value.requestWindow.startedAt !== "string" ||
-      typeof value.requestWindow.completedAt !== "string" ||
-      !Number.isFinite(Date.parse(value.requestWindow.startedAt)) ||
-      !Number.isFinite(Date.parse(value.requestWindow.completedAt)) ||
+      !canonicalTimestamp(value.requestWindow.startedAt) ||
+      !canonicalTimestamp(value.requestWindow.completedAt) ||
       Date.parse(value.requestWindow.startedAt) >=
         Date.parse(expected.reviewedAuthority.authorizationDeadline) ||
       Date.parse(value.requestWindow.completedAt) <

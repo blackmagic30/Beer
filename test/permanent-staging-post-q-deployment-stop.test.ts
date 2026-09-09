@@ -10,10 +10,14 @@ import {
   canonicalPostQEvidence,
   parsePostQAuthority,
   parsePostQDeploymentStopSnapshot,
+  postQObservedEnvironmentConfigSha256,
+  postQTargetServiceConfigSha256,
   parseReviewedContainmentAuthority,
   POST_Q_DEPLOYMENT_STOP_LOCK,
   POST_Q_DEPLOYMENT_STOP_MUTATION,
   POST_Q_DEPLOYMENT_STOP_Q_LEAVES,
+  POST_Q_DEPLOYMENT_STOP_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
+  POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
   POST_Q_DEPLOYMENT_STOP_STATE_PROJECTION_SCHEMA,
   POST_Q_DEPLOYMENT_STOP_VARIABLES,
   postQDeploymentStopInternals,
@@ -403,6 +407,8 @@ function successfulReconciliation() {
         topologySha256: snapshotTopologySha256(snapshot),
         historyRowsSha256: ledgerEvidence.historyRowsSha256,
         patchRowsSha256: ledgerEvidence.patchRowsSha256,
+        observedEnvironmentConfigSha256:
+          snapshot.observedEnvironmentConfigSha256,
         runtimeResponseSha256s: observedRuntime.responseSha256s,
         runtimeRequests: observedRuntime.requests,
       };
@@ -417,6 +423,10 @@ function authenticatedSnapshotCommitment(
   if (snapshot === null) return null;
   return {
     stateProjectionSchema: POST_Q_DEPLOYMENT_STOP_STATE_PROJECTION_SCHEMA,
+    environmentConfigProjectionSchema:
+      POST_Q_DEPLOYMENT_STOP_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
+    observedEnvironmentConfigProjectionSchema:
+      POST_Q_DEPLOYMENT_STOP_OBSERVED_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA,
     stateSha256: snapshotStateSha256(snapshot),
     topologySha256: snapshotTopologySha256(snapshot),
     configuredRegions: snapshot.configuredRegions,
@@ -644,13 +654,233 @@ function expectNoProviderCalls(harness: ReturnType<typeof runnerHarness>): void 
 }
 
 function liveSnapshot() {
-  const value = JSON.parse(fs.readFileSync(path.resolve(
-    import.meta.dirname,
-    "fixtures/permanent-staging-post-q-live-snapshot.json",
-  ), "utf8")) as unknown;
+  const value = rawLiveSnapshotFixture();
   const parsed = parsePostQDeploymentStopSnapshot(value);
   if (parsed === null) throw new Error("test_snapshot_invalid");
   return parsed;
+}
+
+function rawLiveSnapshotFixture(): {
+  data: {
+    environment: {
+      config: Record<string, unknown>;
+      variables: {
+        edges: Array<{
+          node: { name: string; serviceId: string | null };
+        }>;
+      };
+    };
+    serviceInstance: {
+      source: { repo: string | null };
+      domains: { serviceDomains: Array<{ domain: string }> };
+      latestDeployment: { deploymentStopped: boolean };
+      activeDeployments: Array<Record<string, unknown>>;
+    };
+  };
+} {
+  const value = JSON.parse(fs.readFileSync(path.resolve(
+    import.meta.dirname,
+    "fixtures/permanent-staging-post-q-live-snapshot.json",
+  ), "utf8")) as {
+    data: {
+      environment: {
+        config: Record<string, unknown>;
+        variables: {
+          edges: Array<{
+            node: { name: string; serviceId: string | null };
+          }>;
+        };
+      };
+      serviceInstance: {
+        source: { repo: string | null };
+        domains: { serviceDomains: Array<{ domain: string }> };
+        latestDeployment: { deploymentStopped: boolean };
+        activeDeployments: Array<Record<string, unknown>>;
+      };
+    };
+  };
+  value.data.environment.config = fullObservedEnvironmentConfig(
+    targetDeployConfig(value),
+    value.data.environment.variables.edges,
+  );
+  return value;
+}
+
+function parsedConfigMutation(
+  mutate: (config: Record<string, unknown>) => void,
+  stopped = false,
+) {
+  const source = rawLiveSnapshotFixture();
+  mutate(source.data.environment.config);
+  if (stopped) {
+    source.data.serviceInstance.latestDeployment.deploymentStopped = true;
+    source.data.serviceInstance.activeDeployments = [];
+  }
+  return parsePostQDeploymentStopSnapshot(source);
+}
+
+function recursivelyReverseObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(recursivelyReverseObjectKeys);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(Object.entries(value).reverse().map(([key, child]) => [
+    key,
+    recursivelyReverseObjectKeys(child),
+  ]));
+}
+
+const POSTGRES_SERVICE_ID = "c454955f-263b-4599-aee0-dc447a4d3d15";
+const REDIS_SERVICE_ID = "d6351cec-fe04-4a6f-8e05-1cc164ea1e73";
+const POSTGRES_VOLUME_ID = "cf75fb86-7df5-4b8c-8d86-dc5462076cdc";
+const REDIS_VOLUME_ID = "372b736a-fa8b-4ca0-88bc-68760fc98d69";
+const GENERATOR =
+  '${{ secret(32, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") }}';
+
+function fullObservedEnvironmentConfig(
+  targetDeploy: Record<string, unknown>,
+  edges: Array<{ node: { name: string; serviceId: string | null } }>,
+): Record<string, unknown> {
+  const variables = Object.fromEntries([
+    POST_Q_DEPLOYMENT_STOP_LOCK.serviceId,
+    POSTGRES_SERVICE_ID,
+    REDIS_SERVICE_ID,
+  ].map((serviceId) => [serviceId, Object.fromEntries(edges
+    .filter((edge) => edge.node.serviceId === serviceId)
+    .map((edge) => [edge.node.name, {
+      generator: serviceId === POSTGRES_SERVICE_ID &&
+          edge.node.name === "POSTGRES_PASSWORD" ||
+        serviceId === REDIS_SERVICE_ID && edge.node.name === "REDIS_PASSWORD"
+        ? GENERATOR
+        : null,
+      value: null,
+    }]))]));
+  const build = () => ({ buildEnvironment: "V3", builder: "RAILPACK" });
+  const limitOverride = () => ({
+    containers: { cpu: 1, memoryBytes: 1_073_741_824 },
+  });
+  const autoUpdates = (targetVersion: boolean) => ({
+    remediationNotice: {
+      armedAt: "2026-09-01T00:00:00Z",
+      currentVersion: "1",
+      cveId: "CVE-TEST",
+      severity: "medium",
+      targetImage: "example/image",
+      ...(targetVersion ? { targetVersion: "2" } : {}),
+    },
+    schedule: [
+      { day: 1, endHour: 2, startHour: 1 },
+      { day: 4, endHour: 5, startHour: 4 },
+    ],
+    tagMode: "semver",
+    type: "schedule",
+  });
+  const haConversionConfig = {
+    description: "HA conversion",
+    edge: {
+      defaultValue: 1,
+      description: "Edge",
+      label: "Edge",
+      nodeLabel: "edge",
+      options: [1, 2, 3, 4],
+    },
+    internal: {
+      defaultValue: 1,
+      label: "Internal",
+      nodeLabel: "internal",
+      options: [1, 2, 3, 4],
+    },
+    replica: {
+      defaultValue: 1,
+      description: "Replica",
+      label: "Replica",
+      nodeLabel: "replica",
+      options: [1, 2, 3, 4, 5, 6],
+    },
+  };
+  return {
+    privateNetworkDisabled: false,
+    services: {
+      [POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]: {
+        build: build(),
+        deploy: targetDeploy,
+        networking: {
+          privateNetworkEndpoint: "beer.railway.internal",
+          serviceDomains: {
+            [POST_Q_DEPLOYMENT_STOP_LOCK.domain]: {
+              port: POST_Q_DEPLOYMENT_STOP_LOCK.targetPort,
+            },
+          },
+        },
+        variables: variables[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId],
+      },
+      [POSTGRES_SERVICE_ID]: {
+        build: build(),
+        deploy: {
+          ipv6EgressEnabled: false,
+          limitOverride: limitOverride(),
+          multiRegionConfig: {
+            "asia-southeast1-eqsg3a": { numReplicas: 1 },
+          },
+          requiredMountPath: "/var/lib/postgresql/data",
+          runtime: "V2",
+          useLegacyStacker: false,
+        },
+        haConversionConfig,
+        haTemplateCode: "postgres-ha",
+        networking: { privateNetworkEndpoint: "postgres.railway.internal" },
+        source: { autoUpdates: autoUpdates(true), image: "postgres:17" },
+        variables: variables[POSTGRES_SERVICE_ID],
+        volumeMounts: {
+          [POSTGRES_VOLUME_ID]: { mountPath: "/var/lib/postgresql/data" },
+        },
+      },
+      [REDIS_SERVICE_ID]: {
+        build: build(),
+        deploy: {
+          ipv6EgressEnabled: false,
+          limitOverride: limitOverride(),
+          multiRegionConfig: {
+            "asia-southeast1-eqsg3a": { numReplicas: 1 },
+          },
+          runtime: "V2",
+          startCommand: "redis-server",
+          useLegacyStacker: false,
+        },
+        haTemplateCode: "redis-ha",
+        networking: {
+          privateNetworkEndpoint: "redis.railway.internal",
+          tcpProxies: { "6379": {} },
+        },
+        source: { autoUpdates: autoUpdates(false), image: "redis:8" },
+        variables: variables[REDIS_SERVICE_ID],
+        volumeMounts: {
+          [REDIS_VOLUME_ID]: { mountPath: "/data" },
+        },
+      },
+    },
+    sharedVariables: {},
+    volumes: {
+      [POSTGRES_VOLUME_ID]: {
+        alerts: { usage: { "100": {}, "80": {}, "95": {} } },
+        allowOnlineResize: true,
+        region: "asia-southeast1-eqsg3a",
+        sizeMB: 5_000,
+      },
+      [REDIS_VOLUME_ID]: {
+        alerts: { usage: { "100": {}, "80": {}, "95": {} } },
+        allowOnlineResize: true,
+        region: "asia-southeast1-eqsg3a",
+        sizeMB: 1_000,
+      },
+    },
+  };
+}
+
+function targetDeployConfig(source: ReturnType<typeof rawLiveSnapshotFixture>):
+Record<string, unknown> {
+  const services = source.data.environment.config.services as
+    Record<string, Record<string, unknown>>;
+  return services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.deploy as
+    Record<string, unknown>;
 }
 
 function reviewedAuthoritySource(): string {
@@ -881,6 +1111,28 @@ describe("permanent-staging post-Q deployment stop", () => {
     expect(buildPostQDeploymentStopRequestBody()).not.toContain("patchId");
   });
 
+  it("normalizes an absent deployment meta patchId to the locked semantic null", () => {
+    const fixture = () => rawLiveSnapshotFixture() as ReturnType<
+      typeof rawLiveSnapshotFixture
+    > & {
+      data: { deployment: { meta: Record<string, unknown> } };
+    };
+    const explicitNull = fixture();
+    expect(explicitNull.data.deployment.meta.patchId).toBeNull();
+    expect(parsePostQDeploymentStopSnapshot(explicitNull)?.deployment.patchId)
+      .toBeNull();
+
+    const omitted = fixture();
+    delete omitted.data.deployment.meta.patchId;
+    expect(parsePostQDeploymentStopSnapshot(omitted)?.deployment.patchId)
+      .toBeNull();
+
+    const nonNull = fixture();
+    nonNull.data.deployment.meta.patchId =
+      "00000000-0000-4000-8000-000000000001";
+    expect(parsePostQDeploymentStopSnapshot(nonNull)).toBeNull();
+  });
+
   it("parses the committed live fixture and pins all corrected baseline hashes", () => {
     const snapshot = liveSnapshot();
     const evidenceHashes = snapshotEvidenceHashes(snapshot);
@@ -904,6 +1156,8 @@ describe("permanent-staging post-Q deployment stop", () => {
         POST_Q_DEPLOYMENT_STOP_LOCK.baseline.offTargetVariablesSha256,
       environmentConfigSha256:
         POST_Q_DEPLOYMENT_STOP_LOCK.baseline.environmentConfigSha256,
+      observedEnvironmentConfigSha256:
+        snapshot.observedEnvironmentConfigSha256,
       stagedPatchSha256:
         POST_Q_DEPLOYMENT_STOP_LOCK.baseline.stagedPatchSha256,
       sourceIdentitySha256:
@@ -911,6 +1165,335 @@ describe("permanent-staging post-Q deployment stop", () => {
     });
     expect(snapshot.deployment.patchId).toBeNull();
     expect(snapshot.rows).toHaveLength(97);
+  });
+
+  it("pins target deploy separately and dynamically commits all safe config", () => {
+    const source = rawLiveSnapshotFixture();
+    const expected = POST_Q_DEPLOYMENT_STOP_LOCK.baseline.environmentConfigSha256;
+    expect(POST_Q_DEPLOYMENT_STOP_ENVIRONMENT_CONFIG_PROJECTION_SCHEMA).toBe(
+      "pintpath-permanent-staging-post-q-target-deploy-config-projection/v1",
+    );
+    expect(postQTargetServiceConfigSha256(source.data.environment.config)).toBe(
+      expected,
+    );
+    const observedBefore = postQObservedEnvironmentConfigSha256(
+      source.data.environment.config,
+    );
+    expect(observedBefore).toMatch(/^[a-f0-9]{64}$/u);
+
+    const services = source.data.environment.config.services as
+      Record<string, Record<string, unknown>>;
+    const target = services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId] as
+      Record<string, unknown>;
+    const targetBuild = target.build as Record<string, unknown>;
+    targetBuild.builder = "TARGET_BUILD_CANARY";
+    const postgresBuild = services[POSTGRES_SERVICE_ID]!.build as
+      Record<string, unknown>;
+    postgresBuild.builder = "SIBLING_BUILD_CANARY";
+    source.data.environment.config.privateNetworkDisabled = true;
+
+    expect(postQTargetServiceConfigSha256(source.data.environment.config)).toBe(
+      expected,
+    );
+    const observedAfter = postQObservedEnvironmentConfigSha256(
+      source.data.environment.config,
+    );
+    expect(observedAfter).toMatch(/^[a-f0-9]{64}$/u);
+    expect(observedAfter).not.toBe(observedBefore);
+    const parsed = parsePostQDeploymentStopSnapshot(source);
+    expect(parsed).not.toBeNull();
+    const persistedProjection = JSON.stringify(parsed);
+    expect(persistedProjection).not.toContain("SIBLING_BUILD_CANARY");
+    expect(persistedProjection).not.toContain("TARGET_BUILD_CANARY");
+    expect(parsed?.observedEnvironmentConfigSha256).toBe(observedAfter);
+
+    const unknown = rawLiveSnapshotFixture();
+    unknown.data.environment.config.unexpectedRoot = "SECRET_CANARY";
+    expect(postQObservedEnvironmentConfigSha256(
+      unknown.data.environment.config,
+    )).toBeNull();
+    expect(parsePostQDeploymentStopSnapshot(unknown)).toBeNull();
+  });
+
+  it("makes full-config commitments invariant to recursive object key order", () => {
+    const firstSource = rawLiveSnapshotFixture();
+    const secondSource = rawLiveSnapshotFixture();
+    secondSource.data.environment.config = recursivelyReverseObjectKeys(
+      secondSource.data.environment.config,
+    ) as Record<string, unknown>;
+    const first = parsePostQDeploymentStopSnapshot(firstSource);
+    const second = parsePostQDeploymentStopSnapshot(secondSource);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(second?.observedEnvironmentConfigSha256).toBe(
+      first?.observedEnvironmentConfigSha256,
+    );
+    expect(postQDeploymentStopInternals.opaqueObservedEnvironmentConfigExact(
+      first!,
+      second!,
+    )).toBe(true);
+  });
+
+  it("redacts allowed free-form strings and rejects secret-capable leaves", () => {
+    const baseline = liveSnapshot();
+    const allowedCanary = `SECRET_CANARY_${"x".repeat(64)}`;
+    const changed = parsedConfigMutation((config) => {
+      const services = config.services as Record<string, Record<string, unknown>>;
+      const redis = services[REDIS_SERVICE_ID]!;
+      (redis.deploy as Record<string, unknown>).startCommand = allowedCanary;
+    });
+    expect(changed).not.toBeNull();
+    expect(changed?.observedEnvironmentConfigSha256).toBe(
+      baseline.observedEnvironmentConfigSha256,
+    );
+    expect(postQDeploymentStopInternals.opaqueObservedEnvironmentConfigExact(
+      baseline,
+      changed!,
+    )).toBe(false);
+    expect(JSON.stringify(changed)).not.toContain(allowedCanary);
+
+    for (const mutate of [
+      (row: Record<string, unknown>) => { row.value = "SECRET_VALUE_CANARY"; },
+      (row: Record<string, unknown>) => {
+        row.generator = "SECRET_GENERATOR_CANARY";
+      },
+      (row: Record<string, unknown>) => { row.ciphertext = "SECRET_CIPHER_CANARY"; },
+    ]) {
+      const rejected = parsedConfigMutation((config) => {
+        const services = config.services as
+          Record<string, Record<string, unknown>>;
+        const variables = services[POSTGRES_SERVICE_ID]!.variables as
+          Record<string, Record<string, unknown>>;
+        mutate(variables.POSTGRES_PASSWORD!);
+      });
+      expect(rejected).toBeNull();
+    }
+  });
+
+  it("rejects missing, extra, or malformed full-config paths", () => {
+    const mutations: Array<readonly [string, (
+      config: Record<string, unknown>,
+    ) => void]> = [
+      ["extra root", (config) => { config.extra = true; }],
+      ["missing root", (config) => { delete config.volumes; }],
+      ["extra service", (config) => {
+        (config.services as Record<string, unknown>)["0".repeat(36)] = {};
+      }],
+      ["missing service", (config) => {
+        delete (config.services as Record<string, unknown>)[REDIS_SERVICE_ID];
+      }],
+      ["extra target category", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.source = {};
+      }],
+      ["missing sibling category", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        delete services[POSTGRES_SERVICE_ID]!.haTemplateCode;
+      }],
+      ["extra nested leaf", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        const build = services[REDIS_SERVICE_ID]!.build as Record<string, unknown>;
+        build.unreviewed = "x";
+      }],
+      ["missing nested leaf", (config) => {
+        const volumes = config.volumes as Record<string, Record<string, unknown>>;
+        delete volumes[POSTGRES_VOLUME_ID]!.sizeMB;
+      }],
+      ["wrong nested type", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        const source = services[POSTGRES_SERVICE_ID]!.source as
+          Record<string, unknown>;
+        source.image = 42;
+      }],
+      ["target same-count variable-name substitution", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        const variables = services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!
+          .variables as Record<string, unknown>;
+        variables.SECRET_CANARY = variables.HOST;
+        delete variables.HOST;
+      }],
+      ["Postgres same-count variable-name substitution", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        const variables = services[POSTGRES_SERVICE_ID]!.variables as
+          Record<string, unknown>;
+        variables.SECRET_CANARY = variables.PGHOST;
+        delete variables.PGHOST;
+      }],
+      ["Redis same-count variable-name substitution", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        const variables = services[REDIS_SERVICE_ID]!.variables as
+          Record<string, unknown>;
+        variables.SECRET_CANARY = variables.REDISHOST;
+        delete variables.REDISHOST;
+      }],
+      ["oversize free string", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        services[REDIS_SERVICE_ID]!.haTemplateCode = "x".repeat(16_385);
+      }],
+    ];
+    for (const [name, mutate] of mutations) {
+      expect(parsedConfigMutation(mutate), name).toBeNull();
+    }
+  });
+
+  it("fails closed on every target deploy leaf value drift", () => {
+    const mutations: ReadonlyArray<readonly [string, (
+      deploy: Record<string, unknown>,
+    ) => void]> = [
+      ["drainingSeconds", (deploy) => { deploy.drainingSeconds = 31; }],
+      ["ipv6EgressEnabled", (deploy) => {
+        deploy.ipv6EgressEnabled = true;
+      }],
+      ["limitOverride.containers.cpu", (deploy) => {
+        const limit = deploy.limitOverride as Record<string, unknown>;
+        const containers = limit.containers as Record<string, unknown>;
+        containers.cpu = 0.2;
+      }],
+      ["limitOverride.containers.memoryBytes", (deploy) => {
+        const limit = deploy.limitOverride as Record<string, unknown>;
+        const containers = limit.containers as Record<string, unknown>;
+        containers.memoryBytes = 500_000_001;
+      }],
+      ["multiRegionConfig.us-west2.numReplicas", (deploy) => {
+        const regions = deploy.multiRegionConfig as Record<string, unknown>;
+        const region = regions[POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion] as
+          Record<string, unknown>;
+        region.numReplicas = 2;
+      }],
+      ["multiRegionConfig.us-west2.stackerAssignment", (deploy) => {
+        const regions = deploy.multiRegionConfig as Record<string, unknown>;
+        const region = regions[POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion] as
+          Record<string, unknown>;
+        region.stackerAssignment = "unexpected";
+      }],
+      ["overlapSeconds", (deploy) => { deploy.overlapSeconds = 1; }],
+      ["runtime", (deploy) => { deploy.runtime = "V3"; }],
+      ["useLegacyStacker", (deploy) => { deploy.useLegacyStacker = true; }],
+    ];
+    for (const [name, mutate] of mutations) {
+      const source = rawLiveSnapshotFixture();
+      mutate(targetDeployConfig(source));
+      expect(
+        postQTargetServiceConfigSha256(source.data.environment.config),
+        name,
+      ).not.toBe(POST_Q_DEPLOYMENT_STOP_LOCK.baseline.environmentConfigSha256);
+      expect(parsePostQDeploymentStopSnapshot(source), name).toBeNull();
+    }
+  });
+
+  it("rejects missing, extra, and malformed target deploy projection keys", () => {
+    const mutateCases: Array<readonly [string, (
+      source: ReturnType<typeof rawLiveSnapshotFixture>,
+    ) => void]> = [];
+    const exactDeployKeys = [
+      "drainingSeconds", "ipv6EgressEnabled", "limitOverride",
+      "multiRegionConfig", "overlapSeconds", "runtime", "useLegacyStacker",
+    ] as const;
+    for (const key of exactDeployKeys) {
+      mutateCases.push([`missing deploy.${key}`, (source) => {
+        delete targetDeployConfig(source)[key];
+      }]);
+    }
+    mutateCases.push(
+      ["extra deploy key", (source) => {
+        targetDeployConfig(source).unexpected = true;
+      }],
+      ["missing limitOverride.containers", (source) => {
+        const deploy = targetDeployConfig(source);
+        delete (deploy.limitOverride as Record<string, unknown>).containers;
+      }],
+      ["extra limitOverride key", (source) => {
+        const deploy = targetDeployConfig(source);
+        (deploy.limitOverride as Record<string, unknown>).unexpected = true;
+      }],
+      ["missing containers.cpu", (source) => {
+        const deploy = targetDeployConfig(source);
+        const limit = deploy.limitOverride as Record<string, unknown>;
+        delete (limit.containers as Record<string, unknown>).cpu;
+      }],
+      ["missing containers.memoryBytes", (source) => {
+        const deploy = targetDeployConfig(source);
+        const limit = deploy.limitOverride as Record<string, unknown>;
+        delete (limit.containers as Record<string, unknown>).memoryBytes;
+      }],
+      ["extra containers key", (source) => {
+        const deploy = targetDeployConfig(source);
+        const limit = deploy.limitOverride as Record<string, unknown>;
+        (limit.containers as Record<string, unknown>).unexpected = true;
+      }],
+      ["missing configured region", (source) => {
+        const deploy = targetDeployConfig(source);
+        delete (deploy.multiRegionConfig as Record<string, unknown>)[
+          POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion
+        ];
+      }],
+      ["extra region", (source) => {
+        const deploy = targetDeployConfig(source);
+        (deploy.multiRegionConfig as Record<string, unknown>).unexpected = {};
+      }],
+      ["missing region.numReplicas", (source) => {
+        const deploy = targetDeployConfig(source);
+        const regions = deploy.multiRegionConfig as Record<string, unknown>;
+        const region = regions[POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion] as
+          Record<string, unknown>;
+        delete region.numReplicas;
+      }],
+      ["missing region.stackerAssignment", (source) => {
+        const deploy = targetDeployConfig(source);
+        const regions = deploy.multiRegionConfig as Record<string, unknown>;
+        const region = regions[POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion] as
+          Record<string, unknown>;
+        delete region.stackerAssignment;
+      }],
+      ["extra region key", (source) => {
+        const deploy = targetDeployConfig(source);
+        const regions = deploy.multiRegionConfig as Record<string, unknown>;
+        const region = regions[POST_Q_DEPLOYMENT_STOP_LOCK.configuredRegion] as
+          Record<string, unknown>;
+        region.unexpected = true;
+      }],
+      ["missing services", (source) => {
+        delete source.data.environment.config.services;
+      }],
+      ["missing target service", (source) => {
+        const services = source.data.environment.config.services as
+          Record<string, unknown>;
+        delete services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId];
+      }],
+      ["missing target deploy", (source) => {
+        const services = source.data.environment.config.services as
+          Record<string, Record<string, unknown>>;
+        delete services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.deploy;
+      }],
+      ["malformed target deploy", (source) => {
+        const services = source.data.environment.config.services as
+          Record<string, Record<string, unknown>>;
+        services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.deploy = null;
+      }],
+    );
+
+    for (const [name, mutate] of mutateCases) {
+      const source = rawLiveSnapshotFixture();
+      mutate(source);
+      expect(
+        postQTargetServiceConfigSha256(source.data.environment.config),
+        name,
+      ).toBeNull();
+      expect(parsePostQDeploymentStopSnapshot(source), name).toBeNull();
+    }
+  });
+
+  it("keeps current source/build and networking bindings outside config", () => {
+    const sourceDrift = rawLiveSnapshotFixture();
+    sourceDrift.data.serviceInstance.source.repo = "blackmagic30/Other";
+    expect(parsePostQDeploymentStopSnapshot(sourceDrift)).toBeNull();
+
+    const networkingDrift = rawLiveSnapshotFixture();
+    networkingDrift.data.serviceInstance.domains.serviceDomains[0]!.domain =
+      "unexpected-staging.example";
+    const parsedNetworkingDrift = parsePostQDeploymentStopSnapshot(networkingDrift);
+    expect(parsedNetworkingDrift).not.toBeNull();
+    expect(snapshotBaselineExact(parsedNetworkingDrift!)).toBe(false);
   });
 
   it("requires the token to be scoped to the exact project and staging environment", () => {
@@ -1210,6 +1793,10 @@ describe("permanent-staging post-Q deployment stop", () => {
       activeDeployments: [],
     };
     expect(stoppedSnapshotExact(before, after)).toBe(true);
+    expect(stoppedSnapshotExact(before, {
+      ...after,
+      environmentConfigSha256: "0".repeat(64),
+    })).toBe(false);
     const ledger: ProviderLedger = { historyRows: [], patchRows: [] };
     let monotonicMs = 0;
     const sleep = vi.fn(async (milliseconds: number) => {
@@ -1448,6 +2035,8 @@ describe("permanent-staging post-Q deployment stop", () => {
     )).resolves.toBe(0);
     expect([...prepared.writes.keys()]).toEqual(["stop-intent.json"]);
     expect(prepared.stopDeployment).not.toHaveBeenCalled();
+    expect(prepared.writes.get("stop-intent.json")).not.toContain(GENERATOR);
+    expect(JSON.stringify(outputReceiptFrom(prepared))).not.toContain(GENERATOR);
 
     const applied = runnerHarness({
       phase: "apply",
@@ -1467,6 +2056,9 @@ describe("permanent-staging post-Q deployment stop", () => {
     const completionSource = applied.writes.get(
       POST_Q_DEPLOYMENT_STOP_APPLY_COMPLETION_LEAF,
     )!;
+    expect(applySource).not.toContain(GENERATOR);
+    expect(completionSource).not.toContain(GENERATOR);
+    expect(JSON.stringify(outputReceiptFrom(applied))).not.toContain(GENERATOR);
     expect(JSON.parse(completionSource)).toEqual({
       schemaVersion: POST_Q_DEPLOYMENT_STOP_APPLY_COMPLETION_SCHEMA,
       operation: "permanent-staging-post-q-deployment-stop",
@@ -1515,6 +2107,9 @@ describe("permanent-staging post-Q deployment stop", () => {
     expect(canonicalPostQEvidence(terminalCompletion.value)).toBe(
       terminalCompletion.source,
     );
+    expect(terminal.source).not.toContain(GENERATOR);
+    expect(terminalCompletion.source).not.toContain(GENERATOR);
+    expect(JSON.stringify(outputReceiptFrom(finalized))).not.toContain(GENERATOR);
 
     const receipt = JSON.parse(
       finalized.writeOutput.mock.calls.at(-1)![0] as string,
@@ -1578,6 +2173,205 @@ describe("permanent-staging post-Q deployment stop", () => {
       },
       nextRequiredProof: null,
     });
+  });
+
+  it("blocks target deploy-config drift at the immediate prewrite reassertion", async () => {
+    const before = liveSnapshot();
+    const driftedSource = rawLiveSnapshotFixture();
+    targetDeployConfig(driftedSource).drainingSeconds = 31;
+    const rejectedDrift = parsePostQDeploymentStopSnapshot(driftedSource);
+    expect(rejectedDrift).toBeNull();
+
+    const applied = runnerHarness({ phase: "apply" });
+    applied.readSnapshot.mockReset();
+    applied.readSnapshot
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(rejectedDrift);
+
+    await expect(runProtectedPermanentStagingPostQDeploymentStop(
+      applied.overrides,
+    )).resolves.toBe(1);
+    expect(applied.readSnapshot).toHaveBeenCalledTimes(2);
+    expect(applied.stopDeployment).not.toHaveBeenCalled();
+    expect(applied.reconcile).not.toHaveBeenCalled();
+    expect(writtenEvidence(applied, "stop-apply-terminal.json").value)
+      .toMatchObject({
+        outcome: "failed_before_attempt",
+        failureCode: "prewrite_reassertion_failed",
+        attempts: 0,
+      });
+    expect(outputReceiptFrom(applied)).toMatchObject({
+      checks: {
+        targetPreflightExact: true,
+        targetPrewriteReasserted: false,
+      },
+    });
+  });
+
+  it("fails real postwrite reconciliation when target deploy config drifts", async () => {
+    const before = liveSnapshot();
+    const driftedSource = rawLiveSnapshotFixture();
+    targetDeployConfig(driftedSource).runtime = "V3";
+    const rejectedDrift = parsePostQDeploymentStopSnapshot(driftedSource);
+    expect(rejectedDrift).toBeNull();
+
+    const applied = runnerHarness({ phase: "apply" });
+    applied.readSnapshot.mockReset();
+    applied.readSnapshot
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(rejectedDrift)
+      .mockResolvedValue(rejectedDrift);
+    applied.overrides.reconcile = reconcileStoppedDeployment;
+
+    await expect(runProtectedPermanentStagingPostQDeploymentStop(
+      applied.overrides,
+    )).resolves.toBe(1);
+    expect(applied.stopDeployment).toHaveBeenCalledTimes(1);
+    expect(applied.readSnapshot).toHaveBeenCalledTimes(
+      2 + POST_Q_DEPLOYMENT_STOP_LOCK.maximumPollRounds,
+    );
+    expect(applied.probeRuntime).not.toHaveBeenCalled();
+    expect(writtenEvidence(applied, "stop-apply-terminal.json").value)
+      .toMatchObject({
+        outcome: "mutation_uncertain",
+        failureCode: "reconciliation_failed",
+        attempts: 1,
+      });
+    expect(outputReceiptFrom(applied)).toMatchObject({
+      checks: {
+        targetPrewriteReasserted: true,
+        providerTerminalConvergenceExact: false,
+        collateralUnchanged: false,
+      },
+    });
+  });
+
+  it("blocks root, sibling, target metadata, and generator drift prewrite", async () => {
+    const mutations: Array<readonly [string, (
+      config: Record<string, unknown>,
+    ) => void]> = [
+      ["root", (config) => { config.privateNetworkDisabled = true; }],
+      ["postgres build", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[POSTGRES_SERVICE_ID]!.build as Record<string, unknown>)
+          .builder = "SIBLING_BUILD_SECRET_CANARY";
+      }],
+      ["redis source", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[REDIS_SERVICE_ID]!.source as Record<string, unknown>).image =
+          "SIBLING_SOURCE_SECRET_CANARY";
+      }],
+      ["target build", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.build as
+          Record<string, unknown>).builder = "TARGET_BUILD_SECRET_CANARY";
+      }],
+      ["target networking", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.networking as
+          Record<string, unknown>).privateNetworkEndpoint =
+            "TARGET_NETWORK_SECRET_CANARY";
+      }],
+      ["volume", (config) => {
+        const volumes = config.volumes as Record<string, Record<string, unknown>>;
+        volumes[REDIS_VOLUME_ID]!.sizeMB = 1_001;
+      }],
+    ];
+    for (const [name, mutate] of mutations) {
+      const before = liveSnapshot();
+      const drifted = parsedConfigMutation(mutate);
+      expect(drifted, name).not.toBeNull();
+      const applied = runnerHarness({ phase: "apply" });
+      applied.readSnapshot.mockReset();
+      applied.readSnapshot
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(drifted);
+      await expect(runProtectedPermanentStagingPostQDeploymentStop(
+        applied.overrides,
+      ), name).resolves.toBe(1);
+      expect(applied.stopDeployment, name).not.toHaveBeenCalled();
+      expect(applied.reconcile, name).not.toHaveBeenCalled();
+      const terminal = writtenEvidence(applied, "stop-apply-terminal.json");
+      expect(terminal.value, name).toMatchObject({
+        outcome: "failed_before_attempt",
+        failureCode: "prewrite_reassertion_failed",
+        attempts: 0,
+      });
+      expect(terminal.source, name).not.toContain("SECRET_CANARY");
+    }
+
+    const malformedGenerator = parsedConfigMutation((config) => {
+      const services = config.services as Record<string, Record<string, unknown>>;
+      const variables = services[REDIS_SERVICE_ID]!.variables as
+        Record<string, Record<string, unknown>>;
+      variables.REDIS_PASSWORD!.generator =
+        '${{ secret(31, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") }}';
+    });
+    expect(malformedGenerator).toBeNull();
+    const applied = runnerHarness({ phase: "apply" });
+    applied.readSnapshot.mockReset();
+    applied.readSnapshot
+      .mockResolvedValueOnce(liveSnapshot())
+      .mockResolvedValueOnce(malformedGenerator);
+    await expect(runProtectedPermanentStagingPostQDeploymentStop(
+      applied.overrides,
+    )).resolves.toBe(1);
+    expect(applied.stopDeployment).not.toHaveBeenCalled();
+  });
+
+  it("fails postwrite reconciliation on secret-safe off-target config drift", async () => {
+    const mutations: Array<readonly [string, (
+      config: Record<string, unknown>,
+    ) => void]> = [
+      ["root boolean", (config) => { config.privateNetworkDisabled = true; }],
+      ["postgres source string", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[POSTGRES_SERVICE_ID]!.source as Record<string, unknown>).image =
+          "POSTWRITE_SECRET_CANARY";
+      }],
+      ["redis deploy command", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[REDIS_SERVICE_ID]!.deploy as Record<string, unknown>)
+          .startCommand = "POSTWRITE_COMMAND_SECRET_CANARY";
+      }],
+      ["target build", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.build as
+          Record<string, unknown>).builder = "POSTWRITE_BUILD_SECRET_CANARY";
+      }],
+      ["target networking", (config) => {
+        const services = config.services as Record<string, Record<string, unknown>>;
+        (services[POST_Q_DEPLOYMENT_STOP_LOCK.serviceId]!.networking as
+          Record<string, unknown>).privateNetworkEndpoint =
+            "POSTWRITE_NETWORK_SECRET_CANARY";
+      }],
+    ];
+    for (const [name, mutate] of mutations) {
+      const before = liveSnapshot();
+      const drifted = parsedConfigMutation(mutate, true);
+      expect(drifted, name).not.toBeNull();
+      const applied = runnerHarness({ phase: "apply" });
+      applied.readSnapshot.mockReset();
+      applied.readSnapshot
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(before)
+        .mockResolvedValue(drifted);
+      applied.overrides.reconcile = reconcileStoppedDeployment;
+      await expect(runProtectedPermanentStagingPostQDeploymentStop(
+        applied.overrides,
+      ), name).resolves.toBe(1);
+      expect(applied.stopDeployment, name).toHaveBeenCalledTimes(1);
+      expect(applied.readSnapshot, name).toHaveBeenCalledTimes(3);
+      const terminal = writtenEvidence(applied, "stop-apply-terminal.json");
+      expect(terminal.value, name).toMatchObject({
+        outcome: "mutation_uncertain",
+        failureCode: "reconciliation_failed",
+        attempts: 1,
+        receipt: { checks: { collateralUnchanged: false } },
+      });
+      expect(terminal.source, name).not.toContain("SECRET_CANARY");
+    }
   });
 
   it("rechecks expiry immediately before send and records zero attempts", async () => {
@@ -2475,6 +3269,37 @@ describe("permanent-staging post-Q deployment stop", () => {
           ).toISOString();
         },
       },
+      ...[
+        ["missing milliseconds", "2026-09-08T15:00:00Z"],
+        ["offset form", "2026-09-08T15:00:00.000+00:00"],
+        ["date only", "2026-09-08"],
+        ["calendar rollover", "2026-02-30T15:00:00.000Z"],
+        ["hour rollover", "2026-09-08T24:00:00.000Z"],
+        ["four fractional digits", "2026-09-08T15:00:00.0000Z"],
+      ].map(([name, timestamp]) => ({
+        name: `noncanonical request timestamp: ${name}`,
+        mutate: (value: Record<string, unknown>) => {
+          const requestWindow = value.requestWindow as Record<string, unknown>;
+          requestWindow.startedAt = timestamp;
+        },
+      })),
+      ...[
+        ["missing milliseconds", "2026-09-08T15:00:01Z"],
+        ["offset form", "2026-09-08T15:00:01.000+00:00"],
+        ["date only", "2026-09-08"],
+        ["calendar rollover", "2026-02-30T15:00:01.000Z"],
+        ["hour rollover", "2026-09-08T24:00:00.000Z"],
+        ["four fractional digits", "2026-09-08T15:00:01.0000Z"],
+      ].map(([name, timestamp]) => ({
+        name: `noncanonical observation timestamp: ${name}`,
+        mutate: (value: Record<string, unknown>) => {
+          const providerEvidence = value.providerEvidence as
+            Record<string, unknown>;
+          const observations = providerEvidence.observations as
+            Array<Record<string, unknown>>;
+          observations[0]!.observedAt = timestamp;
+        },
+      })),
       {
         name: "nested receipt schema",
         mutate: (value) => {
@@ -2503,10 +3328,13 @@ describe("permanent-staging post-Q deployment stop", () => {
       const tampered = structuredClone(inner.value);
       mutation.mutate(tampered);
       const tamperedSource = canonicalPostQEvidence(tampered);
+      const tamperedCompletionSource = applyCompletionMarkerSource(
+        tamperedSource,
+      );
       const finalized = runnerHarness({
         phase: "finalize",
         applyTerminalSource: tamperedSource,
-        applyCompletionSource: completion.source,
+        applyCompletionSource: tamperedCompletionSource,
       });
       await expect(runProtectedPermanentStagingPostQDeploymentStop(
         finalized.overrides,

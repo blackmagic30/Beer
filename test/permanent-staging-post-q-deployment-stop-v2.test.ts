@@ -114,18 +114,39 @@ describe("post-deadline post-Q staging containment v2", () => {
     })).toBe(false);
   });
 
-  it("uses the canonical workflow with only v2 authority/runtime and compatible intent name", () => {
+  it("keeps v2 immutable while the canonical workflow advances in place to v3", () => {
+    expect(hash(read(
+      "ops/railway/permanent-staging-post-q-deployment-stop-authorization-v2.json",
+    ))).toBe("4203affc634766c1ba695c969448d8c126552d1c16ffb090e2a55d5f319a0779");
+    expect(hash(read(
+      "ops/railway/permanent-staging-post-q-deployment-stop-policy-v2.json",
+    ))).toBe("5f4c4bc20c8ef68ed77f51ad92a11cede00122e3274e4408eb8ea858d6a07e4b");
+    expect(hash(read(
+      "scripts/verify-permanent-staging-post-q-authority-v2.mjs",
+    ))).toBe("50eccd00ae5059568da11421d75546ed4691ab30399d8bb6a36a2c626cc3105f");
+    expect(hash(read(
+      "scripts/lib/permanent-staging-post-q-deployment-stop-authority-v2.ts",
+    ))).toBe("412890199755cc95f9f69cd9c6ca15d1b16716b1f3c12fcefed5102e665a9389");
+    expect(hash(read(
+      "scripts/execute-protected-permanent-staging-post-q-deployment-stop-v2.ts",
+    ))).toBe("4b4b41cb81e18862c6b340d2e78e0a940f9c41c2396cc38d77af8b8808f87b87");
     const workflow = read(
       ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
     );
     expect(workflow).toContain("authorization_id:");
     expect(workflow).toContain("authorization_source_sha256:");
     expect(workflow.match(
-      /scripts\/verify-permanent-staging-post-q-authority-v2\.mjs/gu,
+      /scripts\/verify-permanent-staging-post-q-authority-v3\.mjs/gu,
     )).toHaveLength(3);
     expect(workflow.match(
-      /scripts\/execute-protected-permanent-staging-post-q-deployment-stop-v2\.ts/gu,
+      /scripts\/execute-protected-permanent-staging-post-q-deployment-stop-v3\.ts/gu,
     )).toHaveLength(3);
+    expect(workflow).not.toContain(
+      "scripts/verify-permanent-staging-post-q-authority-v2.mjs",
+    );
+    expect(workflow).not.toContain(
+      "scripts/execute-protected-permanent-staging-post-q-deployment-stop-v2.ts",
+    );
     expect(workflow).not.toMatch(
       /scripts\/verify-permanent-staging-post-q-authority\.mjs/gu,
     );
