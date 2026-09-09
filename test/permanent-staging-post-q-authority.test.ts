@@ -26,6 +26,15 @@ import {
   parsePostQDeploymentStopReviewedAuthorityV2,
 } from "../scripts/lib/permanent-staging-post-q-deployment-stop-authority-v2.js";
 import {
+  parsePostQDeploymentStopAuthorityV3,
+  parsePostQDeploymentStopReviewedAuthorityV3,
+} from "../scripts/lib/permanent-staging-post-q-deployment-stop-authority-v3.js";
+import {
+  POST_Q_AUTHORITY_V3_SCHEMA,
+  POST_Q_REVIEWED_CANDIDATE_V3_SCHEMA,
+  verifyPermanentStagingPostQAuthorityV3,
+} from "../scripts/verify-permanent-staging-post-q-authority-v3.mjs";
+import {
   buildPostQDeploymentStopIntent,
   canonicalPostQEvidence,
   parsePostQDeploymentStopIntent,
@@ -494,6 +503,180 @@ const baseArtifacts = new Map([
   ["postgres-migration-integration", "pintpath-mission-discovery-scale-evidence"],
   ["release-readiness", "pintpath-automated-readiness-evidence"],
 ]);
+
+const V3_POLICY_SHA256 =
+  "e7c0adec553e42e28ff2ae877835aa3255cfaa2ee8584f64c08ebe7983d901dd";
+
+function reviewedAuthorityV3Fixture() {
+  const authorization = {
+    authorizationId:
+      "pintpath-post-q-staging-stop-reauthorization-2026-09-10/v3",
+    sourceThreadId: "01a02140-8628-7d30-9374-8d29d4a9f3a3",
+    sourceSchemaVersion:
+      "pintpath-reviewed-user-authorization-provenance/v2",
+    sourceSha256:
+      "d2c7b4c9d700a1d7c5219dd6c4245d5900154421497b8c637ac93f9215662549",
+    sourceSizeBytes: 394,
+    sourceSerialization: "JSON.stringify(value,null,2)+LF",
+    messagesExact: true,
+    provenanceUse:
+      "pintpath-post-q-staging-stop-successor-v3-reviewed-context",
+    reviewedProvenanceOnly: true,
+    cryptographicUserSignatureClaimed: false,
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  };
+  const requiredChecksV3 = requiredChecks.map(([name, workflowPath], index) => ({
+    name,
+    runId: 34_300_000_000 + index,
+    checkSuiteId: 93_000_000_000 + index,
+    workflowId: 400_000_000 + index,
+    workflowPath,
+    event: "push",
+    runAttempt: 1,
+    startedAt: "2026-09-09T05:31:00Z",
+    completedAt: "2026-09-09T05:45:00Z",
+  }));
+  return {
+    schemaVersion: POST_Q_REVIEWED_CANDIDATE_V3_SCHEMA,
+    repository: "blackmagic30/Beer",
+    branch: "main",
+    candidateSha: CANDIDATE,
+    reviewedPullRequest: {
+      number: 100,
+      reviewedPrHeadSha: REVIEWED_HEAD,
+      mergeCommitSha: CANDIDATE,
+      treeSha: REVIEWED_TREE,
+      mergedAt: "2026-09-09T05:30:00Z",
+      authorId: 29_029_791,
+      mergedById: 29_029_791,
+      githubMergeExact: true,
+      reviewedTreeExact: true,
+      pullRequestApprovalRequirement: "not_required",
+      pullRequestApprovalRequirementExact: true,
+      linearHistoryExact: true,
+    },
+    releasePolicySha256:
+      "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90",
+    successorPolicySha256: V3_POLICY_SHA256,
+    directParentSha: "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
+    ineligibleV2: {
+      candidateSha: "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
+      candidateTreeSha: "410fd437bb0c459049f08bbff63ee605f2e65c9e",
+      candidateSoleParentSha: "d27275f4c101b764c6016e8b378969c14719258e",
+      pullRequestNumber: 99,
+      reviewedPrHeadSha: "3b844ce9e5839251552419c3610a797bd1a1f3c7",
+      mergedAt: "2026-09-08T21:35:27Z",
+      workflowId: 275_221_294,
+      workflowPath: ".github/workflows/ci.yml",
+      runId: 34_281_452_199,
+      runNumber: 563,
+      runAttempt: 1,
+      checkSuiteId: 92_869_213_373,
+      event: "push",
+      headBranch: "main",
+      status: "completed",
+      conclusion: "failure",
+      runStartedAt: "2026-09-08T21:35:31Z",
+      runCompletedAt: "2026-09-08T21:43:26Z",
+      failedJobId: 102_248_030_722,
+      failedJobName: "build-test-scan",
+      failedJobStartedAt: "2026-09-08T21:39:21Z",
+      failedJobCompletedAt: "2026-09-08T21:43:25Z",
+      successfulBuildStepNumber: 8,
+      successfulBuildStepName: "Build, test, and scan",
+      successfulBuildStepStatus: "completed",
+      successfulBuildStepConclusion: "success",
+      successfulBuildStepStartedAt: "2026-09-08T21:39:51Z",
+      successfulBuildStepCompletedAt: "2026-09-08T21:43:06Z",
+      failedStepNumber: 11,
+      failedStepName: "Dependency audit",
+      failedStepStartedAt: "2026-09-08T21:43:22Z",
+      failedStepCompletedAt: "2026-09-08T21:43:23Z",
+      canonicalWorkflowRunAbsent: true,
+      authorityConsumed: false,
+      rerunCanQualify: false,
+      archivedFilesExact: true,
+      archivedWorkflowExact: true,
+    },
+    predecessorBridge: {
+      candidateSha: "78162cf42a0ef3190343a657ff94f288d4a4c7ca",
+      treeSha: "410fd437bb0c459049f08bbff63ee605f2e65c9e",
+      soleParentSha: "d27275f4c101b764c6016e8b378969c14719258e",
+      preV2CandidateSha: "d27275f4c101b764c6016e8b378969c14719258e",
+      preV2TreeSha: "53808bdd995a6ff1d2204e01f7639b103dbd5a76",
+      preV2SoleParentSha: RECOVERY_BRIDGE_SHA,
+      recoveryCandidateSha: RECOVERY_BRIDGE_SHA,
+      recoveryTreeSha: RECOVERY_BRIDGE_TREE,
+      recoverySoleParentSha: Q_SHA,
+      preV2PullRequestNumber: 98,
+      preV2ReviewedPrHeadSha: "3ab064f5026a923b42bf67dbd94cb5d16f125c0d",
+      preV2MergeCommitSha: "d27275f4c101b764c6016e8b378969c14719258e",
+      preV2BaseSha: RECOVERY_BRIDGE_SHA,
+      preV2MergedAt: "2026-09-08T18:23:44Z",
+      preV2GithubMergeExact: true,
+      preV2ReviewedTreeExact: true,
+      linearHistoryExact: true,
+    },
+    authorization,
+    deadlinePolicy: {
+      explicitExpiry: "2026-09-10T08:00:00.000Z",
+      maximumAfterPullRequestMergeSeconds: 14_400,
+      maximumAfterRunStartSeconds: 5_400,
+      derivedDeadline: "2026-09-09T07:30:00.000Z",
+      derivation:
+        "min(pull_request_merged_at_plus_4h,current_run_started_at_plus_90m,explicit_expiry)",
+      rederiveImmediatelyBeforeWriter: true,
+      expirySuppressesPostWriteReconciliation: false,
+      expirySuppressesFinalization: false,
+    },
+    currentContainmentRun: {
+      runId: CURRENT_RUN_ID,
+      workflowId: RECOVERY_BRIDGE_WORKFLOW_ID,
+      workflowPath:
+        ".github/workflows/stop-permanent-staging-post-q-deployment.yml",
+      runAttempt: 1,
+      runStartedAt: "2026-09-09T06:00:00Z",
+    },
+    requiredChecks: requiredChecksV3,
+    requiredArtifacts: [
+      ["pintpath-mission-discovery-scale-evidence",
+        "postgres-migration-integration"],
+      ["pintpath-postgres-tool-runtime-closure-v4-observation",
+        "postgres-tool-runtime-closure-observation"],
+      ["pintpath-automated-readiness-evidence", "release-readiness"],
+    ].map(([name, producerCheck], index) => {
+      const producer = requiredChecksV3.find((check) =>
+        check.name === producerCheck)!;
+      return {
+        artifactId: 11_000_000_000 + index,
+        name,
+        digest: `sha256:${"f".repeat(64)}`,
+        sizeBytes: 100,
+        runId: producer.runId,
+        producerCheck,
+      };
+    }),
+    checks: {
+      mergedPullRequestAndTreeExact: true,
+      soleParentSquashShapeExact: true,
+      directParentExact: true,
+      ineligibleV2Attempt1Exact: true,
+      archivedV2BytesAndBlobExact: true,
+      predecessorBridgeExact: true,
+      currentMainTipExact: true,
+      noLaterMainDriftExact: true,
+      baseRequiredCheckLineageExact: true,
+      baseRequiredArtifactsExact: true,
+      chronologyExact: true,
+      deadlineDerivedExact: true,
+      authorizationProvenanceExact: true,
+      expiredAuthorityNotReusedExact: true,
+    },
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  };
+}
 
 function reviewedCandidateFetch(
   mainSha = CANDIDATE,
@@ -1379,6 +1562,135 @@ describe("permanent-staging post-Q GitHub authority", () => {
     );
     expect(historyUrl).toBeDefined();
     expect(historyUrl).not.toContain("event=");
+  });
+
+  it("emits v3 authority that both v3 parsers accept end to end", async () => {
+    const current = containmentRun({
+      created_at: "2026-09-09T06:00:00Z",
+      run_started_at: "2026-09-09T06:00:00Z",
+      updated_at: "2026-09-09T06:01:00Z",
+    });
+    let authoritySource = "";
+    let reviewedSource = "";
+    const fetchImpl = githubFetch({
+      currentRun: current,
+      containmentRuns: {
+        total_count: 2,
+        workflow_runs: [current, recoveryBridgeRun()],
+      },
+      currentJobs: applyPhaseCurrentJobs("queued"),
+      historicalWorkflow: { type: "fixture-validated-by-override" },
+    });
+    const result = await verifyPermanentStagingPostQAuthorityV3({
+      argv: argumentsFor(),
+      env: {
+        ...environment(),
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V3_AUTHORIZATION_ID:
+          "pintpath-post-q-staging-stop-reauthorization-2026-09-10/v3",
+        PINTPATH_POST_Q_DEPLOYMENT_STOP_V3_AUTHORIZATION_SOURCE_SHA256:
+          "d2c7b4c9d700a1d7c5219dd6c4245d5900154421497b8c637ac93f9215662549",
+      },
+      fetchImpl,
+      now: () => Date.parse("2026-09-09T06:01:00Z"),
+      historicalWorkflowExact: vi.fn(() => true),
+      sealArtifact: vi.fn(() => ({
+        sealedDirectory: "/tmp/pintpath-post-q-authority/sealed",
+        members: POST_Q_ARTIFACT_MEMBERS.map((member) => ({
+          ...member,
+          sealedPath: member.path,
+        })),
+      })),
+      verifyCandidate: vi.fn(async () => reviewedAuthorityV3Fixture()),
+      writeAuthority: (_filename: string, source: string) => {
+        authoritySource = source;
+      },
+      writeReviewedCandidate: (_filename: string, source: string) => {
+        reviewedSource = source;
+      },
+      writeOutput: vi.fn(),
+    });
+
+    expect(result.authority.schemaVersion).toBe(POST_Q_AUTHORITY_V3_SCHEMA);
+    expect(parsePostQDeploymentStopAuthorityV3(authoritySource, {
+      candidateSha: CANDIDATE,
+      runId: CURRENT_RUN_ID,
+    })).toMatchObject({
+      currentRunId: CURRENT_RUN_ID,
+      totalWorkflowDispatchRuns: 2,
+      singleUseAuthorityExact: true,
+    });
+    expect(parsePostQDeploymentStopReviewedAuthorityV3(reviewedSource, {
+      candidateSha: CANDIDATE,
+      runId: CURRENT_RUN_ID,
+    })).toMatchObject({
+      candidateSha: CANDIDATE,
+      reviewedPullRequestNumber: 100,
+      authorizationDeadline: "2026-09-09T07:30:00.000Z",
+      workflowRunStartedAt: "2026-09-09T06:00:00Z",
+    });
+    const historyUrl = fetchImpl.mock.calls.map(([input]) => String(input)).find(
+      (url) => url.includes("/actions/workflows/353312302/runs?"),
+    );
+    expect(historyUrl).toBeDefined();
+    expect(historyUrl).not.toContain("event=");
+  });
+
+  it("rejects missing, extra, malformed, and substituted v3 ineligibility evidence", () => {
+    const parse = (value: ReturnType<typeof reviewedAuthorityV3Fixture>) =>
+      parsePostQDeploymentStopReviewedAuthorityV3(
+        `${JSON.stringify(value, null, 2)}\n`,
+        { candidateSha: CANDIDATE, runId: CURRENT_RUN_ID },
+      );
+    const timestampFields = [
+      "mergedAt", "runStartedAt", "runCompletedAt", "failedJobStartedAt",
+      "failedJobCompletedAt", "successfulBuildStepStartedAt",
+      "successfulBuildStepCompletedAt", "failedStepStartedAt",
+      "failedStepCompletedAt",
+    ] as const;
+    for (const field of timestampFields) {
+      const missing = structuredClone(reviewedAuthorityV3Fixture());
+      delete (missing.ineligibleV2 as Record<string, unknown>)[field];
+      expect(parse(missing), `missing:${field}`).toBeNull();
+      const malformed = structuredClone(reviewedAuthorityV3Fixture());
+      (malformed.ineligibleV2 as Record<string, unknown>)[field] = "invalid";
+      expect(parse(malformed), `malformed:${field}`).toBeNull();
+      for (const noncanonical of [
+        "2026-09-08T21:35:31+00:00",
+        "2026-09-08",
+        "2026-02-30T21:35:31Z",
+        "2026-09-08T24:00:00Z",
+        "2026-09-08T21:35:31.0000Z",
+      ]) {
+        const substituted = structuredClone(reviewedAuthorityV3Fixture());
+        (substituted.ineligibleV2 as Record<string, unknown>)[field] =
+          noncanonical;
+        expect(
+          parse(substituted),
+          `noncanonical:${field}:${noncanonical}`,
+        ).toBeNull();
+      }
+    }
+    for (const [field, replacement] of [
+      ["event", "workflow_dispatch"],
+      ["headBranch", "feature"],
+      ["status", "in_progress"],
+      ["conclusion", "success"],
+      ["failedJobName", "other"],
+      ["successfulBuildStepConclusion", "failure"],
+      ["failedStepName", "Build, test, and scan"],
+    ] as const) {
+      const substituted = structuredClone(reviewedAuthorityV3Fixture());
+      (substituted.ineligibleV2 as Record<string, unknown>)[field] = replacement;
+      expect(parse(substituted), `substituted:${field}`).toBeNull();
+    }
+    const extra = structuredClone(reviewedAuthorityV3Fixture());
+    (extra.ineligibleV2 as Record<string, unknown>).unexpected = true;
+    expect(parse(extra)).toBeNull();
+
+    const equality = structuredClone(reviewedAuthorityV3Fixture());
+    equality.reviewedPullRequest.mergedAt = equality.ineligibleV2.runCompletedAt;
+    equality.deadlinePolicy.derivedDeadline = "2026-09-09T09:00:00.000Z";
+    expect(parse(equality)).toBeNull();
   });
 
   it("authenticates the fresh reviewed successor and full d272-to-Q chain", async () => {
