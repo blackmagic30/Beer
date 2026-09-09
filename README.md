@@ -164,7 +164,10 @@ Venue partner demo layer:
   premium display, and growth tools. No price or offer is approved for this
   release; do not configure or advertise a live Pro amount until the future
   commercial contract is reviewed and tested.
-- Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
+- Venue manager data updates are scoped to assigned venues. Routine profile,
+  ordinary-hours, and verified beer/stock/tap/price writes persist directly;
+  safeguard-triggered or restricted changes and community submissions still go
+  through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
 
@@ -894,6 +897,11 @@ npm run check
 
 ### Venue updates do not appear on the map
 
-- Manager and user-submitted changes are pending by default.
-- Approve the pending submission or venue-manager change in admin before expecting public map updates.
-- Confirm approved rows publish into `venue_price_records`; the public map should not read pending or raw source tables directly.
+- Routine assigned-manager profile, ordinary-hours, and verified
+  beer/stock/tap/price writes appear directly after a successful save. Refresh
+  the portal first if a stale version returns `409`.
+- Community submissions and safeguard-triggered or restricted manager changes
+  remain pending; approve those in admin before expecting public map updates.
+- Confirm approved community rows and current eligible venue-supplied rows read
+  from `venue_price_records`; the public map must not read pending or raw source
+  tables directly.

@@ -85,7 +85,7 @@
         <div id="adminDashboardTasks" class="adminDashboardTaskGrid adminPanelSpan"></div>
 
         <div class="adminDashboardSplit adminPanelSpan">
-          <div class="panel adminDashboardPanel" data-commercial-admin-surface hidden>
+          <div class="panel adminDashboardPanel">
             <div class="sectionHeader">
               <div>
                 <div class="eyebrow">Pitch next</div>
@@ -96,7 +96,7 @@
             <div id="adminDashboardPitchList" class="adminDashboardPitchList"></div>
           </div>
 
-          <div class="panel adminDashboardPanel">
+          <div class="panel adminDashboardPanel" data-commercial-admin-surface hidden>
             <div class="sectionHeader">
               <div>
                 <div class="eyebrow">Leaderboard</div>
@@ -268,7 +268,7 @@
           </div>
         </section>
 
-        <section class="panel adminPanelSpan" aria-labelledby="adminReportOpsHeading">
+        <section class="panel adminPanelSpan" aria-labelledby="adminReportOpsHeading" data-commercial-admin-surface hidden>
           <div class="eyebrow">Report operations</div>
           <h2 id="adminReportOpsHeading">Generate and deliver monthly reports</h2>
           <p class="muted">Run a dry preview first. Delivery uses each venue's configured report recipients and the production delivery provider.</p>
@@ -552,7 +552,7 @@
             <label class="field">Access level
               <select id="managerAccessLevel" name="accessLevel">
                 <option value="manager">Venue manager</option>
-                <option value="counter_staff">Counter staff only</option>
+                <option value="counter_staff" data-commercial-admin-surface hidden>Counter staff only</option>
               </select>
             </label>
             <div id="managerAssignPreview" class="notice">Pick a staff account and a venue. Pint Path fills the IDs automatically.</div>
@@ -585,7 +585,7 @@
                 <select name="tierFit">
                   <option value="">Not sure yet</option>
                   <option value="basic">Free/basic</option>
-                  <option value="pro">Pro</option>
+                  <option value="pro" data-commercial-admin-surface hidden>Pro</option>
                 </select>
               </label>
               <label class="field">Last contacted
@@ -1236,12 +1236,22 @@
     }
 
     function suggestedTierForLead(lead) {
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) return "basic";
       const score = getLeadScore(lead);
       if (score >= 72 || Number(lead.requests || 0) >= 3) return "pro";
       return "basic";
     }
 
     function suggestedPitchForLead(lead) {
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        if (Number(lead.requests || 0) > 0) {
+          return "Users are already asking for this venue. Pitch verified prices and owner-controlled updates.";
+        }
+        if (lead.dataFreshness === "stale_or_missing") {
+          return "High intent but weak data. Pitch a quick setup call to make their listing accurate before competitors look better.";
+        }
+        return "Healthy discovery signal. Pitch the Free venue dashboard and owner-controlled listing updates.";
+      }
       if (Number(lead.requests || 0) > 0) {
         return "Users are already asking for this venue. Pitch verified prices, Pint Path specials, and owner-controlled updates.";
       }
@@ -1252,6 +1262,9 @@
     }
 
     function suggestedNextActionForLead(lead) {
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        return "Invite manager to claim venue dashboard";
+      }
       const tier = suggestedTierForLead(lead);
       return tier === "pro"
         ? "Offer Pro demo and Pint Path special setup"
@@ -1312,8 +1325,14 @@
       if (item.status === "partner") return 100;
       if (item.status === "interested") return 82;
       if (item.status === "contacted") return 64;
-      if (item.tierFit === "pro") return 72;
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED && item.tierFit === "pro") return 72;
       return 48;
+    }
+
+    function availableOutreachTierFit(value) {
+      if (value === "basic") return "basic";
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED && value === "pro") return "pro";
+      return "";
     }
 
     function outreachFollowUpState(item) {
@@ -1332,12 +1351,13 @@
     }
 
     function outreachDatasetAttributes(item) {
+      const tierFit = availableOutreachTierFit(item.tierFit);
       return [
         `data-venue-id="${escapeHtml(item.venueId || "")}"`,
         `data-venue-name="${escapeHtml(item.venueName || "")}"`,
         `data-suburb="${escapeHtml(item.suburb || "")}"`,
         `data-status="${escapeHtml(item.status || "lead")}"`,
-        `data-tier-fit="${escapeHtml(item.tierFit || "")}"`,
+        `data-tier-fit="${escapeHtml(tierFit)}"`,
         `data-next-action="${escapeHtml(item.nextAction || "")}"`,
         `data-last-contacted-at="${escapeHtml(item.lastContactedAt || "")}"`,
         `data-contact-name="${escapeHtml(item.contactName || "")}"`,
@@ -1347,12 +1367,16 @@
     }
 
     function stageDefaultNextAction(status, item = {}) {
-      const tierPrefix = item.tierFit === "pro" ? "Pro" : "manager";
+      const tierPrefix = COMMERCIAL_ADMIN_FEATURES_ENABLED && item.tierFit === "pro"
+        ? "Pro"
+        : "manager";
       const defaults = {
         lead: "Qualify demand, check listing freshness, and choose the pitch angle",
         contacted: "Follow up with the owner or manager in 3 days",
         interested: `Book ${tierPrefix} setup and confirm who needs access`,
-        partner: "Assign manager access and schedule the first monthly report review",
+        partner: COMMERCIAL_ADMIN_FEATURES_ENABLED
+          ? "Assign manager access and schedule the first monthly report review"
+          : "Assign manager access and schedule the first venue-data review",
         not_interested: "Park respectfully; revisit only after a fresh user demand signal",
         closed: "Closed. Keep the notes for future context",
       };
@@ -1376,6 +1400,7 @@
         const lead = leadByVenue.get(item.venueId);
         return {
           ...item,
+          tierFit: availableOutreachTierFit(item.tierFit),
           isLeadSignal: false,
           leadScore: lead ? getLeadScore(lead) : fallbackOutreachScore(item),
           venueClicks: lead?.venueClicks || 0,
@@ -1513,7 +1538,7 @@
       outreachForm.elements.venueName.value = item.venueName || "";
       outreachForm.elements.suburb.value = item.suburb || "";
       outreachForm.elements.status.value = item.status || "lead";
-      outreachForm.elements.tierFit.value = item.tierFit || "";
+      outreachForm.elements.tierFit.value = availableOutreachTierFit(item.tierFit);
       outreachForm.elements.lastContactedAt.value = item.lastContactedAt
         ? String(item.lastContactedAt).slice(0, 10)
         : "";
@@ -1533,7 +1558,7 @@
         venueName: item.venueName,
         suburb: item.suburb || null,
         status: nextStatus,
-        tierFit: item.tierFit || null,
+        tierFit: availableOutreachTierFit(item.tierFit) || null,
         nextAction: nextActionForStageTransition(item, nextStatus),
         lastContactedAt: touchDate ? todayDateInputValue() : item.lastContactedAt || null,
         contactName: item.contactName || null,
@@ -2421,7 +2446,7 @@
       outreachForm.elements.venueName.value = lead.venueName || "";
       outreachForm.elements.suburb.value = lead.suburb || "";
       outreachForm.elements.status.value = "lead";
-      outreachForm.elements.tierFit.value = lead.tierFit || "";
+      outreachForm.elements.tierFit.value = availableOutreachTierFit(lead.tierFit);
       outreachForm.elements.lastContactedAt.value = "";
       outreachForm.elements.nextAction.value = lead.nextAction || "";
       outreachForm.elements.contactName.value = "";
@@ -5159,7 +5184,7 @@
               </div>
               <div class="adminReviewCard__badges">
                 <span class="pill">${escapeHtml(String(item.status || "lead").replace("_", " "))}</span>
-                ${item.tierFit ? `<span class="pill pill--premium">${escapeHtml(String(item.tierFit).toUpperCase())}</span>` : ""}
+                ${availableOutreachTierFit(item.tierFit) ? `<span class="pill pill--premium">${escapeHtml(availableOutreachTierFit(item.tierFit).toUpperCase())}</span>` : ""}
               </div>
             </div>
             <div class="adminCrmLead__meta">
@@ -5370,6 +5395,7 @@
       const formElement = event.currentTarget;
       const form = new FormData(formElement);
       const body = Object.fromEntries(form.entries());
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) body.accessLevel = "manager";
       try {
         if (!body.userId) {
           throw new Error("Choose a staff account from the search results.");
