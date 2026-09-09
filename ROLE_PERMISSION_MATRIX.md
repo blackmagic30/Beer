@@ -1,6 +1,11 @@
 # Pint Path Role and Permission Matrix
 
-This matrix documents the beta access rules enforced by the Express business API, viewer pages, and SQLite schema. Backend checks are the source of truth; frontend hiding is only a usability layer.
+This matrix documents the approved Free bar-pilot access rules enforced by the
+Express business API, viewer pages, and canonical production runtime:
+PostgreSQL application repositories with Supabase Auth and private Storage.
+Backend checks are the source of truth; frontend hiding is only a usability
+layer. SQLite development/legacy paths and dormant commercial code are not
+execution authority for this pilot.
 
 ## Public / Anonymous
 
@@ -9,13 +14,17 @@ Can:
 - Search venues, suburbs, and beers using public preview data.
 - Use map filters that do not require exact-price access.
 - Create feedback, venue/beer requests, venue-interest requests, and wrong-price reports.
-- See the fixed free preview through `/api/business/price-records`: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
+- See the fixed free preview through `/api/business/price-records`: eligible
+  pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
 
 Cannot:
 - Upload venue data submissions.
 - Verify submissions.
 - View account pages, saved items, private submissions, admin queues, venue portal data, analytics, or monthly reports.
-- Fetch non-preview exact prices without premium/contributor/admin access, or directly read private Supabase/service-role data.
+- See public happy-hour or special rows, filters, badges, or promotional claims
+  in this release.
+- Fetch non-preview exact prices without contributor-unlocked/admin access, or
+  directly read private PostgreSQL, Supabase, or service-role data.
 
 Private data never exposed:
 - Account emails, user IDs tied to submissions, source-photo data URLs, session tokens, admin notes, security audit logs, private report internals, and exact user location.
@@ -34,16 +43,22 @@ Cannot:
 - Verify their own upload.
 - Approve/reject/fraud-flag submissions.
 - Self-award points or edit contribution totals.
-- Access admin APIs, venue portal data, the full paid/contributor price catalogue, venue analytics, or another user's private account/submission data.
+- Access admin APIs, venue portal data, the full contributor-unlocked price
+  catalogue, venue analytics, or another user's private account/submission data.
 
 Approval / validation:
 - Submissions stay `pending` until admin review.
 - Points are awarded only after approval and are capped to one approved same-user/same-venue/month contribution.
 - Fraud-flagged submissions can warn or suspend the user.
 
-## Paid Member
+## Paid Member — Deferred / Dormant
 
-Can:
+Status for the Free bar pilot: **deferred and unavailable**. Paid enrolment,
+Stripe checkout, paid map entitlements, and billing management must remain
+disabled. The behavior below describes dormant implementation only; it grants
+no current pilot access and is not an approved product claim.
+
+Dormant behavior if separately approved and enabled in a future release:
 - Everything a Free Member can do.
 - Access exact price records through the server-gated API when subscription status is `premium_monthly` or `premium_yearly` and age confirmation is present.
 - Use paid map features such as full beer search, cheapest sort, verified-only, and full happy-hour detail according to current product rules.
@@ -69,29 +84,44 @@ Cannot:
 Approval / validation:
 - Contributor unlock uses the contribution ledger, not mutable frontend totals.
 
-## Venue Tier 1: Basic
+## Venue Tier 1: Basic (Free Pilot)
 
 Can:
 - Access `/venue-portal` only when logged in, 18+ confirmed, active, role is `venue_manager`, and assigned to that venue by admin.
-- Manage only assigned venue profile, stock/beer rows, on-tap/in-stock status, prices, happy hours, deals, and specials.
+- Manage only the assigned venue's profile, ordinary opening hours, beer rows,
+  on-tap/in-stock status, and prices.
+- Capture happy-hour details for internal venue/admin operations only. These
+  records do not publish to the public website or app in this release.
 - See assigned venue listing quality, wrong-price report summaries, venue requests, current venue-supplied records, and update link.
-- Submit venue updates for admin/data-quality review through the portal submission flow.
+- Submit community-style updates or restricted changes for admin/data-quality
+  review through the portal submission flow.
 
 Cannot:
 - Access unassigned venues by URL/API manipulation.
 - Access admin dashboard or admin APIs.
 - Change their own venue membership tier through profile updates.
-- View Pro analytics or monthly report content.
+- Publish public happy-hour or special rows, or access dormant Pro specials,
+  analytics, reports, billing, counter-staff, POS, or reward tools.
 - See individual user IDs, anonymous session IDs, exact user location, raw user clickstream, account emails, or raw source-photo evidence in portal insight payloads.
 
 Publishing / validation:
-- Portal inventory/happy-hour/special rows are venue-supplied and scoped to the assigned venue.
-- High-trust public price records from community submissions still use the admin review flow.
+- Routine assigned-manager profile, ordinary-hours, and verified
+  beer/stock/tap/price writes are venue-supplied, scoped to the assigned venue,
+  and publish directly with the implemented version/conflict controls.
+- Happy-hour records remain internal-only even when active in the portal.
+- Community submissions and safeguard-triggered or restricted changes remain
+  pending until admin review. Guarded deletion bursts do not publish directly.
 - Admin should only assign verified venue managers during beta.
 
-## Venue Tier 2: Pro
+## Venue Tier 2: Pro — Deferred / Dormant
 
-Can:
+Status for the Free bar pilot: **deferred and unavailable**. Pro enrolment,
+trials, specials, venue analytics/reports, premium display, staff/counter, POS,
+billing, and reward/redemption surfaces must remain absent and their direct
+routes must fail closed. The behavior below is retained only as a description
+of dormant implementation for a separately approved future release.
+
+Dormant behavior if separately approved and enabled in a future release:
 - Everything Basic can do.
 - View privacy-safe suburb-level aggregate analytics and monthly report previews when the bucket threshold is met.
 - See own venue profile/lookups/list views/specials metrics.
@@ -129,6 +159,9 @@ Approval / validation:
 
 Current beta implementation treats data-quality missions/submissions as the challenge/points system.
 
+These are contribution points. They are separate from the deferred drink-earned
+Pint Points and 50-point Free Pint Reward implementation.
+
 Can:
 - Complete data-quality missions by submitting venue data.
 - Earn points only after admin approval.
@@ -143,11 +176,12 @@ Cannot:
 Auditability:
 - `contribution_ledger` records approved point awards with user, submission, venue, points, reason, month, and timestamp.
 
-## Report Viewers
+## Report Viewers (Admin Included; Venue Pro Deferred)
 
 Can:
 - Admins can view global reports/dashboards.
-- Assigned Pro venue managers can view only their own venue metrics and aggregate suburb trends after privacy thresholds.
+- In dormant Pro behavior only, assigned Pro venue managers would view only
+  their own venue metrics and aggregate suburb trends after privacy thresholds.
 
 Cannot:
 - Normal users or Basic venue managers cannot view paid analytics/monthly report payloads.
@@ -157,14 +191,21 @@ Cannot:
 ## Inputs Requiring Validation
 
 - Auth: email/password and Supabase session tokens.
-- Submissions: venue, observed date/time, source image/URL, beer rows, prices, tap status, happy-hour details.
+- Submissions: venue, observed date/time, source image/URL, beer rows, prices,
+  and tap status; internal venue happy-hour capture is separately validated and
+  never made public in this release.
 - Verification: target submission and result.
-- Venue portal: profile URLs, phone/socials, venue tags, beer catalog fields, ABV, prices, serving sizes, happy-hour days/times, specials.
-- Billing: plan/tier is validated server-side and entitlements come from Stripe webhook/demo/admin code paths only.
+- Venue portal: profile URLs, phone/socials, venue tags, beer catalog fields,
+  ABV, prices, serving sizes, and internal-only happy-hour days/times. Specials
+  inputs are dormant and unavailable in the Free pilot.
+- Billing (deferred/dormant): any future plan/tier must be validated server-side
+  and entitlements must come only from approved Stripe webhook/admin paths.
 - Uploads: MIME, magic bytes, size, unsafe extensions/content, and production inline storage guard.
 
 ## Known Beta Limitations
 
 - Public production onboarding uses Supabase email/password and Google OAuth with provider-confirmed email state. Apple OAuth is deferred until authorization-token revocation is implemented and tested. Local Pint Path password signup/login is limited to localhost/development and is not a production onboarding path.
-- Portal-managed stock/happy-hour rows can be displayed as venue-supplied data for assigned managers; broader trusted-public publishing and disputes still need operational policy.
+- Portal-managed verified beer/stock/tap/price rows can be displayed publicly as
+  venue-supplied data for assigned managers. Happy-hour rows remain internal;
+  broader trusted-public publishing and disputes still need operational policy.
 - Provider-side Supabase MFA verification, storage access tests, Redis provisioning, and a formal Supabase RLS audit remain in `PROD_FOLLOWUPS.md`.

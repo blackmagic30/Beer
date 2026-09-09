@@ -8,29 +8,44 @@ grant revocation, and the private
 
 The production-compatible `public.venues` relation is bootstrapped by
 `20260828010000_bootstrap_external_venue_directory.sql`. CI transactionally
-removes its three status-aware columns, reapplies that migration twice, and
-proves the exact column, constraint, index, RLS, grant, and legacy-row
-preservation contract. Other conditional legacy relations remain external and
-must not be guessed into existence to make a local test pass.
+removes its three status-aware columns, reapplies the bootstrap and
+constraint-validation migrations twice, and proves the exact column,
+constraint, index, RLS, grant, and legacy-row preservation contract. Other
+conditional legacy relations remain external and must not be guessed into
+existence to make a local test pass.
 
 ## Prerequisites
 
 - Docker Engine or Docker Desktop is running.
 - Supabase CLI `2.109.1` is installed.
+- PostgreSQL client tools provide `psql`.
 - Ports configured in `supabase/config.toml` are available.
 
-CI pins the official `supabase/setup-cli` v2.1.1 commit and requests CLI
-`2.109.1`; local validation should use the same CLI release.
+CI pins the official `supabase/setup-cli` v3.0.0 commit
+`46f7f98c7f948ad727d22c1e67fab04c223a0520` and requests CLI `2.109.1`;
+local validation should use the same CLI release. The immutable action pin and
+requested CLI version are defined by the current `supabase-database` job in
+`.github/workflows/ci.yml`.
 
 ## Run the complete local database gate
 
 From the repository root:
 
 ```sh
+export PINTPATH_LOCAL_SUPABASE_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable'
+
 supabase db start
 supabase db reset --local
-supabase db query --local \
-  --file scripts/ci/supabase-venue-directory-schema-verify.sql
+psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on \
+  --file scripts/ci/supabase-venue-directory-drift.sql
+psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on \
+  --file scripts/ci/supabase-storage-policy-drift.sql
+psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on \
+  --file supabase/migrations/20260815120455_revoke_all_direct_storage_policies.sql
+psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on \
+  --file supabase/migrations/20260815120455_revoke_all_direct_storage_policies.sql
+psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on \
+  --file scripts/ci/supabase-storage-policy-posture-verify.sql
 supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 supabase db advisors --local --type security --level warn --fail-on warn
 supabase db advisors --local --type performance --level warn --fail-on error
@@ -40,17 +55,22 @@ supabase stop --no-backup
 
 `supabase db reset --local` applies the complete migration chain again after
 startup. Repository seeding is disabled because there is no canonical Supabase
-fixture; this avoids a reset depending on a missing `supabase/seed.sql`.
+fixture; this avoids a reset depending on a missing `supabase/seed.sql`. The
+task-specific URL above is only for the isolated local Supabase database started
+by this sequence; no hosted project or access token is used.
 
-CI then seeds quoted, broad, and unrelated-bucket policies on both managed
-Storage tables, applies
+The venue-directory drift script transactionally removes the three
+status-aware columns, reapplies both the bootstrap and constraint-validation
+migrations twice, runs the schema verifier, proves legacy-row preservation, and
+rolls the fixture back. CI then seeds quoted, broad, and unrelated-bucket
+policies on both managed Storage tables, applies
 `20260815120455_revoke_all_direct_storage_policies.sql` twice, and runs the
-standalone posture verifier. This proves the actual forward migration removes
-unknown policy drift and remains idempotent; the source-level Vitest contract
-is not the sole evidence for its dynamic cleanup loop. Supabase owns the
-managed Storage tables, so user migrations cannot safely toggle their RLS
-flags. The migration and readiness checks instead fail closed if either flag
-is disabled; provider support must repair that managed-schema drift.
+standalone posture verifier. This proves the actual forward migrations repair
+the rehearsed drift and remain idempotent; source-level Vitest contracts are not
+the sole evidence. Supabase owns the managed Storage tables, so user migrations
+cannot safely toggle their RLS flags. The migration and readiness checks instead
+fail closed if either flag is disabled; provider support must repair that
+managed-schema drift.
 
 The performance advisor reports warnings for review but fails the gate only on
 errors. Security advisor warnings fail the gate. Treat every reported

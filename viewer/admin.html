@@ -33,7 +33,7 @@
         <button id="adminTab-review" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false">Review</button>
         <button id="adminTab-capture" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false">Data capture</button>
         <button id="adminTab-partners" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false">Partners</button>
-        <button id="adminTab-leaderboard" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false">Prizes</button>
+        <button id="adminTab-leaderboard" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false" data-commercial-admin-surface hidden>Prizes</button>
         <button id="adminTab-analytics" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
       </nav>
       <label class="mobileSectionPicker" for="adminMobileTabSelect">Admin section
@@ -42,7 +42,7 @@
           <option value="review">Review</option>
           <option value="capture">Data capture</option>
           <option value="partners">Partners</option>
-          <option value="leaderboard">Prizes</option>
+          <option value="leaderboard" data-commercial-admin-surface hidden>Prizes</option>
           <option value="analytics">Analytics</option>
         </select>
       </label>
@@ -72,20 +72,20 @@
           <div>
             <div class="eyebrow">Admin command centre</div>
             <h2>Run the next best task first.</h2>
-            <p class="muted">A launch-day view of what needs review, which venues are worth pitching, and what prize work needs attention.</p>
+            <p class="muted">A launch-day view of what needs review, which venues are worth pitching, and what operational work needs attention.</p>
           </div>
           <div class="adminDashboardHero__actions">
             <button class="button button--primary" type="button" data-admin-jump="review" data-admin-jump-target="#pendingSubmissions">Review submissions</button>
             <button class="button" type="button" data-admin-jump="review" data-admin-jump-target="#adminIngestionQueue">Source review</button>
             <button class="button" type="button" data-admin-jump="partners" data-admin-jump-target="#pitchReadinessPanel">Pitch venues</button>
-            <button class="button" type="button" data-admin-jump="leaderboard" data-admin-jump-target="#leaderboardPrizeForm">Prize setup</button>
+            <button class="button" type="button" data-admin-jump="leaderboard" data-admin-jump-target="#leaderboardPrizeForm" data-commercial-admin-surface hidden>Prize setup</button>
           </div>
         </div>
 
         <div id="adminDashboardTasks" class="adminDashboardTaskGrid adminPanelSpan"></div>
 
         <div class="adminDashboardSplit adminPanelSpan">
-          <div class="panel adminDashboardPanel">
+          <div class="panel adminDashboardPanel" data-commercial-admin-surface hidden>
             <div class="sectionHeader">
               <div>
                 <div class="eyebrow">Pitch next</div>
@@ -619,7 +619,7 @@
         </div>
       </section>
 
-      <section id="adminLeaderboard" class="adminSection" data-admin-tab-panel="leaderboard" role="tabpanel" hidden aria-labelledby="adminTab-leaderboard" tabindex="0">
+      <section id="adminLeaderboard" class="adminSection" data-admin-tab-panel="leaderboard" role="tabpanel" hidden aria-labelledby="adminTab-leaderboard" tabindex="0" data-commercial-admin-surface>
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Contributor prizes</div>
@@ -775,6 +775,23 @@
   </main>
 
   <script>
+    const COMMERCIAL_ADMIN_FEATURES_ENABLED =
+      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.commercialLaunchEnabled === true;
+
+    function syncCommercialAdminSurfaces() {
+      document.querySelectorAll("[data-commercial-admin-surface]").forEach((surface) => {
+        if (COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+          surface.removeAttribute("aria-hidden");
+          surface.inert = false;
+          if (!surface.matches('[data-admin-tab-panel]')) surface.hidden = false;
+          return;
+        }
+        surface.remove();
+      });
+    }
+
+    syncCommercialAdminSurfaces();
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -925,7 +942,8 @@
     let adminStatusRequestId = 0;
     let adminVenuesRequestId = 0;
     let adminDataToolsRequestId = 0;
-    const ADMIN_TAB_KEYS = ["dashboard", "review", "capture", "partners", "leaderboard", "analytics"];
+    const ADMIN_TAB_KEYS = ["dashboard", "review", "capture", "partners", "analytics"];
+    if (COMMERCIAL_ADMIN_FEATURES_ENABLED) ADMIN_TAB_KEYS.splice(4, 0, "leaderboard");
     const ADMIN_TAB_LABELS = {
       dashboard: "Dashboard",
       review: "Review",
@@ -1862,9 +1880,6 @@
         ? data.venuePartners.outreach.filter((item) => !["closed", "not_interested"].includes(String(item.status || "lead"))).length
         : 0;
       const openOutreach = Number(data.venuePartners?.totals?.openOutreach ?? pageOpenOutreach);
-      const prizesDisabled = data.leaderboardPrizes?.disabled === true
-        || data.leaderboardPrizes?.leaderboard?.disabled === true;
-      const campaign = data.leaderboardPrizes?.campaign || data.leaderboardPrizes?.leaderboard?.campaign || {};
       const totalTrust = counts.wrongPriceReports + counts.contactMessages + counts.venueRequests;
       const items = [
         {
@@ -1899,15 +1914,20 @@
           selector: "#pitchReadinessPanel",
           tone: leadCount ? "premium" : "info",
         },
-        {
+      ];
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        const prizesDisabled = data.leaderboardPrizes?.disabled === true
+          || data.leaderboardPrizes?.leaderboard?.disabled === true;
+        const campaign = data.leaderboardPrizes?.campaign || data.leaderboardPrizes?.leaderboard?.campaign || {};
+        items.push({
           label: "Prizes",
           value: prizesDisabled ? "paused" : campaign.status || "active",
           copy: prizesDisabled ? "launch flag disabled" : campaign.monthKey || "current month",
           target: "leaderboard",
           selector: "#leaderboardPrizeForm",
           tone: prizesDisabled || campaign.status !== "finalized" ? "info" : "success",
-        },
-      ];
+        });
+      }
 
       rail.innerHTML = items.map(adminFocusItemHtml).join("");
       wireAdminJumpActions(rail);
@@ -2098,7 +2118,7 @@
       wireAdminJumpActions(adminDashboardNeeds);
 
       renderDashboardPitchList(data.leads, data.venuePartners);
-      renderDashboardPrizeSummary(data.leaderboardPrizes);
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED) renderDashboardPrizeSummary(data.leaderboardPrizes);
       wireAdminJumpActions(adminDashboard);
     }
 
@@ -5520,7 +5540,9 @@
       const requestedVenuePartnerOffset = venuePartnerOffset;
       const requestedBeerCatalogOffset = adminBeerCatalogOffset;
       const venuePartnerPanelRequestId = ++venuePartnerRequestId;
-      const leaderboardPanelRequestId = ++leaderboardPrizesRequestId;
+      const leaderboardPanelRequestId = COMMERCIAL_ADMIN_FEATURES_ENABLED
+        ? ++leaderboardPrizesRequestId
+        : null;
       const beerCatalogPanelRequestId = hasActiveBeerCatalogMergeDraft()
         ? null
         : ++adminBeerCatalogReviewRequestId;
@@ -5532,7 +5554,9 @@
         ["leads", "Partner leads", "/api/business/admin/partner-leads"],
         ["queues", "Review queues", `/api/business/admin/queues?limit=${ADMIN_REVIEW_QUEUE_PAGE_SIZE}&offset=${adminReviewQueueOffset}`],
         ["venuePartners", "Venue partners", `/api/business/admin/venue-partners?limit=${VENUE_PARTNER_PAGE_SIZE}&offset=${requestedVenuePartnerOffset}`],
-        ["leaderboardPrizes", "Leaderboard prizes", "/api/business/admin/leaderboard-prizes"],
+        ...(COMMERCIAL_ADMIN_FEATURES_ENABLED
+          ? [["leaderboardPrizes", "Leaderboard prizes", "/api/business/admin/leaderboard-prizes"]]
+          : []),
         ["beerCatalog", "Beer catalogue", `/api/business/admin/beer-catalog?pendingLimit=${ADMIN_BEER_CATALOG_PAGE_SIZE}&pendingOffset=${requestedBeerCatalogOffset}&activeLimit=100&activeOffset=0`],
         ["operationalHealth", "Operational health", "/api/business/admin/operational-health"],
       ];
@@ -5544,7 +5568,7 @@
         const current = key === "venuePartners"
           ? venuePartnerPanelRequestId === venuePartnerRequestId && requestedVenuePartnerOffset === venuePartnerOffset
           : key === "leaderboardPrizes"
-            ? leaderboardPanelRequestId === leaderboardPrizesRequestId
+            ? leaderboardPanelRequestId !== null && leaderboardPanelRequestId === leaderboardPrizesRequestId
             : key === "beerCatalog"
               ? beerCatalogPanelRequestId !== null
                 && beerCatalogPanelRequestId === adminBeerCatalogReviewRequestId
@@ -5576,10 +5600,14 @@
       if (panelData.queues) renderQueues(queues);
       if (panelData.venuePartners) renderVenuePartners(venuePartners);
       if (panelData.leads && panelData.venuePartners) renderPitchReadiness(leads, venuePartners);
-      if (panelData.leaderboardPrizes) renderAdminLeaderboardPrizes(leaderboardPrizes);
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED && panelData.leaderboardPrizes) {
+        renderAdminLeaderboardPrizes(leaderboardPrizes);
+      }
       if (panelData.beerCatalog) renderPendingBeerCatalog(beerCatalog);
       const dashboardVenuePartners = panelData.venuePartners || latestAdminDashboardPayload?.venuePartners || {};
-      const dashboardLeaderboardPrizes = panelData.leaderboardPrizes || latestAdminDashboardPayload?.leaderboardPrizes || {};
+      const dashboardLeaderboardPrizes = COMMERCIAL_ADMIN_FEATURES_ENABLED
+        ? panelData.leaderboardPrizes || latestAdminDashboardPayload?.leaderboardPrizes || {}
+        : {};
       renderAdminDashboard({
         todayKpis,
         leads,
@@ -5788,22 +5816,24 @@
       });
       managerAccessLevel?.addEventListener("change", syncManagerAssignPreview);
       outreachForm.addEventListener("submit", handleOutreach);
-      leaderboardPrizeForm.addEventListener("submit", handleLeaderboardPrizeSave);
-      finalizeLeaderboardPrizeButton.addEventListener("click", handleLeaderboardPrizeFinalize);
-      adminLeaderboardVouchers.addEventListener("click", (event) => {
-        const copyButton = event.target.closest("[data-copy-voucher-reference]");
-        if (copyButton) {
-          void copyTextToClipboard(copyButton.dataset.copyVoucherReference)
-            .then(() => {
-              copyButton.textContent = "Copied";
-              MelbBeerBusiness.setStatus(statusEl, "Voucher claim reference copied.");
-            })
-            .catch((error) => MelbBeerBusiness.setStatus(statusEl, error.message || "Could not copy the claim reference.", true));
-          return;
-        }
-        const button = event.target.closest("[data-transition-reward-voucher]");
-        if (button) handleRewardVoucherTransitionRequest(button);
-      });
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        leaderboardPrizeForm.addEventListener("submit", handleLeaderboardPrizeSave);
+        finalizeLeaderboardPrizeButton.addEventListener("click", handleLeaderboardPrizeFinalize);
+        adminLeaderboardVouchers.addEventListener("click", (event) => {
+          const copyButton = event.target.closest("[data-copy-voucher-reference]");
+          if (copyButton) {
+            void copyTextToClipboard(copyButton.dataset.copyVoucherReference)
+              .then(() => {
+                copyButton.textContent = "Copied";
+                MelbBeerBusiness.setStatus(statusEl, "Voucher claim reference copied.");
+              })
+              .catch((error) => MelbBeerBusiness.setStatus(statusEl, error.message || "Could not copy the claim reference.", true));
+            return;
+          }
+          const button = event.target.closest("[data-transition-reward-voucher]");
+          if (button) handleRewardVoucherTransitionRequest(button);
+        });
+      }
       refreshAdminDataTools.addEventListener("click", loadAdminDataTools);
       adminVenueSearch.addEventListener("input", renderAdminVenueOptions);
       adminVenueSelect.addEventListener("change", () => {

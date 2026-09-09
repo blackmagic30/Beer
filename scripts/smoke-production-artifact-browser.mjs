@@ -332,6 +332,10 @@ async function renderRoute(context, origin, spec, mobile) {
 
     if (spec.name === "admin") {
       invariant(await page.locator("#adminContent").isHidden(), "Anonymous admin content became visible.");
+      invariant(
+        await page.locator("[data-commercial-admin-surface]").count() === 0,
+        "Deferred prize/reward admin controls remained in the Free admin document.",
+      );
     }
 
     await page.waitForLoadState("networkidle", { timeout: ROUTE_TIMEOUT_MS });

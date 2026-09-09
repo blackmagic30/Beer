@@ -80,6 +80,20 @@ describe("public UI hardening", () => {
     expect(pricing).not.toMatch(/checkout|premium|\bPro\b/i);
   });
 
+  it("keeps prize administration out of the Free release workbench", () => {
+    const admin = readViewer("admin.html");
+
+    expect(admin).toContain("const COMMERCIAL_ADMIN_FEATURES_ENABLED =");
+    expect(admin).toContain('document.querySelectorAll("[data-commercial-admin-surface]")');
+    expect(admin).toContain("surface.remove();");
+    expect(admin).toContain('data-admin-tab-target="leaderboard"');
+    expect(admin).toContain('data-commercial-admin-surface hidden>Prizes</button>');
+    expect(admin).toContain("if (COMMERCIAL_ADMIN_FEATURES_ENABLED) ADMIN_TAB_KEYS.splice(4, 0, \"leaderboard\")");
+    expect(admin).toContain('...(COMMERCIAL_ADMIN_FEATURES_ENABLED\n          ? [["leaderboardPrizes", "Leaderboard prizes", "/api/business/admin/leaderboard-prizes"]]');
+    expect(admin).toContain("if (COMMERCIAL_ADMIN_FEATURES_ENABLED) renderDashboardPrizeSummary");
+    expect(admin).not.toContain("what prize work needs attention");
+  });
+
   it("renders the 404 navigation without a CSP-blocked inline script", () => {
     const notFound = readViewer("404.html");
     const notFoundScript = readViewer("404.js");
