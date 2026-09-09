@@ -1,8 +1,8 @@
 # Pint Path bar-pilot closeout
 
-Checklist frozen: `2026-09-09T08:02:52Z`  
-Starting commit: `e3b0eb821d4d474776c966d94c9061375fbbe4af` (`main`, identical to `origin/main`)  
-Starting worktree: clean; no tracked or untracked changes reported by Git  
+Checklist frozen: `2026-09-09T08:02:52Z`
+Starting commit: `e3b0eb821d4d474776c966d94c9061375fbbe4af` (`main`, identical to `origin/main`)
+Starting worktree: clean; no tracked or untracked changes reported by Git
 Working branch: `codex/bar-pilot-closeout`
 
 This is the single closeout record for a finite, Free bar-pilot candidate. The
@@ -192,33 +192,121 @@ passed.
 
 ## Results and evidence
 
-Initial assessment only; acceptance verification has not yet run on the task
-candidate. Current external facts are blockers, not inherited PASS results:
+Closeout evidence collected: `2026-09-09`.
 
-- the starting SHA's current GitHub CI/readiness/native/CodeQL runs are green;
-- permanent staging is intentionally stopped and `/health`, `/startup`, and
-  `/ready` return the provider's `502` fallback;
-- production serves an older SQLite-era SHA and is outside this task's mutation
-  authority; and
-- every required item in `docs/release-evidence.json` is pending.
+- Frozen-checklist commit: `19bf9c9716be627e6498141af081d47efbdd6a12`.
+- Tested runtime candidate: `c424897636d0c85caea2626a91f1c23f407c6218`
+  (tree `fd0eb21e6c6b1db08533b60f56f7dce86fa444c4`).
+- Pull request: [#105 — Close Free bar-pilot scope gaps](https://github.com/blackmagic30/Beer/pull/105).
+- Reporting-only edits after the runtime freeze are limited to this results and
+  owner-handover record plus removal of Markdown trailing whitespace. They do
+  not change the runtime candidate above.
 
-Final per-check statuses, exact candidate identity, commands, and evidence links
-will be recorded here after the maximum three repair/verification passes.
+Pass accounting:
+
+1. Pass 1 implemented the frozen-scope repair and ran the focused UI contracts:
+   3 files and 121 tests passed.
+2. Pass 2 found three local-environment failures after `npm ci`: two checked-out
+   CI helpers were mode `0700` even though the Git index records `0755`, and the
+   workspace `.env` selected development rather than CI's test environment,
+   making one provider initialization exceed its 15-second test limit. No
+   source assertion was weakened.
+3. Pass 3 restored those two local executable modes to the indexed `0755`, set
+   `NODE_ENV=test` exactly as CI does, reran the three focused failures (3/3
+   passed), and reran the complete applicable local set. No runtime source
+   changed after the candidate freeze.
+
+### Acceptance status
+
+| ID | Status | Evidence and limits |
+| --- | --- | --- |
+| BP-01 | PASS | Start `e3b0eb8` is preserved. The final diff is confined to the frozen checklist, the Free-admin repair/test, and four corrected operational references; `git diff --check` and the final clean-status check pass. |
+| BP-02 | PASS | Node `v22.23.2`, npm `10.9.8`, Supabase CLI `2.109.1`; `npm ci` passed. `package-lock.json` SHA-256 remained `9b18e1ba2a9fa0f279ccfef94ccc449458dbcf7d953c33b533f461894ff5a724`. |
+| BP-03 | PASS | `NODE_ENV=test npm run check`: environment policy, typecheck, ESLint, format, build, server artifact smoke, 266 test files, 5,044 tests, secret scan, and deployment guards passed; 47 files/126 tests remained explicitly environment-guarded. Browser artifact smoke passed 6 desktop and 2 mobile routes. `npm run security:audit` reported no dependency advisories. |
+| BP-04 | PASS | On runtime SHA `c424897`, build/test/scan, release-readiness, Supabase, PostgreSQL 17 migration, runtime closure, Android, iOS, and CodeQL Java/Kotlin, JavaScript/TypeScript, and Swift all passed. See [CI run 34329627016](https://github.com/blackmagic30/Beer/actions/runs/34329627016), [readiness 34329627088](https://github.com/blackmagic30/Beer/actions/runs/34329627088), [native 34329627048](https://github.com/blackmagic30/Beer/actions/runs/34329627048), and [CodeQL 34329626964](https://github.com/blackmagic30/Beer/actions/runs/34329626964). The inapplicable protected iOS archive and aggregate CodeQL jobs skipped by design. |
+| BP-05 | PASS | Isolated local Supabase start/reset, venue-directory drift repair, adversarial Storage-policy drift, posture migration twice, exact posture verifier, schema lint, security/performance advisors, and all 68 pgTAP checks passed. Performance warnings were reported at the workflow's non-blocking threshold; security reported no issues. `supabase stop --no-backup` completed. |
+| BP-06 | PASS | Generated schema and frozen migration contract checks passed locally. Candidate-bound PostgreSQL `17.6` import/reconciliation, populated migration, repository, role-boundary, logical-state, backup/restore, and reviewed-price integration job passed in CI. This proves implementation and isolated CI migration, not staging or production cutover. |
+| BP-07 | BLOCKED | Local repository/HTTP durability, idempotency, atomicity, and stale-write contracts passed, including the candidate-bound PostgreSQL job. P4 has not run through the deployed candidate with real Postgres/Auth/Redis and restart, so the whole check is not PASS. |
+| BP-08 | BLOCKED | No current candidate-bound logical backup plus private Storage/tombstone restore has run in an authorized disposable staging target. Existing contracts and historical receipts are not a current restore rehearsal. |
+| BP-09 | BLOCKED | `npm run test:permissions` passed 65 focused tests (209 non-matching tests skipped), and the complete suite passed. The deployed P2-P6 API/browser role matrix has not run because permanent staging is stopped. |
+| BP-10 | BLOCKED | Session/admin/MFA contracts passed locally, but real Supabase exchange, two-session revocation, logout-all, and fresh provider-checked AAL2 admin have not run on the candidate. |
+| BP-11 | BLOCKED | Secret scan, privacy/evidence tests, local Supabase Data API/Storage posture, and browser-config checks passed. The hosted anon/user-A/user-B/service-role Storage and signed-URL matrix plus deployed network/log inspection has not run. |
+| BP-12 | BLOCKED | `npm run test:e2e:pintpath` passed 18/18 local release-readiness tests. P1/P3/P5 have not run with real staged Supabase identity and the deployed Postgres backend. |
+| BP-13 | BLOCKED | Claim/approval/assignment/isolation/revocation contracts passed locally and in PostgreSQL repository CI, but the separate-account deployed P2/P6 journey has not run. |
+| BP-14 | BLOCKED | Assigned-manager profile/hours, persistence, and `409` contracts passed locally; deployed refresh, fresh login, and service-restart evidence is absent. |
+| BP-15 | BLOCKED | Beer/stock/tap/price/bulk/removal/public-price contracts passed locally and in the candidate test suite; deployed portal-to-public P4/P5 evidence is absent. |
+| BP-16 | BLOCKED | Submission, private evidence, catalogue resolution, single publication, rejection, and contribution-point contracts passed locally; real staged Storage/provider and separate-session publication evidence is absent. |
+| BP-17 | BLOCKED | Support, wrong-price, moderation, admin, privacy, partner, and aggregate-analytics tests passed locally; P6 has not run on the deployed candidate. |
+| BP-18 | PASS | The repair removes every prize/reward admin surface from the Free document, omits the blocked prize API request and handlers, and adds a browser/static regression. Existing deferred-route denial tests, Free-scope tests, and artifact browser smoke passed. Contribution points and drink Pint Points are now explicitly separated. |
+| BP-19 | PASS | One focused enabled-scope review covered routes, repository selection, auth/MFA/assignment rechecks, RLS/Storage grants, uploads, secrets, dependencies, and the release diff. The one confirmed included-scope defect (live Free-admin prizes/request) was fixed and tested. No reproducible included-scope P0/P1 exploit was found; hosted boundary checks remain tracked under BP-09 to BP-11. |
+| BP-20 | PASS | The complete suite's injection, XSS/escaping, origin/CSRF, upload MIME/magic/size, rate-limit/fail-closed Redis, payload-bound, replay/idempotency, and sanitized-error contracts passed. No reward abuse claim is made because rewards stay disabled. |
+| BP-21 | PASS | Exact `dist` artifact build/start and `/health`, `/startup`, `/ready` smoke passed from an isolated working directory; desktop/mobile artifact smoke passed without provider calls. Development provider preview returned 25 passes, 24 non-blocking warnings, and 0 failures while redacting values; strict deployed readiness is intentionally BP-22, not inferred here. |
+| BP-22 | BLOCKED | Permanent staging remains deliberately stopped; the provider returns its explicit `502` fallback. No safe, reviewed stopped-topology repair successor exists, and therefore the candidate, real providers, routes, and P1-P6 were not deployed or exercised. |
+| BP-23 | BLOCKED | No exact-candidate two-replica, restart, rolling deploy, Redis outage, load/soak, pool-headroom, rollback-build, or topology-return receipt exists. No ad-hoc Railway mutation was attempted. |
+| BP-24 | BLOCKED | A disposable local SQLite rehearsal seeded 12 users, 3 owners, and 5 bars, then the scoped reset reduced matching accounts and venue profiles to zero; the temp fixture was removed. This does not substitute for an approved hosted Postgres fixture/reset or complete P1-P6 run. |
+| BP-25 | BLOCKED | Runtime SHA, commands, outcomes, walkthrough, limits, and owner prerequisites are recorded here and in PR #105. `npm run release:evidence` reported a valid/current schema but `launchReady=false`, 0/13 passed and 13/13 pending; strict external handover evidence is incomplete. |
+
+### Current blockers
+
+- Permanent staging is stopped. The prior stop workflow is consumed, failed in
+  evidence finalization despite one acknowledged provider stop, and explicitly
+  has `authorizesDownstream=false`. It must not be rerun.
+- The required successor must change configured topology from `us-west2:1` to
+  `asia-southeast1-eqsg3a:1` while retaining the stopped deployment. The
+  repository has no provider-verified proof that staged
+  `multiRegionConfig` plus `skipDeploys=true` creates zero deployment-history
+  events; the generic topology primitive can redeploy stale source. This is a
+  technical release blocker, not authority to experiment on permanent staging.
+- Drink Pint Points/free-pint redemption remains technically incomplete on the
+  canonical Postgres runtime and lacks approved eligibility, venue-tier,
+  identity, legal/RSA, privacy, and participating-venue rules. The three reward
+  flags remain false.
+- The local provider preview is not staging proof: it reported missing or
+  unbound Maps/Map ID, OpenAI, exact Supabase origin, Postgres/Redis authority
+  and identity pins, evidence-signing secret, admin allowlist, and recovery/
+  deletion-notice provider configuration.
+- Production was not modified. It is outside this task's authority and cannot
+  be used as candidate evidence.
 
 ## Owner-controlled prerequisites
 
 These do not authorize an operation by appearing here:
 
-1. Decide whether the bar pitch remains the approved Free pilot above. Adding
-   drink Pint Points requires written eligibility/venue-tier/identity rules,
-   Victorian liquor/RSA/privacy approval, participating-venue acceptance, and a
-   separately reviewed Postgres implementation candidate.
-2. Supply/confirm the protected permanent-staging provider authority and run
-   the existing Google Maps/Map ID, Google Places, OpenAI, Supabase key,
-   deployment, and sealed-variable sequence. The stopped staging deployment
-   cannot be restarted or replaced ad hoc.
-3. Run the exact-candidate one- then temporary two-replica staging, Auth/role,
-   private Storage, recovery, load/soak, rollback, and fixture-reset evidence.
-4. Only after those pass, separately authorize the prepared production
-   migration/deployment sequence. This task does not merge, migrate, or deploy
-   production.
+1. **Product scope:** approve the Free pilot in this document, or stop and fund
+   a separate rewards release. A rewards release needs written earning,
+   50-point redemption, staff/venue authorization, identity and replay rules;
+   Victorian liquor/RSA/privacy review; participating-venue acceptance; and a
+   separately reviewed Postgres repository/concurrency implementation. Verify
+   the Free decision by keeping all three reward/commercial flags false and
+   confirming direct reward routes remain denied.
+2. **Stopped-topology safety and authority:** in a Railway-approved disposable
+   environment or through written Railway support confirmation, prove whether
+   `environmentStageChanges(merge:false)` followed by
+   `environmentPatchCommitStaged(skipDeploys:true)` can change
+   `multiRegionConfig` without creating or starting a deployment. Then issue a
+   separate action-specific approval for the exact permanent-staging transition
+   `us-west2:1 -> 0` and `asia-southeast1-eqsg3a:0 -> 1`. Expected proof is one
+   topology change, zero new deployment/history events, and the same stopped
+   deployment/source/variables/domains. Do not rerun the consumed stop workflow,
+   use the generic direct topology mutation, or click Railway Restart/Redeploy;
+   uncertainty must leave staging stopped.
+3. **Reviewed repair and provider setup:** after prerequisite 2, implement and
+   independently review the V4-current, one-attempt stopped-topology successor.
+   Once its exact protected-`main` candidate is approved, use only the existing
+   protected GitHub Actions provider-variable, atomic Supabase-key replacement,
+   sealed-variable, and application-deployment workflows to bind the staging
+   Maps key/Map ID, Places, OpenAI, Supabase Auth/private Storage, Postgres/CA,
+   Redis, evidence-signing, and admin identities. Expected result is one healthy
+   Asia replica with `/health`, `/startup`, and `/ready` all `200` and exact SHA
+   metadata. On any mismatch, do not deploy again; retain receipts and follow
+   the workflow's fail-closed reconciliation/rollback path.
+4. **Staging evidence:** run P1-P6 with labelled accounts and data, then the
+   protected temporary two-replica/restart/Redis-outage/load/rollback sequence,
+   disposable Postgres plus private-Storage restore, and approved hosted fixture
+   reset. Verify public truth, cross-account/venue denial, revocation, RPO/RTO,
+   return to the approved topology, and zero fixture residue; fill the existing
+   `docs/release-evidence.json` process without promoting simulations to PASS.
+5. **Production later:** only after every bar-pilot blocker above is closed may
+   the owner separately review/merge and authorize the protected production
+   migration/deployment sequence. This closeout neither grants that authority
+   nor changes production records.
