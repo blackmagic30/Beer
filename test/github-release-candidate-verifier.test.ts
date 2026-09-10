@@ -24,6 +24,10 @@ const POLICY = fs.readFileSync(
   path.resolve(".github/release-required-checks.json"),
   "utf8",
 );
+const BAR_PILOT_POLICY = fs.readFileSync(
+  path.resolve(".github/bar-pilot-release-required-checks.json"),
+  "utf8",
+);
 const temporaryDirectories: string[] = [];
 
 function currentCandidateTimestamp(value: string): string {
@@ -406,12 +410,12 @@ function harness(
     name: string;
     producerCheck: string;
   };
-  const policy = JSON.parse(POLICY) as {
+  const phase = options.phase ?? "release";
+  const policy = JSON.parse(phase === "bar-pilot-staging" ? BAR_PILOT_POLICY : POLICY) as {
     phaseConsumers: Record<string, { workflowPath: string; event: "workflow_dispatch" }>;
     requiredChecks: Record<string, RequiredCheck[]>;
     requiredArtifacts: Record<string, RequiredArtifact[]>;
   };
-  const phase = options.phase ?? "release";
   const requiredChecks = [...policy.requiredChecks.base];
   const artifactRequirements = [...policy.requiredArtifacts.base];
   if (phase !== "staging" && phase !== "bar-pilot-staging") {
@@ -912,6 +916,57 @@ describe("GitHub release-candidate verifier", () => {
         ),
       ),
     ).toBeNull();
+  });
+
+  it("keeps the historical policy unchanged and copies its base requirements into the pilot policy", () => {
+    expect(crypto.createHash("sha256").update(POLICY).digest("hex")).toBe(
+      "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90",
+    );
+    const originalPolicy = parseGithubReleaseChecksPolicy(POLICY);
+    const pilotPolicy = parseGithubReleaseChecksPolicy(BAR_PILOT_POLICY);
+    expect(originalPolicy).not.toBeNull();
+    expect(pilotPolicy).not.toBeNull();
+    expect(originalPolicy.phaseConsumers["bar-pilot-staging"]).toBeUndefined();
+    expect(pilotPolicy.requiredChecks).toEqual(originalPolicy.requiredChecks);
+    expect(pilotPolicy.requiredArtifacts).toEqual(originalPolicy.requiredArtifacts);
+    expect(pilotPolicy.phaseConsumers).toEqual({
+      ...originalPolicy.phaseConsumers,
+      "bar-pilot-staging": {
+        workflowPath: ".github/workflows/deploy-bar-pilot-staging.yml",
+        event: "workflow_dispatch",
+      },
+    });
+  });
+
+  it("rejects bar pilot staging when its selected policy lacks the pilot consumer", async () => {
+    const fixture = harness({ phase: "bar-pilot-staging" });
+    const originalReadFile = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation((...args) => {
+      if (args[0] === path.resolve(".github/bar-pilot-release-required-checks.json")) return POLICY;
+      return Reflect.apply(originalReadFile, fs, args);
+    });
+    let summary = "";
+    try {
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      expect(code).toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({ ok: false, failureCode: "policy_invalid" });
+      expect(fixture.fetchImpl).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(fixture.directory, "receipt.json"))).toBe(false);
+    } finally {
+      readSpy.mockRestore();
+    }
   });
 
   it("verifies successful same-SHA checks and artifacts for every phase", async () => {
