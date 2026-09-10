@@ -627,7 +627,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('gestureHandling: "cooperative"');
     expect(html).toContain("zoomControl: false");
     expect(html).toContain("clickableIcons: false");
-    expect(html).toContain("installCommandScrollZoomAssist(map, mapElement)");
+    expect(html).toContain("installCommandScrollZoomAssist(map, mapElement, mapControls.signal)");
     expect(html).toContain('mapElement.addEventListener("wheel"');
     expect(html).toContain("if (!event.metaKey && !event.ctrlKey)");
     expect(html).toContain("PINT_PATH_VENUE_COORDINATE_BOUNDS");
