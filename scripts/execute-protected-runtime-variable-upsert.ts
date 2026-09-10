@@ -16,6 +16,11 @@ import {
   barPilotCurrentDeploymentExact,
   barPilotVariableValueExact,
 } from "./lib/bar-pilot-staging-contract.js";
+import {
+  barPilotFailedStartupInstanceExact,
+  barPilotFailedStartupRecoveryRequested,
+  readBarPilotFailedStartupCorrectionProof,
+} from "./lib/bar-pilot-failed-startup-recovery.js";
 
 export const PROTECTED_RUNTIME_VARIABLE_SCHEMA =
   "pintpath-protected-runtime-variable-upsert/v1" as const;
@@ -749,7 +754,10 @@ export async function runProtectedRuntimeVariableUpsert(
     if (before && dependencies.env.PINTPATH_BAR_PILOT_STAGING_CONFIGURATION === "true") {
       const deployments = JSON.parse(before.deploymentCanonical) as Record<string, unknown>;
       const expectedId = dependencies.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID ?? "";
-      const deploymentExact = (value: unknown) => expectedId
+      const failedStartupRecovery = barPilotFailedStartupRecoveryRequested(dependencies.env);
+      if (failedStartupRecovery) readBarPilotFailedStartupCorrectionProof(process.cwd());
+      const deploymentExact = (value: unknown) => failedStartupRecovery
+        ? barPilotFailedStartupInstanceExact(value) : expectedId
         ? barPilotCurrentDeploymentExact(value, expectedId) : barPilotStoppedDeploymentExact(value);
       checks.targetPreflightExact = checks.targetPreflightExact
         && args.target === "permanent-staging"

@@ -47,6 +47,8 @@ describe("bar pilot staging configuration", () => {
   });
   it.each([
     { GITHUB_RUN_ATTEMPT: "2" }, { GITHUB_REF: "refs/heads/pilot" }, { PINTPATH_BAR_PILOT_CANDIDATE_SHA: "b".repeat(40) },
+    { PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: "yes" },
+    { PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: "true", PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: "11111111-1111-4111-8111-111111111111" },
     { PINTPATH_BAR_PILOT_VENUE_IDS: "*" }, { PINTPATH_BAR_PILOT_VENUE_IDS: "venue,venue" },
     { PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS: "customer\nsecret" },
     { PINTPATH_BAR_PILOT_ENABLED: "true", PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS: "" },
@@ -137,5 +139,7 @@ describe("bar pilot staging configuration", () => {
     expect(deploy).not.toContain("scripts/execute-permanent-staging-app-deployment.ts");
     expect(workflow).not.toMatch(/railway (restart|redeploy|scale)/);
     expect(workflow).toContain("github:release-candidate:verify");
+    expect(configure).toContain("PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}");
+    expect(deploy).toContain("PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}");
   });
 });

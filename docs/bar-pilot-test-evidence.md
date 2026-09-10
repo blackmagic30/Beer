@@ -268,3 +268,60 @@ secret scan (**1,096 files**) and deployment guard checks all passed. Evidence:
 `/tmp/pintpath-bar-pilot-source-check.log`. Dedicated PostgreSQL/pgTAP evidence
 above remains separate from environment-gated skips; exact remote candidate
 checks and a hosted upload are still required before promotion.
+
+## Exact failed-startup recovery (2026-09-10)
+
+Protected run `34437975279` configured all eight declared staging settings and
+uploaded the exact merged candidate `1d17eaf937f1c3561f0a42a0e4e3d2d7f356999a`
+once. The build passed, but deployment `8b8bfe67-9829-4223-960f-2900d1c08c39`
+failed at the database connection identity guard before application health could
+pass. Its receipt records one acknowledged write and an uncertain reconciliation;
+that original receipt remains unchanged. No hosted acceptance is inferred.
+
+A separate read-only reconciliation bound the failed deployment's actual Railway
+`cliMessage` and snapshot to the original source-upload intent. It confirmed the
+old retained app was still stopped, staging remained at one `us-west2` replica,
+no patch or Git autodeploy was present, and production plus staging collateral
+were unchanged. Railway omitted the image digest for this terminal failed
+deployment; the pilot parser now represents that absence explicitly. Successful
+deployment still requires an immutable image and matching runtime archive
+identity on all three health routes.
+
+The database reference named the retired predecessor login. The existing
+versioned successor passed PostgreSQL 17 SCRAM authentication and verified TLS
+over the approved private endpoint with the configured CA. The read-only proof
+confirmed the intended database, restricted login, exact non-admin runtime
+membership, no database CREATE/TEMP privileges, forced RLS and runtime read
+access. The predecessor remains retired. No role, password, grant or application
+data change is needed for the connection-reference correction.
+
+The recovery workflow accepts only this exact stopped failed predecessor and
+a separately reviewed, immutable successful database identity correction
+receipt. It retains current-main checks, one new source upload, no automatic
+retry, unchanged topology/collateral, and all runtime acceptance requirements.
+The original production executor and release policy remain byte-identical.
+
+The live configuration correction subsequently passed: **one source-template
+write and one atomic paired-pin write**, both with deployments skipped. A
+provider read failed between those operations, before the pin intent or write;
+the original partial-operation receipt was preserved. The separately reviewed
+pin-only operation bound that receipt, performed fresh authentication and
+boundary checks, and completed the previously unattempted update. No source
+write was repeated. The combined terminal reports `updated`, all checks true,
+zero database mutations and zero production mutations. It also verifies that
+the retired predecessor remains disabled and the existing successor retains
+its exact restricted permissions. The secret-free receipts are retained under
+`ops/railway/evidence/bar-pilot-startup-db-*`; the recovery code pins the final
+receipt's exact bytes. This configuration proof is not a hosted application
+acceptance result.
+
+Final local recovery validation: **104/104 focused tests passed** across the
+failed-startup receipt, pilot executor/configuration and protected variable
+contracts. Typecheck, JavaScript lint, source formatting and diff whitespace
+checks passed. The production build verified all **12 required artifacts**;
+the isolated artifact runtime smoke and production/restore deployment guards
+passed. The secret scan checked **1,102 files** with no findings. Logs use
+`/tmp/pintpath-bar-pilot-failed-recovery-{tests,lint}.log` and
+`/tmp/pintpath-bar-pilot-startup-recovery-{build,artifact-smoke,scan,deploy-guard}.log`.
+Required GitHub checks and actual hosted runtime acceptance are recorded
+separately; these local results do not replace them.

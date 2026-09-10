@@ -18,10 +18,12 @@ or commercial launch. Contribution points remain a separate balance.
   required checks and the aggregate CodeQL gate passed; PR #105 is superseded
   and closed. PR #107 merged as
   `befe7fbe7c9339ee45353d34428c6d9f9d9ec80f`, fixing the observed
-  101-variable hosted configuration boundary. The source-attestation follow-up,
-  `codex/bar-pilot-source-attestation`,
-  addresses the subsequent provider metadata/CLI provenance incompatibility;
-  it does not reopen already-passing product acceptance.
+  101-variable hosted configuration boundary. PR #108 merged as
+  `1d17eaf937f1c3561f0a42a0e4e3d2d7f356999a`, adding honest CLI archive
+  provenance. The startup recovery branch, `codex/bar-pilot-startup-recovery`,
+  handles the observed failed staging startup after independently validating
+  the existing restricted database successor. It does not reopen passing
+  product acceptance.
 - Pre-existing work in `/Users/zac/Desktop/Beer` is preserved: modified closeout,
   reviewed-candidate verifier and workflow tests; untracked stopped-topology
   recovery workflow, scripts, policy, tests, and incident evidence. None of

@@ -10,6 +10,8 @@ import {
   protectedRuntimeVariableInternals,
   runProtectedRuntimeVariableUpsert,
 } from "../scripts/execute-protected-runtime-variable-upsert.js";
+import * as failedStartupRecovery from "../scripts/lib/bar-pilot-failed-startup-recovery.js";
+import { BAR_PILOT_STOPPED_DEPLOYMENT_ID } from "../scripts/lib/bar-pilot-staging-contract.js";
 
 const PROJECT = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
@@ -114,7 +116,7 @@ function metadataPage(
   };
 }
 
-async function runPagedUpsert(fetchImpl: ReturnType<typeof vi.fn>) {
+async function runPagedUpsert(fetchImpl: ReturnType<typeof vi.fn>, pilotEnv: Record<string, string> = {}) {
   const output: string[] = [];
   const evidence: string[] = [];
   const held = Buffer.from("postgresql://test-only-private-value");
@@ -127,6 +129,7 @@ async function runPagedUpsert(fetchImpl: ReturnType<typeof vi.fn>) {
       PINTPATH_RUNTIME_VARIABLE_CONFIRMATION: "UPSERT_DATABASE_MAINTENANCE_URL_IN_PERMANENT_STAGING",
       PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: "runtime-metadata-token-long-enough",
       PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: "runtime-write-token-long-enough",
+      ...pilotEnv,
     },
     cwd: process.cwd(), fetchImpl, boundaryCheck: vi.fn().mockResolvedValue(0), readValue,
     writeDurable: (_directory, _leaf, source) => { evidence.push(source); return sha256(source); },
@@ -173,6 +176,44 @@ function postgresRuntimeMetadata(
 }
 
 describe("protected runtime-variable upsert", () => {
+  it.each(["approved", "missing proof", "snapshot drift", "active predecessor"])(
+    "checks the exact failed predecessor and correction proof before pilot configuration: %s", async (condition) => {
+      const lock = failedStartupRecovery.BAR_PILOT_FAILED_STARTUP_RECOVERY;
+      const before = metadataPage([]);
+      const after = metadataPage([metadataRow(0, "DATABASE_MAINTENANCE_URL")]);
+      for (const page of [before, after]) {
+        for (const row of [page.data.targetServiceInstance, page.data.applicationServiceInstance]) {
+          Object.assign(row.latestDeployment, { id: lock.deploymentId, snapshotId: lock.snapshotId,
+            status: "FAILED", deploymentStopped: true });
+          Object.assign(row.activeDeployments[0]!, { id: BAR_PILOT_STOPPED_DEPLOYMENT_ID,
+            status: "SUCCESS", deploymentStopped: condition !== "active predecessor" });
+        }
+      }
+      if (condition === "snapshot drift") Object.assign(before.data.targetServiceInstance.latestDeployment,
+        { snapshotId: "33333333-3333-4333-8333-333333333333" });
+      const proof = vi.spyOn(failedStartupRecovery, "readBarPilotFailedStartupCorrectionProof")
+        .mockImplementation(() => {
+          if (condition === "missing proof") throw new Error("failed_startup_recovery_invalid");
+          return "a".repeat(64);
+        });
+      try {
+        const fetchImpl = vi.fn().mockResolvedValueOnce(scope()).mockResolvedValueOnce(scope())
+          .mockResolvedValueOnce(json(before))
+          .mockResolvedValueOnce(json({ data: { variableCollectionUpsert: true } }))
+          .mockResolvedValueOnce(json(after));
+        const run = await runPagedUpsert(fetchImpl, {
+          PINTPATH_BAR_PILOT_STAGING_CONFIGURATION: "true",
+          PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: "true",
+        });
+        expect(run.result).toBe(condition === "approved" ? 0 : 1);
+        expect(run.mutations).toHaveLength(condition === "approved" ? 1 : 0);
+        if (condition === "approved") {
+          expect(run.mutations[0].variables.skipDeploys).toBe(true);
+          expect(run.receipt.checks.deploymentUnchanged).toBe(true);
+        }
+      } finally { proof.mockRestore(); }
+    },
+  );
   it.each([100, 101])("reads all metadata before and after one upsert with %i existing environment variables", async (count) => {
     const rows = Array.from({ length: count }, (_, index) => metadataRow(index));
     const added = metadataRow(count, "DATABASE_MAINTENANCE_URL");

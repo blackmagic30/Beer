@@ -31,6 +31,8 @@ import type { ProductionDeploymentWorkerFencePrerequisiteVerification } from
   "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
 import { BAR_PILOT_STOPPED_DEPLOYMENT_ID, BAR_PILOT_STOPPED_SOURCE_SHA } from
   "../scripts/lib/bar-pilot-staging-contract.js";
+import * as failedStartupRecovery from
+  "../scripts/lib/bar-pilot-failed-startup-recovery.js";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const SOURCE_MANIFEST = {
@@ -623,7 +625,7 @@ describe("bar pilot fresh-source staging deployment", () => {
     runningOld?: boolean; drift?: boolean; uncertain?: boolean; wrongNonce?: boolean;
     wrongCandidate?: boolean; missingProvenance?: boolean; acknowledgedOtherId?: boolean;
     acknowledgedOldId?: boolean; wrongIntent?: boolean; explicitPatch?: boolean;
-    snapshotMismatch?: boolean; imageDrift?: boolean;
+    snapshotMismatch?: boolean; imageDrift?: boolean; missingImage?: boolean; failedUpload?: boolean;
   } = {}) {
     const exactPolicy = pilotPolicy();
     const fixture = harness(exactPolicy, { acknowledgementTimedOut: options.uncertain });
@@ -643,6 +645,13 @@ describe("bar pilot fresh-source staging deployment", () => {
       if (!before && options.explicitPatch) value.snapshot.deployment.patchId = SNAPSHOT_AFTER;
       if (!before && options.snapshotMismatch) value.snapshot.latestDeployment.snapshotId = SNAPSHOT_BEFORE;
       if (!before && options.imageDrift && calls >= 4) value.snapshot.deployment.imageDigest = `sha256:${"c".repeat(64)}`;
+      if (!before && options.missingImage) value.snapshot.deployment.imageDigest = null;
+      if (!before && options.failedUpload) {
+        value.snapshot.latestDeployment.status = "FAILED";
+        value.snapshot.latestDeployment.deploymentStopped = true;
+        value.snapshot.deployment.imageDigest = null;
+        value.snapshot.activeDeployments = [{ id: beforeId, status: "SUCCESS", deploymentStopped: true }];
+      }
       if (before && !options.current && !options.runningOld) {
         value.snapshot.latestDeployment.deploymentStopped = true;
         value.snapshot.activeDeployments[0]!.deploymentStopped = true;
@@ -749,6 +758,78 @@ describe("bar pilot fresh-source staging deployment", () => {
     expect(fixture.runCommand).toHaveBeenCalledTimes(1);
     expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(4);
   });
+  function failedStartupFixture() {
+    const fixture = pilotFixture();
+    const lock = failedStartupRecovery.BAR_PILOT_FAILED_STARTUP_RECOVERY;
+    const query = fixture.overrides.queryTarget.getMockImplementation()!;
+    let calls = 0;
+    fixture.overrides.env.PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP = "true";
+    fixture.overrides.queryTarget.mockImplementation(async (...args) => {
+      const value = await query(...args);
+      value.collateralSha256 = lock.collateralSha256;
+      if (calls++ < 2) {
+        value.snapshot.latestDeployment = {
+          id: lock.deploymentId, snapshotId: lock.snapshotId,
+          status: "FAILED", deploymentStopped: true,
+        };
+        value.snapshot.activeDeployments = [{ id: BAR_PILOT_STOPPED_DEPLOYMENT_ID,
+          status: "SUCCESS", deploymentStopped: true }];
+        Object.assign(value.snapshot.deployment, {
+          id: lock.deploymentId, snapshotId: lock.snapshotId,
+          commitHash: null, imageDigest: null, providerMessageField: "cliMessage",
+          providerMessage: `pintpath:permanent-staging:${lock.candidateSha}:${lock.intentSha256}`,
+        });
+      }
+      return value;
+    });
+    return fixture;
+  }
+  it("requires the completed immutable database correction before any failed-startup recovery write", async () => {
+    const fixture = failedStartupFixture();
+    vi.spyOn(failedStartupRecovery, "readBarPilotFailedStartupCorrectionProof")
+      .mockImplementation(() => { throw new Error("failed_startup_recovery_invalid"); });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+  });
+  it("permits one new source upload from the exact failed predecessor only after correction proof", async () => {
+    const fixture = failedStartupFixture();
+    vi.spyOn(failedStartupRecovery, "readBarPilotFailedStartupCorrectionProof")
+      .mockReturnValue("d".repeat(64));
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.runCommand.mock.calls[0]![1][0]).toBe("up");
+    const intent = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir, "deployment-intent.json"), "utf8"));
+    expect(intent.failedStartupRecovery).toMatchObject({
+      previousRunId: "34437975279", previousOutcome: "FAILED",
+      previousIntentSha256: failedStartupRecovery.BAR_PILOT_FAILED_STARTUP_RECOVERY.intentSha256,
+      correctionProofSha256: "d".repeat(64), automaticRetryAllowed: false,
+    });
+  });
+  it.each(["id", "snapshot", "message", "active", "collateral", "patch", "scope", "topology", "immediate"])(
+    "rejects failed-startup recovery when the reviewed %s changes", async (change) => {
+      const fixture = failedStartupFixture();
+      vi.spyOn(failedStartupRecovery, "readBarPilotFailedStartupCorrectionProof")
+        .mockReturnValue("d".repeat(64));
+      const query = fixture.overrides.queryTarget.getMockImplementation()!;
+      let calls = 0;
+      fixture.overrides.queryTarget.mockImplementation(async (...args) => {
+        const value = await query(...args);
+        if (calls++ === (change === "immediate" ? 1 : 0)) {
+          if (change === "id") value.snapshot.latestDeployment.id = DEPLOYMENT_BEFORE;
+          if (change === "snapshot") value.snapshot.deployment.snapshotId = SNAPSHOT_BEFORE;
+          if (change === "message") value.snapshot.deployment.providerMessage = null;
+          if (change === "active") value.snapshot.activeDeployments[0]!.deploymentStopped = false;
+          if (change === "collateral" || change === "immediate") value.collateralSha256 = "0".repeat(64);
+          if (change === "patch") value.patchEmpty = false;
+          if (change === "scope") value.tokenScopeExact = false;
+          if (change === "topology") value.configuredTopology.configuredReplicas = 2;
+        }
+        return value;
+      });
+      expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+      expect(fixture.runCommand).not.toHaveBeenCalled();
+    },
+  );
   it("waits for a new deployment identity when the old same-SHA process remains healthy", async () => {
     const fixture = pilotFixture({ current: true, oldCandidateVisibleDuringPoll: true });
     expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
@@ -771,12 +852,24 @@ describe("bar pilot fresh-source staging deployment", () => {
     expect(receipt.outcome).toBe("reconciled_success");
     expect(receipt.acknowledgement).toBe("missing_or_failed");
   });
+  it("finishes read-only reconciliation of a terminal FAILED upload without retrying or claiming success", async () => {
+    const fixture = pilotFixture({ failedUpload: true });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(4);
+    expect(fixture.overrides.probeRuntime).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir, "deployment-receipt.json"), "utf8"));
+    expect(receipt).toMatchObject({ outcome: "mutation_uncertain", writeAttempts: 1,
+      failureCode: "target_postflight_failed", acknowledgement: "received",
+      checks: { targetPostflightExact: false, deploymentExact: false,
+        runtimeHealthExact: false, runtimeStartupExact: false, runtimeReadinessExact: false } });
+  });
 
   it.each([
     { uncertain: true, wrongNonce: true }, { wrongCandidate: true },
     { missingProvenance: true }, { acknowledgedOtherId: true },
     { acknowledgedOldId: true }, { wrongIntent: true }, { explicitPatch: true },
-    { snapshotMismatch: true }, { imageDrift: true },
+    { snapshotMismatch: true }, { imageDrift: true }, { missingImage: true },
   ])("rejects mismatched upload provenance after exactly one attempt: %j", async (options) => {
     const fixture = pilotFixture(options);
     expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
@@ -834,6 +927,29 @@ describe("bar pilot fresh-source staging deployment", () => {
       raw.data.serviceInstance, raw.data.deployment);
     expect(parse()?.deployment).toMatchObject({ providerMessage: message, providerMessageField: "actualOpaqueField" });
     raw.data.deployment.meta.anotherField = message;
+    expect(parse()).toBeNull();
+  });
+
+  it("reads the real stopped FAILED response without fabricating an image or successful runtime", () => {
+    const exact = pilotPolicy();
+    const lock = failedStartupRecovery.BAR_PILOT_FAILED_STARTUP_RECOVERY;
+    const raw = JSON.parse(providerSnapshotResponse(exact, {}, null));
+    raw.data.serviceInstance.latestDeployment = {
+      id: lock.deploymentId, status: "FAILED", deploymentStopped: true, snapshotId: lock.snapshotId,
+    };
+    raw.data.serviceInstance.activeDeployments = [{ id: BAR_PILOT_STOPPED_DEPLOYMENT_ID,
+      status: "SUCCESS", deploymentStopped: true }];
+    Object.assign(raw.data.deployment, { id: lock.deploymentId, snapshotId: lock.snapshotId,
+      meta: { cliMessage: `pintpath:permanent-staging:${lock.candidateSha}:${lock.intentSha256}` } });
+    const parse = () => permanentStagingAppDeploymentExecutorInternals.parsePilotProviderSnapshot(
+      raw.data.serviceInstance, raw.data.deployment);
+    const observed = parse();
+    expect(observed?.deployment).toMatchObject({ imageDigest: null, commitHash: null });
+    expect(failedStartupRecovery.barPilotFailedStartupDeploymentExact(observed)).toBe(true);
+    raw.data.serviceInstance.latestDeployment.status = "SUCCESS";
+    expect(parse()).toBeNull();
+    raw.data.serviceInstance.latestDeployment.status = "FAILED";
+    raw.data.serviceInstance.latestDeployment.deploymentStopped = false;
     expect(parse()).toBeNull();
   });
 
