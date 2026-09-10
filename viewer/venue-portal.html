@@ -99,12 +99,13 @@
           <label class="mobileSectionPicker" for="venueMobileTabSelect">Dashboard section
             <select id="venueMobileTabSelect">
               <option value="overview" data-manager-only>Overview</option>
-              <option value="redemption" data-commercial-surface hidden>Redeem code</option>
-              <option value="profile" data-manager-only>Profile</option>
-              <option value="beers" data-manager-only>Beers / stock</option>
+              <option value="redemption" data-commercial-surface data-pilot-surface hidden>Pint Points / redemption</option>
+              <option value="history" data-commercial-surface data-pilot-surface data-manager-only hidden>History / corrections</option>
+              <option value="profile" data-manager-only>Venue details & hours</option>
+              <option value="beers" data-manager-only>Beers & prices</option>
               <option value="happy-hours" data-manager-only>Happy hours</option>
               <option value="specials" data-commercial-surface data-specials-only data-manager-only hidden>Specials planner</option>
-              <option value="staff-access" data-commercial-surface data-manager-only hidden>Staff access</option>
+              <option value="staff-access" data-commercial-surface data-pilot-surface data-manager-only hidden>Staff access</option>
               <option value="pending-reviews" data-manager-only>Pending reviews</option>
               <option value="report" data-commercial-surface data-manager-only hidden>Insights & reports</option>
               <option value="support" data-manager-only>Support</option>
@@ -112,12 +113,13 @@
           </label>
           <nav class="tabNav" role="tablist" aria-label="Bar dashboard sections">
             <button id="venueTabOverview" class="tabButton is-active" type="button" role="tab" aria-selected="true" aria-controls="venuePanelOverview" tabindex="0" data-tab="overview" data-manager-only>Overview</button>
-            <button id="venueTabRedemption" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelRedemption" tabindex="-1" data-tab="redemption" data-commercial-surface hidden>Redeem code</button>
-            <button id="venueTabProfile" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelProfile" tabindex="-1" data-tab="profile" data-manager-only>Profile</button>
-            <button id="venueTabBeers" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelBeers" tabindex="-1" data-tab="beers" data-manager-only>Beers / stock</button>
+            <button id="venueTabRedemption" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelRedemption" tabindex="-1" data-tab="redemption" data-commercial-surface data-pilot-surface hidden>Pint Points / redemption</button>
+            <button id="venueTabHistory" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelHistory" tabindex="-1" data-tab="history" data-commercial-surface data-pilot-surface data-manager-only hidden>History / corrections</button>
+            <button id="venueTabProfile" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelProfile" tabindex="-1" data-tab="profile" data-manager-only>Venue details & hours</button>
+            <button id="venueTabBeers" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelBeers" tabindex="-1" data-tab="beers" data-manager-only>Beers & prices</button>
             <button id="venueTabHappyHours" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelHappyHours" tabindex="-1" data-tab="happy-hours" data-manager-only>Happy hours</button>
             <button id="venueTabSpecials" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelSpecials" tabindex="-1" data-tab="specials" data-commercial-surface data-specials-only data-manager-only hidden>Specials planner</button>
-            <button id="venueTabStaffAccess" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelStaffAccess" tabindex="-1" data-tab="staff-access" data-commercial-surface data-manager-only hidden>Staff access</button>
+            <button id="venueTabStaffAccess" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelStaffAccess" tabindex="-1" data-tab="staff-access" data-commercial-surface data-pilot-surface data-manager-only hidden>Staff access</button>
             <button id="venueTabPendingReviews" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelPendingReviews" tabindex="-1" data-tab="pending-reviews" data-manager-only>Pending reviews</button>
             <button id="venueTabReport" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelReport" tabindex="-1" data-tab="report" data-commercial-surface data-manager-only hidden>Insights & reports</button>
             <button id="venueTabSupport" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelSupport" tabindex="-1" data-tab="support" data-manager-only>Support</button>
@@ -163,7 +165,7 @@
             </article>
           </section>
 
-          <section id="venuePanelStaffAccess" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabStaffAccess" tabindex="0" data-panel="staff-access" data-commercial-surface hidden>
+          <section id="venuePanelStaffAccess" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabStaffAccess" tabindex="0" data-panel="staff-access" data-commercial-surface data-pilot-surface hidden>
             <article class="panel">
               <div class="sectionHeader">
                 <div>
@@ -184,7 +186,7 @@
             </article>
           </section>
 
-          <section id="venuePanelRedemption" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabRedemption" tabindex="0" data-panel="redemption" data-commercial-surface hidden>
+          <section id="venuePanelRedemption" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabRedemption" tabindex="0" data-panel="redemption" data-commercial-surface data-pilot-surface hidden>
             <article class="panel staffCounterPanel" data-pint-points-feature>
               <div class="sectionHeader">
                 <div>
@@ -251,6 +253,14 @@
               <div id="pendingCounterReceipts" class="pendingCounterReceipts" hidden></div>
             </article>
 
+            <article id="pilotDemoPanel" class="panel" data-manager-only hidden>
+              <h2>Demo customer preparation</h2>
+              <p class="helperCopy">For the approved test customer only. First check their customer code above, then prepare the demonstration. These entries are labelled as test data in history.</p>
+              <div class="actionRow"><button class="button" type="button" data-pilot-threshold="49">Prepare 49 test points</button><button class="button" type="button" data-pilot-threshold="50">Reach 50 test points</button></div>
+              <button id="repeatPilotPurchaseButton" class="button" type="button">Check last purchase again</button>
+              <div id="pilotDemoStatus" class="notice" role="status" hidden></div>
+            </article>
+
             <details class="panel redemptionHeroPanel redemptionGuide" data-pint-points-feature>
               <summary>How staff codes work</summary>
               <div class="redemptionFlowGrid" aria-label="Pint Path code workflow">
@@ -277,7 +287,7 @@
               </div>
             </details>
 
-            <article class="panel">
+            <article class="panel" id="commercialDiscountPanel" hidden>
               <div class="sectionHeader">
                 <div>
                   <h2>Manual staff redemption</h2>
@@ -311,20 +321,6 @@
               <div id="discountOpsPanel" class="discountOpsPanel" style="margin-top:16px;"></div>
             </article>
 
-            <article id="reconciliationPanel" class="panel" data-manager-only>
-              <div class="sectionHeader">
-                <div>
-                  <div class="eyebrow">Transaction history</div>
-                  <h2>Reconciliation</h2>
-                  <p class="muted">Public member IDs and transaction details only. Private account information is not shown.</p>
-                </div>
-                <button id="refreshReconciliationButton" class="button button--small" type="button">Refresh history</button>
-              </div>
-              <div id="reconciliationStatus" class="reportLoadStatus muted" role="status" aria-live="polite">Loading transaction history…</div>
-              <div id="reconciliationHistory" class="grid grid--two" aria-busy="true"></div>
-              <div id="reconciliationPager" class="actionRow actionRow--compact" aria-label="Transaction history pages"></div>
-            </article>
-
             <div>
               <article class="panel" data-pint-points-feature>
                 <div class="sectionHeader">
@@ -352,6 +348,23 @@
             </div>
           </section>
 
+          <section id="venuePanelHistory" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabHistory" tabindex="0" data-panel="history" data-commercial-surface data-pilot-surface hidden>
+            <article id="reconciliationPanel" class="panel" data-manager-only>
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Transaction history</div>
+                  <h2>Pint Points history</h2>
+                  <p class="muted">Public member IDs and transaction details only. Private account information is not shown.</p>
+                </div>
+                <button id="refreshReconciliationButton" class="button button--small" type="button">Refresh history</button>
+              </div>
+              <div id="reconciliationStatus" class="reportLoadStatus muted" role="status" aria-live="polite">Loading transaction history…</div>
+              <div id="reconciliationHistory" class="grid grid--two" aria-busy="true"></div>
+              <div id="reconciliationPager" class="actionRow actionRow--compact" aria-label="Transaction history pages"></div>
+            </article>
+
+          </section>
+
           <section id="venuePanelProfile" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabProfile" tabindex="0" data-panel="profile" hidden>
             <form id="profileForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
               <div class="sectionHeader">
@@ -364,7 +377,7 @@
                   <button class="button button--primary" type="submit">Save profile</button>
                 </div>
               </div>
-              <div id="canonicalIdentityNotice" class="notice">The public venue identity is matched to Pint Path's canonical venue record. Name, address and area edits may require identity review.</div>
+              <div id="canonicalIdentityNotice" class="notice">You are editing your assigned venue listing. Contact support if this is the wrong venue.</div>
               <div class="grid grid--two">
                 <label class="field">Venue name
                   <input name="name" required />
@@ -717,7 +730,7 @@
     <p class="footerCopy">Assigned venue managers can maintain profile, opening-hour, beer, stock, and price details. Internal happy-hour records are not published in this release. Prices may change. Drink responsibly.</p>
   </main>
 
-  <dialog id="voidPintPointDialog" class="reviewDecisionDialog" data-commercial-surface hidden>
+  <dialog id="voidPintPointDialog" class="reviewDecisionDialog" data-commercial-surface data-pilot-surface hidden>
     <form id="voidPintPointForm" class="reviewDecisionDialog__panel" method="dialog">
       <div>
         <div class="eyebrow">Audited correction</div>
@@ -736,6 +749,7 @@
 
   <script>
     let currentPortal = null;
+    let lastPilotPurchase = null;
     let currentDemandPeriod = "today";
     let dashboardPreviewPlan = null;
     let premiumDashboardSection = "action_centre";
@@ -758,13 +772,14 @@
     let venueClaimSearchRequestId = 0;
     const dirtyPortalForms = new Set();
     const PORTAL_TAB_NAMES = new Set([
-      "overview", "redemption", "profile", "beers", "happy-hours", "specials",
+      "overview", "history", "redemption", "profile", "beers", "happy-hours", "specials",
       "staff-access", "pending-reviews", "report", "support",
     ]);
     const COUNTER_RECEIPT_QUEUE_KEY = "pintPath.counterReceiptQueue.v2";
     const COUNTER_RECEIPT_QUEUE_LIMIT = 20;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
-    const PINT_POINTS_REWARDS_ENABLED = viewerConfig.business?.pintPointsRewardsEnabled === true;
+    const BAR_PILOT_ENABLED = viewerConfig.business?.barPilotEnabled === true;
+    const PINT_POINTS_REWARDS_ENABLED = BAR_PILOT_ENABLED || viewerConfig.business?.pintPointsRewardsEnabled === true;
     const COMMERCIAL_LAUNCH_ENABLED = viewerConfig.business?.commercialLaunchEnabled === true;
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -865,7 +880,7 @@
     }
 
     function revealEnabledCommercialSurfaces() {
-      if (!COMMERCIAL_LAUNCH_ENABLED) return;
+      if (!COMMERCIAL_LAUNCH_ENABLED && !BAR_PILOT_ENABLED) return;
       document.querySelectorAll(`
         #venueMobileTabSelect option[data-commercial-surface],
         .tabButton[data-commercial-surface],
@@ -873,7 +888,7 @@
         #requestCodeAcceptanceButton,
         #voidPintPointDialog
       `).forEach((surface) => {
-        surface.hidden = false;
+        if (COMMERCIAL_LAUNCH_ENABLED || surface.hasAttribute("data-pilot-surface")) surface.hidden = false;
       });
     }
 
@@ -883,7 +898,7 @@
         ...(root instanceof Element && root.matches("[data-commercial-surface]") ? [root] : []),
         ...root.querySelectorAll("[data-commercial-surface]"),
       ];
-      surfaces.forEach((surface) => surface.remove());
+      surfaces.forEach((surface) => { if (!(BAR_PILOT_ENABLED && surface.hasAttribute("data-pilot-surface"))) surface.remove(); });
     }
 
     revealEnabledCommercialSurfaces();
@@ -1389,11 +1404,11 @@
     }
 
     function showTab(name, options = {}) {
-      const counterOnly = COMMERCIAL_LAUNCH_ENABLED && currentPortal?.accessLevel === "counter_staff";
+      const counterOnly = (COMMERCIAL_LAUNCH_ENABLED || BAR_PILOT_ENABLED) && currentPortal?.accessLevel === "counter_staff";
       const safeName = PORTAL_TAB_NAMES.has(name) ? name : "overview";
       const requestedName = counterOnly
         ? "redemption"
-        : !COMMERCIAL_LAUNCH_ENABLED && ["redemption", "specials", "staff-access", "report"].includes(safeName)
+        : !COMMERCIAL_LAUNCH_ENABLED && (["specials", "report"].includes(safeName) || (!currentPortal?.pilot?.enabled && ["redemption", "staff-access", "history"].includes(safeName)))
           ? "overview"
           : safeName;
       const nextName = requestedName === "specials" && !portalCanManageSpecials() ? "beers" : requestedName;
@@ -1433,14 +1448,20 @@
     }
 
     function syncPortalAccessControls(data) {
-      const counterOnly = COMMERCIAL_LAUNCH_ENABLED && data?.accessLevel === "counter_staff";
+      const counterOnly = (COMMERCIAL_LAUNCH_ENABLED || BAR_PILOT_ENABLED) && data?.accessLevel === "counter_staff";
       document.body.classList.toggle("venuePortalCounterMode", counterOnly);
       document.querySelectorAll("[data-manager-only]").forEach((element) => {
         const commercialSurfaceClosed = !COMMERCIAL_LAUNCH_ENABLED
-          && element.matches("[data-commercial-surface]");
+          && element.matches("[data-commercial-surface]")
+          && !(data?.pilot?.enabled && element.hasAttribute("data-pilot-surface"));
         element.hidden = counterOnly || commercialSurfaceClosed;
         if ("disabled" in element) element.disabled = counterOnly || commercialSurfaceClosed;
       });
+      document.querySelectorAll('.tabButton[data-pilot-surface], option[data-pilot-surface]').forEach((element) => {
+        element.hidden = !(COMMERCIAL_LAUNCH_ENABLED || data?.pilot?.enabled) || (counterOnly && element.hasAttribute("data-manager-only"));
+      });
+      const demo = document.getElementById("pilotDemoPanel");
+      if (demo) demo.hidden = !data?.pilot?.demoEnabled || counterOnly;
       if (counterOnly) showTab("redemption");
     }
 
@@ -1578,6 +1599,7 @@
     }
 
     function renderPortal(data) {
+      if (currentPortal?.selectedVenue?.venueId !== data.selectedVenue?.venueId) lastPilotPurchase = null;
       currentPortal = data;
       if (data.accessState === "invite_required" || data.accessState === "claim_required") {
         portalContent.classList.add("is-hidden");
@@ -1617,7 +1639,7 @@
       selectedVenueSummary.innerHTML = `
         <strong>${escapeHtml(profile.name)}</strong>
         <span>${escapeHtml(profile.suburb || "Melbourne")}</span>
-        <span class="pill">${escapeHtml(COMMERCIAL_LAUNCH_ENABLED ? prettyTier(profile.membershipTier) : "Free")}</span>
+        <span class="pill">${escapeHtml(COMMERCIAL_LAUNCH_ENABLED ? prettyTier(profile.membershipTier) : data.pilot?.enabled ? "Bar pilot" : "Free")}</span>
         ${COMMERCIAL_LAUNCH_ENABLED && profile.subscriptionStatus ? `<small>${escapeHtml(String(profile.subscriptionStatus).replaceAll("_", " "))}${profile.subscriptionCurrentPeriodEnd ? ` · renews/ends ${escapeHtml(MelbBeerBusiness.formatDate(profile.subscriptionCurrentPeriodEnd))}` : venueBillingManagementAvailable ? " · renewal date available in Stripe" : ""}</small>` : ""}
         ${COMMERCIAL_LAUNCH_ENABLED && data.accessLevel !== "counter_staff" && profile.membershipTier === "pro" ? venueBillingManagementAvailable
           ? '<button class="button button--small" type="button" data-manage-venue-billing data-commercial-surface aria-describedby="venueBillingStatus">Manage billing</button><div class="notice" id="venueBillingStatus" data-venue-billing-status data-commercial-surface role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>'
@@ -1633,11 +1655,11 @@
       if (venuePortalMeta) {
         const metaParts = [
           profile.suburb || data.selectedVenue?.suburb || null,
-          COMMERCIAL_LAUNCH_ENABLED && data.accessLevel === "counter_staff"
+          (COMMERCIAL_LAUNCH_ENABLED || BAR_PILOT_ENABLED) && data.accessLevel === "counter_staff"
             ? "Counter staff"
             : COMMERCIAL_LAUNCH_ENABLED
               ? prettyTier(profile.membershipTier)
-              : "Free",
+              : data.pilot?.enabled ? "Bar pilot" : "Free",
         ].filter(Boolean);
         venuePortalMeta.textContent = metaParts.join(" · ");
         venuePortalMeta.classList.toggle("is-hidden", !metaParts.length);
@@ -1647,8 +1669,8 @@
       const happyHours = data.inventory?.happyHours || [];
       const specials = data.inventory?.specials || [];
 
-      if (COMMERCIAL_LAUNCH_ENABLED && data.accessLevel === "counter_staff") {
-        renderDiscountOps(data);
+      if ((COMMERCIAL_LAUNCH_ENABLED || BAR_PILOT_ENABLED) && data.accessLevel === "counter_staff") {
+        if (COMMERCIAL_LAUNCH_ENABLED) renderDiscountOps(data);
         renderPendingCounterReceipts();
         renderDiscountSpecialChoices(data);
         renderRedemptionItemOptions(data);
@@ -1663,8 +1685,15 @@
       renderHappyHours(happyHours);
       renderDashboardSetupProgress(data);
       renderVenueDailyActions(data);
-      renderOverviewData(data);
+      document.querySelector(".venueOverviewDataGrid").hidden = Boolean(data.pilot?.enabled);
+      if (!data.pilot?.enabled) renderOverviewData(data);
       renderPendingChanges(data.pendingChanges || []);
+      if (data.pilot?.enabled) {
+        renderPendingCounterReceipts();
+        renderRedemptionItemOptions(data);
+        renderCounterStaff(data);
+        void loadVenueReconciliation(0);
+      }
       if (!COMMERCIAL_LAUNCH_ENABLED) return;
 
       renderSpecials(specials);
@@ -1718,7 +1747,7 @@
       const identityNotice = document.getElementById("canonicalIdentityNotice");
       if (identityNotice) {
         const canonicalName = currentPortal?.selectedVenue?.venueName || profile.name;
-        identityNotice.textContent = `Canonical venue: ${canonicalName || "Pint Path venue"}. Name, address and area edits do not create a new venue identity; contact support if this is the wrong place.`;
+        identityNotice.textContent = `Your listing: ${canonicalName || "Pint Path venue"}. Contact support if this is the wrong venue.`;
       }
       suppressPortalDirtyTracking = false;
       clearPortalDirtyState(profileForm);
@@ -1785,7 +1814,14 @@
       const activeHappyHours = happyHours.filter((item) => item.active !== false).length;
       const activeSpecials = specials.filter((item) => item.active !== false).length;
       const canSpecials = portalCanManageSpecials(data);
-      const setupItems = [
+      const setupItems = data.pilot?.enabled ? [
+        { label: "Venue details", helper: "Confirm venue name, address and contact details.", complete: Boolean(profile.name && profile.address && (profile.phone || profile.website || profile.instagram)), target: "profile" },
+        { label: "Opening hours", helper: "Set ordinary opening hours for each day.", complete: profile.openingHours?.format === "weekly" && Object.keys(profile.openingHours.days || {}).length === 7, target: "profile" },
+        { label: "3+ beers and prices", helper: "Add at least three current beers, serving sizes and prices.", complete: beers.filter((beer) => beer.price != null && beer.serveSize).length >= 3, target: "beers" },
+        { label: "Stock and taps", helper: "Keep on-tap and in-stock details current.", complete: beers.length >= 3 && beers.every((beer) => typeof beer.onTap === "boolean" && typeof beer.inStock === "boolean"), target: "beers" },
+        { label: "Manager / staff ready", helper: "Managers can use the counter. Invite staff here when needed.", complete: true, target: "staff-access" },
+        { label: "Test a free pint", helper: "Prove one purchase and one secure redemption before the first shift.", complete: Boolean(data.pilot.redemptionTested), target: "redemption" },
+      ] : [
         {
           label: "Profile basics",
           helper: "Name, suburb, and contact details are the trust layer.",
@@ -2491,7 +2527,7 @@
           : staleOrMissingPrices
             ? { label: "Keep prices fresh", tab: "price-refresh", copy: `${formatCount(staleOrMissingPrices)} beer row${staleOrMissingPrices === 1 ? "" : "s"} need a price check.` }
             : null,
-        happyHours.length
+        BAR_PILOT_ENABLED || happyHours.length
           ? null
           : { label: "Add internal happy hour", tab: "happy-hours", copy: "Save an internal venue-operations record for a future reviewed release; it is not public now." },
         COMMERCIAL_LAUNCH_ENABLED && data.tier?.canManageSpecials && !activeSpecials
@@ -2501,7 +2537,14 @@
           ? { label: "Review pending", tab: "pending-reviews", copy: `${formatCount(pendingCount)} change${pendingCount === 1 ? "" : "s"} waiting for admin review.` }
           : null,
       ].filter(Boolean).slice(0, 4);
-      const fallbackActions = COMMERCIAL_LAUNCH_ENABLED
+      const fallbackActions = data.pilot?.enabled
+        ? [
+            { label: "Open staff counter", tab: "redemption", copy: "Record one purchase or redeem a one-use free pint." },
+            { label: "Staff access", tab: "staff-access", copy: "Invite and remove staff for this venue." },
+            { label: "View history", tab: "history", copy: "Check point awards, redemptions and corrections." },
+            { label: "Opening hours", tab: "profile", copy: "Keep your public details and opening hours current." },
+          ]
+        : COMMERCIAL_LAUNCH_ENABLED
         ? [
             { label: "Open staff mode", tab: "redemption", copy: "Redeem Pint Path codes and record approved offers." },
             { label: "Monthly report", tab: "report", copy: "Check the venue-safe summary for this month." },
@@ -2525,7 +2568,7 @@
         { label: "Price checks", value: staleOrMissingPrices ? `${formatCount(staleOrMissingPrices)} due` : "Fresh", tone: staleOrMissingPrices ? "warning" : "success" },
         ...(COMMERCIAL_LAUNCH_ENABLED
           ? [{ label: "Specials", value: activeSpecials ? formatCount(activeSpecials) : "None", tone: activeSpecials ? "premium" : "warning" }]
-          : [{ label: "Internal hours", value: formatCount(happyHours.length), tone: happyHours.length ? "success" : "info" }]),
+          : data.pilot?.enabled ? [{ label: "Pint Points", value: "Ready", tone: "success" }] : [{ label: "Internal hours", value: formatCount(happyHours.length), tone: happyHours.length ? "success" : "info" }]),
         { label: "Quality", value: typeof quality.score === "number" ? `${formatCount(quality.score)}%` : "--", tone: quality.score >= 80 ? "success" : "info" },
       ];
 
@@ -2966,7 +3009,7 @@
         <small>${escapeHtml(result.privacyCopy || "Only the public member ID and Pint Points eligibility are shown to venue staff.")}${result.authorizationExpiresAt ? ` Authorization valid until ${escapeHtml(MelbBeerBusiness.formatDate(result.authorizationExpiresAt))}.` : ""}</small>
         <div class="actionRow actionRow--compact" aria-label="Choose one transaction workflow">
           <button class="button button--small button--primary" type="button" data-member-workflow="purchase">Record eligible purchase</button>
-          <button class="button button--small" type="button" data-member-workflow="discount">Apply active special instead</button>
+          ${COMMERCIAL_LAUNCH_ENABLED ? '<button class="button button--small" type="button" data-member-workflow="discount">Apply active special instead</button>' : ""}
         </div>
       `;
       fields.disabled = false;
@@ -3342,7 +3385,7 @@
       const limit = Number(data?.pagination?.limit || 50);
       const renderEmpty = (copy) => `<div class="emptyState">${escapeHtml(copy)}</div>`;
       history.innerHTML = `
-        <section>
+        ${COMMERCIAL_LAUNCH_ENABLED ? `<section>
           <h3>Discount redemptions <span class="pill">${formatCount(discountPage.total)} total</span></h3>
           <div class="list">
             ${discountPage.items?.length ? discountPage.items.map((item) => `
@@ -3356,7 +3399,7 @@
               </div>
             `).join("") : renderEmpty(offset ? "No discount redemptions on this page." : "No discount redemptions recorded yet.")}
           </div>
-        </section>
+        </section>` : ""}
         <section>
           <h3>Points purchases <span class="pill">${formatCount(pintPointPage.total)} total</span></h3>
           <div class="list">
@@ -3365,6 +3408,7 @@
                 <div>
                   <strong>${escapeHtml(item.itemName || "Member purchase")}</strong>
                   <div class="muted">${escapeHtml(item.publicAccountId || "Pint Path member")} · ${formatCount(item.quantity || 1)} item${Number(item.quantity) === 1 ? "" : "s"} · ${MelbBeerBusiness.formatDate(item.recordedAt)}</div>
+                  <small>${escapeHtml(item.operatorPublicAccountId || item.staffPublicAccountId || "Authorised venue staff")}</small>
                   ${item.status === "void" ? `<small>Reversed${item.voidReason ? ` · ${escapeHtml(item.voidReason)}` : ""}</small>` : ""}
                 </div>
                 <div class="actionRow actionRow--compact">
@@ -3376,10 +3420,14 @@
           </div>
         </section>
       `;
+      const rewards = data?.freePintRedemptions?.items || data?.freePintRedemptions || [];
+      history.insertAdjacentHTML("beforeend", `<section><h3>Free-pint redemptions</h3><div class="list">${rewards.length ? rewards.map((item) => `<div class="listItem dataRow"><div><strong>Free pint redeemed</strong><div class="muted">${escapeHtml(item.publicAccountId || "Pint Path member")} · ${MelbBeerBusiness.formatDate(item.redeemedAt || item.createdAt)}</div><small>${escapeHtml(item.operatorPublicAccountId || item.staffPublicAccountId || "Authorised venue staff")}</small></div><span class="pill">−50 points</span></div>`).join("") : renderEmpty("No free pints redeemed yet. Successful staff redemptions appear here.")}</div></section>`);
+      const corrections = (data?.ledger?.items || []).filter((item) => ["admin_adjustment", "drink_void", "fraud_reversal"].includes(item.type));
+      if (corrections.length) history.insertAdjacentHTML("beforeend", `<section><h3>Corrections and demo preparation</h3><div class="list">${corrections.map((item) => `<div class="listItem dataRow"><div><strong>${item.type === "admin_adjustment" ? "Demo preparation — not a purchase" : "Purchase correction"}</strong><div class="muted">${escapeHtml(item.publicAccountId || "Pint Path member")} · ${MelbBeerBusiness.formatDate(item.createdAt)}</div><small>${escapeHtml(item.description || "Audited correction")}</small></div><span class="pill">${Number(item.pointsDelta) > 0 ? "+" : ""}${Number(item.pointsDelta) || 0} points</span></div>`).join("")}</div></section>`);
       const maxTotal = Math.max(Number(discountPage.total || 0), Number(pintPointPage.total || 0));
       const pageStart = maxTotal ? offset + 1 : 0;
       const pageEnd = Math.min(offset + limit, maxTotal);
-      status.textContent = maxTotal ? `Showing ${pageStart}–${pageEnd} of up to ${formatCount(maxTotal)} transactions by category.` : "No transactions need reconciliation yet.";
+      status.textContent = maxTotal ? `Showing ${pageStart}–${pageEnd} of up to ${formatCount(maxTotal)} transactions by category.` : "No purchases yet. Record the first eligible purchase from Pint Points / redemption.";
       pager.innerHTML = `
         <button class="button button--small" type="button" data-reconciliation-offset="${Math.max(0, offset - limit)}" ${offset > 0 ? "" : "disabled"}>Previous</button>
         <button class="button button--small" type="button" data-reconciliation-offset="${offset + limit}" ${discountPage.hasMore || pintPointPage.hasMore ? "" : "disabled"}>Next</button>
@@ -4820,6 +4868,8 @@
       if (data?.account) {
         MelbBeerBusiness.setAccountContext(data.account, { isAdmin: data.isAdmin });
         nav.innerHTML = MelbBeerBusiness.renderNav("venue-portal");
+      document.getElementById("commercialDiscountPanel").hidden = !COMMERCIAL_LAUNCH_ENABLED;
+      if (BAR_PILOT_ENABLED) field(document.getElementById("memberPurchaseForm"), "quantity").innerHTML = '<option value="1">1 drink = 1 Pint Point</option>';
       }
       renderPortal(data);
       return data;
@@ -4961,6 +5011,8 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("venue-portal");
+      document.getElementById("commercialDiscountPanel").hidden = !COMMERCIAL_LAUNCH_ENABLED;
+      if (BAR_PILOT_ENABLED) field(document.getElementById("memberPurchaseForm"), "quantity").innerHTML = '<option value="1">1 drink = 1 Pint Point</option>';
       if (!PINT_POINTS_REWARDS_ENABLED) {
         document.querySelectorAll("[data-pint-points-feature]").forEach((element) => {
           element.hidden = true;
@@ -4986,6 +5038,27 @@
       const venueSupportSubmitButton = document.getElementById("venueSupportSubmitButton");
       const reportDeliveryFormElement = document.getElementById("reportDeliveryForm");
       const reportDeliveryStatusElement = document.getElementById("reportDeliveryStatus");
+      document.getElementById("repeatPilotPurchaseButton").addEventListener("click", async (event) => {
+        const status = document.getElementById("pilotDemoStatus");
+        if (!lastPilotPurchase || lastPilotPurchase.venueId !== selectedVenueId()) { MelbBeerBusiness.setStatus(status, "Record a demo purchase first. This check repeats that exact receipt.", true); return; }
+        event.currentTarget.disabled = true;
+        try {
+          const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/pint-point-drinks`, { method: "POST", body: JSON.stringify(lastPilotPurchase.payload) });
+          MelbBeerBusiness.setStatus(status, result.idempotentReplay ? "Already recorded — no duplicate Pint Point added." : result.copy || "Purchase checked.");
+        } catch (error) { MelbBeerBusiness.setStatus(status, error.message || "Could not check the purchase.", true); }
+        finally { document.getElementById("repeatPilotPurchaseButton").disabled = false; }
+      });
+      document.querySelectorAll("[data-pilot-threshold]").forEach((button) => button.addEventListener("click", async () => {
+        const status = document.getElementById("pilotDemoStatus");
+        if (!activeMemberPreviewAccountId) { MelbBeerBusiness.setStatus(status, "Check the approved demo customer's current code first.", true); return; }
+        button.disabled = true;
+        try {
+          const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/pilot-demo-threshold`, { method: "POST", body: JSON.stringify({ customerAccountId: activeMemberPreviewAccountId, target: Number(button.dataset.pilotThreshold) }) });
+          MelbBeerBusiness.setStatus(status, result.copy || "Demo points prepared. The customer's wallet updates automatically.");
+          await checkMemberCode();
+        } catch (error) { MelbBeerBusiness.setStatus(status, error.message || "Could not prepare this demo customer.", true); }
+        finally { button.disabled = false; }
+      }));
       const reconciliationPagerElement = document.getElementById("reconciliationPager");
       document.getElementById("refreshReconciliationButton")?.addEventListener("click", () => {
         void loadVenueReconciliation(0);
@@ -5009,10 +5082,10 @@
       const pendingPortalRedemption = MelbBeerBusiness.consumePendingPortalRedemption();
       const selectedPortalVenueId = urlParams.get("venueId");
       const pendingRedemptionMatchesVenue = !pendingPortalRedemption?.venueId || pendingPortalRedemption.venueId === selectedPortalVenueId;
-      const discountCodeFromQr = COMMERCIAL_LAUNCH_ENABLED
+      const discountCodeFromQr = (COMMERCIAL_LAUNCH_ENABLED || BAR_PILOT_ENABLED)
         ? urlParams.get("discountCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.discountCode : null)
         : null;
-      const freePintCodeFromQr = COMMERCIAL_LAUNCH_ENABLED && PINT_POINTS_REWARDS_ENABLED
+      const freePintCodeFromQr = PINT_POINTS_REWARDS_ENABLED
         ? urlParams.get("freePintCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.freePintCode : null)
         : null;
       const requestedTab = urlParams.get("tab");
@@ -5249,6 +5322,7 @@
               method: "POST",
               body: JSON.stringify(payload),
             });
+            if (currentPortal?.pilot?.demoEnabled) lastPilotPurchase = { venueId, payload };
             removePendingCounterReceipt(queuedReceipt.id);
             memberPurchaseForm.reset();
             resetMemberPreview({ keepStatus: true });
@@ -5424,7 +5498,7 @@
           venueTags: [...new Set([...preservedUnknownTags, ...checkedValues(venueTags)])],
           acceptsPintPathCodes: COMMERCIAL_LAUNCH_ENABLED && currentPortal?.isAdmin
             ? Boolean(field(profileForm, "acceptsPintPathCodes")?.checked)
-            : false,
+            : Boolean(BAR_PILOT_ENABLED && currentPortal?.profile?.acceptsPintPathCodes),
           active: currentPortal?.isAdmin ? field(profileForm, "active").checked : Boolean(currentPortal?.profile?.active),
           expectedUpdatedAt: currentPortal?.profile?.updatedAt || null,
         };
@@ -5691,9 +5765,9 @@
               freePintRewardStatus,
               action === "reject"
                 ? result.copy || "Free Pint Reward rejected and points released."
-                : `${result.reward || "Free Pint Reward"} confirmed for ${result.accountId}. ${result.instruction || ""}`.trim(),
+                : `FREE PINT REDEEMED — 50 Pint Points used for ${result.accountId}. This reward cannot be used again. No Pint Point earned.`,
             );
-            freePintRewardForm.reset();
+            if (action === "reject") freePintRewardForm.reset();
             await loadPortal(venueId);
           } catch (error) {
             MelbBeerBusiness.setStatus(freePintRewardStatus, error.message || "Could not process Free Pint Reward.", true);

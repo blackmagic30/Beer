@@ -20,7 +20,7 @@ describe("venue and admin remediation", () => {
     expect(portal).toContain("const preservedUnknownTags = loadedVenueTags.filter((tag) => !tagOptions.includes(tag));");
     expect(portal).toContain("venueTags: [...new Set([...preservedUnknownTags, ...checkedValues(venueTags)])]");
     expect(portal).toContain('id="publicProfilePreview"');
-    expect(portal).toContain("Canonical venue:");
+    expect(portal).toContain("Your listing:");
   });
 
   it("uses structured schedules, dedicated price verification, and evidence-backed analytics", () => {

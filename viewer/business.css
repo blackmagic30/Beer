@@ -11161,3 +11161,23 @@ body.discountPassModalOpen {
     grid-column: 1 / -1;
   }
 }
+
+/* Keep the pilot wallet readable and scannable on a customer's phone. */
+.pilotWallet { margin: 20px 0; }
+.pilotWallet progress { display: block; width: 100%; height: 16px; accent-color: var(--gold); margin: 16px 0; }
+.pilotWallet .discountPassResult { margin: 16px 0; flex-wrap: wrap; }
+.pilotWallet .discountPassResult[hidden] { display: none; }
+.pilotWallet .discountPassQr { width: 240px; height: 240px; max-width: 100%; flex-shrink: 0; }
+.pilotWallet .button { min-height: 44px; }
+.pilotWallet .listItem { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .pilotWallet .discountPassResult { flex-direction: column; align-items: center; padding: 12px; }
+  .pilotWallet .discountCode { font-size: 2.5rem; letter-spacing: 0.13em; }
+  .pilotWallet .actionRow > .button { width: 100%; }
+  .pilotWallet .sectionHeader { flex-wrap: wrap; }
+}
+.pilotWallet .button--primary:hover,
+.pilotWallet .button--premium:hover,
+.staffCounterPanel .button--primary:hover,
+#freePintRewardForm .button--premium:hover { color: #f8fafc; }
+.pilotWallet .button--premium:disabled { background: #233249; color: #e2e8f0; opacity: 1; cursor: not-allowed; }

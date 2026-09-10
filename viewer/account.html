@@ -195,7 +195,7 @@
         </div>
       </section>
 
-      <section id="counterStaffInvitations" class="panel" aria-labelledby="counterStaffInvitationsTitle" data-commercial-surface hidden>
+      <section id="counterStaffInvitations" class="panel" aria-labelledby="counterStaffInvitationsTitle" data-counter-surface hidden>
         <div class="sectionHeader">
           <div>
             <div class="eyebrow">Venue access</div>
@@ -206,7 +206,7 @@
         <div id="counterStaffInvitationList" class="list"></div>
       </section>
 
-      <section id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" data-commercial-surface hidden>
+      <section id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" data-counter-surface hidden>
         <div class="sectionHeader">
           <div>
             <div class="eyebrow">Active venue access</div>
@@ -216,6 +216,42 @@
         </div>
         <div id="counterStaffAccessList" class="list"></div>
       </section>
+
+            <section id="betaFeaturePintPoints" class="accountSectionStack pilotWallet" data-pint-points-feature hidden>
+              <article class="panel discountPassPanel accountHeroMetric accountHeroMetric--points">
+                <div class="sectionHeader">
+                  <div>
+                    <div class="eyebrow">Drink Pint Points</div>
+                    <h3 id="pintPointBalanceHero">0 / 50</h3>
+                    <p id="pintPointProgressHero" class="muted">Earn 1 Pint Point for each paid alcoholic drink recorded.</p>
+                  </div>
+                  <span id="pintPointRewardBadge" class="pill">Reward locked</span>
+                </div>
+                <progress id="pintPointProgressBar" max="50" value="0" aria-label="Progress to one free pint"></progress>
+                <p class="helperCopy">1 eligible purchased alcoholic drink earns 1 Pint Point. These are separate from contribution points.</p>
+                <div class="actionRow">
+                  <button id="refreshPintPointPassButton" class="button button--primary" type="button">Show my customer QR / code</button>
+                  <button id="refreshPintPointWalletButton" class="button" type="button">Refresh points</button>
+                </div>
+                <div id="pintPointPassResult" class="discountPassResult" hidden>
+                  <div><span class="metricLabel">Customer code</span><div id="pintPointPassCode" class="discountCode">------</div><p id="pintPointPassExpires" class="helperCopy"></p></div>
+                  <img id="pintPointPassQr" class="discountPassQr" alt="Rotating customer identity QR code" />
+                </div>
+                <div id="pintPointWalletStatus" class="notice" role="status" aria-live="polite" hidden></div>
+                <button id="freePintRewardButton" class="button button--premium" type="button" disabled>Redeem Free Pint</button>
+                <div id="freePintRewardResult" class="discountPassResult is-hidden" hidden>
+                  <div>
+                    <span class="metricLabel">Reward code</span>
+                    <div id="freePintRewardCode" class="discountCode">------</div>
+                    <p id="freePintRewardExpires" class="helperCopy"></p>
+                  </div>
+                  <img id="freePintRewardQr" class="discountPassQr" alt="Free Pint Reward QR code" />
+                </div>
+                <p class="helperCopy">50 Pint Points unlock one free pint at participating bars. Staff confirm the reward; a free pint earns no Pint Point.</p>
+                <h3>Recent Pint Points activity</h3>
+                <div id="pintPointActivity" class="list"></div>
+              </article>
+            </section>
 
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
         <nav class="settingsNav" role="tablist" aria-label="Account settings sections">
@@ -380,7 +416,7 @@
                   <div class="betaFeatureDropdown" role="menu" aria-label="Beta tools menu">
                     <button type="button" role="menuitem" data-beta-feature-target="pub-golf" data-alcohol-gamification-feature>Pub Golf</button>
                     <button type="button" role="menuitem" data-beta-feature-target="leaderboard">Leaderboard</button>
-                    <button type="button" role="menuitem" data-beta-feature-target="pint-points" data-pint-points-feature>Pint Point Wallet</button>
+                    <button type="button" role="menuitem" data-open-pint-wallet data-pint-points-feature>Pint Point Wallet</button>
                     <button type="button" role="menuitem" data-beta-feature-target="can-i-drive" data-pint-points-feature>Standard drink log</button>
                   </div>
                 </div>
@@ -443,29 +479,6 @@
               <div id="leaderboardPodium" class="leaderboardPodium"></div>
               <div id="leaderboardList" class="betaLeaderboardList"></div>
               <div id="rewardVoucherList" class="rewardVoucherList"></div>
-            </section>
-
-            <section id="betaFeaturePintPoints" class="betaFeaturePanel" data-beta-feature-panel="pint-points" data-pint-points-feature data-commercial-surface hidden>
-              <article class="panel discountPassPanel accountHeroMetric accountHeroMetric--points">
-                <div class="sectionHeader">
-                  <div>
-                    <div class="eyebrow">Pint Point Wallet</div>
-                    <h3 id="pintPointBalanceHero">0 / 50</h3>
-                    <p id="pintPointProgressHero" class="muted">Earn 1 Pint Point for each paid alcoholic drink recorded.</p>
-                  </div>
-                  <span id="pintPointRewardBadge" class="pill">Reward locked</span>
-                </div>
-                <button id="freePintRewardButton" class="button button--premium" type="button" disabled>Redeem Free Pint</button>
-                <div id="freePintRewardResult" class="discountPassResult is-hidden" hidden>
-                  <div>
-                    <span class="metricLabel">Reward code</span>
-                    <div id="freePintRewardCode" class="discountCode">------</div>
-                    <p id="freePintRewardExpires" class="helperCopy"></p>
-                  </div>
-                  <img id="freePintRewardQr" class="discountPassQr" alt="Free Pint Reward QR code" />
-                </div>
-                <p class="helperCopy">Free Pint Rewards use 50 Pint Points at affiliated bars only.</p>
-              </article>
             </section>
 
             <section id="betaFeatureCanIDrive" class="betaFeaturePanel canIDrivePanel" data-beta-feature-panel="can-i-drive" data-pint-points-feature hidden>
@@ -669,8 +682,9 @@
   <script>
     const COMMERCIAL_LAUNCH_ENABLED =
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.commercialLaunchEnabled === true;
-    const PINT_POINTS_REWARDS_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&
-      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.pintPointsRewardsEnabled === true;
+    const BAR_PILOT_ENABLED = window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.barPilotEnabled === true;
+    const PINT_POINTS_REWARDS_ENABLED = BAR_PILOT_ENABLED || (COMMERCIAL_LAUNCH_ENABLED &&
+      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.pintPointsRewardsEnabled === true);
     const ALCOHOL_GAMIFICATION_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.alcoholGamificationEnabled === true;
     const CONSUMER_PAID_ENROLLMENT_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&
@@ -1199,6 +1213,12 @@
 
     function invalidateAccountBoundUi() {
       state.accountUiEpoch += 1;
+      activePilotReward = null;
+      activePilotPassExpiresAt = null;
+      lastPilotDrinkRecordId = undefined;
+      $("pintPointPassResult").hidden = true;
+      $("pintPointPassCode").textContent = "------";
+      $("pintPointPassQr").removeAttribute("src");
       refreshAccountRequestId += 1;
       mfaStateRequestId += 1;
       accountSessionsRequestId += 1;
@@ -3417,7 +3437,7 @@
     function renderCounterStaffInvitations(invitations) {
       const section = $("counterStaffInvitations");
       const list = $("counterStaffInvitationList");
-      if (!COMMERCIAL_LAUNCH_ENABLED) {
+      if (!COMMERCIAL_LAUNCH_ENABLED && !BAR_PILOT_ENABLED) {
         section.hidden = true;
         list.innerHTML = "";
         return;
@@ -3465,7 +3485,7 @@
     function renderCounterStaffAssignments(assignments) {
       const section = $("counterStaffAccess");
       const list = $("counterStaffAccessList");
-      if (!COMMERCIAL_LAUNCH_ENABLED) {
+      if (!COMMERCIAL_LAUNCH_ENABLED && !BAR_PILOT_ENABLED) {
         section.hidden = true;
         list.innerHTML = "";
         return;
@@ -3487,6 +3507,78 @@
           </div>
         `;
       }).join("");
+    }
+
+    let activePilotReward = null;
+    let activePilotPassExpiresAt = null;
+    let lastPilotDrinkRecordId;
+    let walletRefreshPending = false;
+
+    function renderPintPointWallet(wallet) {
+      const section = $("betaFeaturePintPoints");
+      section.hidden = !PINT_POINTS_REWARDS_ENABLED || !wallet;
+      if (section.hidden) return;
+      const latestDrinkId = wallet.recentDrinkRecords?.[0]?.id || null;
+      if (activePilotPassExpiresAt && lastPilotDrinkRecordId !== undefined && latestDrinkId !== lastPilotDrinkRecordId) {
+        activePilotPassExpiresAt = null;
+        $("pintPointPassResult").hidden = true;
+        $("pintPointPassCode").textContent = "------";
+        $("pintPointPassQr").removeAttribute("src");
+        MelbBeerBusiness.setStatus($("pintPointWalletStatus"), "Purchase recorded. Show a fresh customer code for your next purchase.");
+      }
+      lastPilotDrinkRecordId = latestDrinkId;
+      const balance = Number(wallet.balance ?? wallet.available ?? 0);
+      const threshold = Number(wallet.threshold || 50);
+      const activeCode = (wallet.activeCodes || []).find((item) => item.status === "active" && Date.parse(item.expiresAt) > Date.now());
+      const hasPresentation = activePilotReward && (wallet.activeCodes || []).some((item) => item.id === activePilotReward.id && item.status === "active");
+      $("pintPointBalanceHero").textContent = `${balance} / ${threshold}`;
+      $("pintPointProgressBar").max = threshold;
+      $("pintPointProgressBar").value = Math.min(threshold, balance);
+      $("pintPointProgressHero").textContent = activeCode
+        ? "Your one-use reward is ready for staff to confirm. The 50 points are held until it is used or expires."
+        : wallet.rewardAvailable ? "Your free pint is available at participating pilot bars."
+        : `${Math.max(0, threshold - Number(wallet.available || 0))} Pint Point${threshold - Number(wallet.available || 0) === 1 ? "" : "s"} until your free pint.`;
+      $("pintPointRewardBadge").textContent = activeCode ? "Reward ready for staff" : wallet.rewardAvailable ? "Free pint available" : "Reward locked";
+      const button = $("freePintRewardButton");
+      button.disabled = Boolean(activeCode) || !wallet.rewardAvailable;
+      button.textContent = activeCode ? "Reward code active" : wallet.rewardAvailable ? "Show free-pint reward" : "50 Pint Points needed";
+      if (activePilotReward && !hasPresentation) {
+        const wasRedeemed = (wallet.rewardRedemptions || []).some((item) => item.rewardCodeId === activePilotReward.id || item.codeId === activePilotReward.id)
+          || Number(wallet.lifetimeRedeemed || 0) > activePilotReward.lifetimeRedeemed;
+        activePilotReward = null;
+        $("freePintRewardResult").hidden = true;
+        $("freePintRewardResult").classList.add("is-hidden");
+        $("freePintRewardCode").textContent = "------";
+        $("freePintRewardQr").removeAttribute("src");
+        MelbBeerBusiness.setStatus($("pintPointWalletStatus"), wasRedeemed
+          ? "FREE PINT REDEEMED — 50 Pint Points used. This reward cannot be used again."
+          : "That reward code expired or was closed. Your current points are shown above.");
+        if (wasRedeemed) $("pintPointRewardBadge").textContent = "Free pint redeemed";
+      } else if (activeCode && !activePilotReward) {
+        MelbBeerBusiness.setStatus($("pintPointWalletStatus"), `A reward code is active on the screen that created it. It expires ${MelbBeerBusiness.formatDate(activeCode.expiresAt)}; after expiry you can create a new code here.`);
+      }
+      const activities = wallet.recentLedger || [];
+      $("pintPointActivity").innerHTML = activities.length ? activities.slice(0, 10).map((item) => {
+        const amount = Number(item.pointsDelta ?? item.points ?? item.delta ?? 0);
+        const labels = { reward_redeemed: "Free pint redeemed", drink_void: "Purchase corrected", admin_adjustment: "Demo preparation", reward_code_created: "Reward ready for staff", reward_code_expired: "Reward code expired", reward_cancelled: "Reward cancelled", reward_rejected: "Reward declined" };
+        const label = labels[item.type] || (amount < 0 ? "Purchase corrected" : "Pint Points earned");
+        return `<div class="listItem dataRow"><div><strong>${escapeHtml(label)}</strong><div class="muted">${escapeHtml(item.description || item.reason || item.note || "")}</div><small>${MelbBeerBusiness.formatDate(item.createdAt || item.recordedAt)}</small></div><span class="pill">${amount > 0 ? "+" : ""}${amount}</span></div>`;
+      }).join("") : '<div class="emptyState">No drink Pint Points yet. Show your customer code to staff when you purchase an eligible drink at a participating bar.</div>';
+    }
+
+    async function refreshPintPointWallet(manual = false) {
+      if (!PINT_POINTS_REWARDS_ENABLED || !state.accountData || document.hidden || walletRefreshPending) return;
+      const requestedContext = captureAccountUiContext();
+      walletRefreshPending = true;
+      try {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/account");
+        if (!isAccountUiContextCurrent(requestedContext)) return;
+        state.accountData.pintPoints = result.pintPoints;
+        renderPintPointWallet(result.pintPoints);
+        if (manual && !activePilotReward) MelbBeerBusiness.setStatus($("pintPointWalletStatus"), "Points and reward status are up to date.");
+      } catch (error) {
+        if (isAccountUiContextCurrent(requestedContext)) MelbBeerBusiness.setStatus($("pintPointWalletStatus"), Number(error.status) === 401 ? "Sign in again to refresh your points." : "Could not refresh points. Check your connection and tap Refresh points.", true);
+      } finally { walletRefreshPending = false; }
     }
 
     function renderDashboard(result) {
@@ -3521,25 +3613,7 @@
         account.emailVerifiedAt ? accessBadge("Email verified", "verified") : accessBadge("Email pending", "pending"),
       ].join("");
       $("savingsMetric").textContent = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
-      const pintPoints = result.pintPoints || null;
-      if (PINT_POINTS_REWARDS_ENABLED && pintPoints) {
-        const pintPointThreshold = pintPoints.threshold || 50;
-        $("pintPointBalanceHero").textContent = `${pintPoints.available ?? 0} / ${pintPointThreshold}`;
-        $("pintPointProgressHero").textContent = (pintPoints.pointsUntilReward || 0) > 0
-          ? `${pintPoints.pointsUntilReward} Pint Points until your Free Pint Reward.`
-          : "Free Pint Reward available at affiliated bars.";
-        $("pintPointRewardBadge").textContent = pintPoints.rewardAvailable ? "Ready" : "Locked";
-        const freePintRewardButton = $("freePintRewardButton");
-        if (freePintRewardButton) {
-          freePintRewardButton.disabled = !pintPoints.rewardAvailable;
-          freePintRewardButton.textContent = pintPoints.rewardAvailable ? "Redeem Free Pint" : "50 Pint Points needed";
-        }
-        const freePintRewardResult = $("freePintRewardResult");
-        if (freePintRewardResult) {
-          freePintRewardResult.hidden = true;
-          freePintRewardResult.classList.add("is-hidden");
-        }
-      }
+      renderPintPointWallet(result.pintPoints);
       const discountPassButton = $("refreshDiscountPassButton");
       if (discountPassButton) {
         discountPassButton.disabled = !result.discounts?.eligible;
@@ -4023,6 +4097,38 @@
           element.inert = true;
         });
       }
+      if (PINT_POINTS_REWARDS_ENABLED) {
+        $("refreshPintPointWalletButton").addEventListener("click", () => void refreshPintPointWallet(true));
+        document.querySelectorAll("[data-open-pint-wallet]").forEach((button) => button.addEventListener("click", () => $("betaFeaturePintPoints").scrollIntoView({ behavior: "smooth" })));
+        $("refreshPintPointPassButton").addEventListener("click", async () => {
+          const button = $("refreshPintPointPassButton");
+          const context = captureAccountUiContext();
+          try {
+            setLoading(button, true, "Preparing code…");
+            const pass = await MelbBeerBusiness.apiFetch(BAR_PILOT_ENABLED ? "/api/business/account/pint-point-pass" : "/api/business/account/discount-pass", { method: "POST", body: "{}" });
+            if (!isAccountUiContextCurrent(context)) return;
+            activePilotPassExpiresAt = pass.expiresAt;
+            $("pintPointPassCode").textContent = pass.code;
+            $("pintPointPassQr").src = pass.qrDataUrl;
+            $("pintPointPassExpires").textContent = `Show this live code to staff. Expires ${MelbBeerBusiness.formatDate(pass.expiresAt)}.`;
+            $("pintPointPassResult").hidden = false;
+          } catch (error) {
+            if (isAccountUiContextCurrent(context)) MelbBeerBusiness.setStatus($("pintPointWalletStatus"), error.message || "Could not prepare your code. Try again.", true);
+          } finally { if (isAccountUiContextCurrent(context)) setLoading(button, false); }
+        });
+        window.setInterval(() => {
+          if (activePilotPassExpiresAt && Date.parse(activePilotPassExpiresAt) <= Date.now()) {
+            activePilotPassExpiresAt = null;
+            $("pintPointPassResult").hidden = true;
+            $("pintPointPassQr").removeAttribute("src");
+            $("pintPointPassCode").textContent = "------";
+            MelbBeerBusiness.setStatus($("pintPointWalletStatus"), "Customer code expired. Tap Show my customer QR / code for a fresh one.");
+          }
+          void refreshPintPointWallet();
+        }, 5000);
+        window.addEventListener("focus", () => void refreshPintPointWallet());
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshPintPointWallet(); });
+      }
       if (WEB_EMAIL_AUTH_ENABLED) {
         document.querySelectorAll("[data-local-email-auth]").forEach((element) => {
           element.hidden = false;
@@ -4223,6 +4329,11 @@
             body: "{}",
           });
           if (!isAccountUiContextCurrent(requestedContext)) return;
+          activePilotReward = {
+            id: reward.rewardCodeId || reward.wallet?.activeCodes?.find((item) => item.status === "active")?.id,
+            lifetimeRedeemed: Number(reward.wallet?.lifetimeRedeemed || 0),
+          };
+          if (reward.wallet) renderPintPointWallet(reward.wallet);
           $("freePintRewardCode").textContent = reward.code;
           $("freePintRewardQr").src = reward.qrDataUrl;
           $("freePintRewardResult").hidden = false;

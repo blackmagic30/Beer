@@ -3289,6 +3289,7 @@ function installCookieConsent() {
       backdrop.remove();
       banner.remove();
       returnFocus?.focus?.();
+      window.dispatchEvent(new Event("pintpath:cookie-consent-settled"));
     }
   };
 

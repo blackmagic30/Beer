@@ -5069,8 +5069,14 @@
       `;
     }
 
-    async function openVenueDetailOverlay(record, source = "marker") {
+    async function openVenueDetailOverlay(record, source = "marker", consentSettled = false) {
       if (!record) {
+        return;
+      }
+      if (!consentSettled && !window.MelbBeerBusiness.getCookieConsentDecision()) {
+        window.addEventListener("pintpath:cookie-consent-settled", () => {
+          void openVenueDetailOverlay(record, source, true);
+        }, { once: true });
         return;
       }
 
@@ -6315,7 +6321,7 @@
       const confidence = beer.confidenceLabel
         ? beer.confidenceLabel.replaceAll("_", " ")
         : null;
-      const source = beer.sourceType || "community source";
+      const source = beer.sourceType === "venue_manager_portal" ? "Venue update" : String(beer.sourceType || "Community source").replaceAll("_", " ");
       const verified = beer.lastVerifiedAt ? `Last verified ${formatDateLabel(beer.lastVerifiedAt) || "recently"}` : "Verification pending";
 
       return [confidence, verified, source].filter(Boolean).join(" · ");
@@ -6496,7 +6502,9 @@
 
     function getBusinessBeerKey(record) {
       const normalized = toSearchKey(record.normalizedBeerId || record.beerName || record.id);
-      return normalized ? normalized.replace(/\s+/g, "_") : `business_${String(record.id || "unknown").replace(/[^a-z0-9]+/gi, "_")}`;
+      const beerKey = normalized ? normalized.replace(/\s+/g, "_") : `business_${String(record.id || "unknown").replace(/[^a-z0-9]+/gi, "_")}`;
+      const servingSize = toSearchKey(record.servingSize || "pint").replace(/\s+/g, "_");
+      return servingSize === "pint" ? beerKey : `${beerKey}__${servingSize}`;
     }
 
     function isPackagedBusinessServing(servingSize) {
@@ -6890,7 +6898,7 @@
       const explicitBeerQuery = beerSearchEl.value.trim();
       const canUseBeerQuery = Boolean(
         explicitBeerQuery &&
-        (businessAccess.hasFullAccess || isFreePreviewBeerQuery(explicitBeerQuery)),
+        (businessAccess.canUseBeerSearch || businessAccess.hasFullAccess || isFreePreviewBeerQuery(explicitBeerQuery)),
       );
       const beerQuery = canUseBeerQuery ? explicitBeerQuery : "";
 
@@ -7317,7 +7325,7 @@
       const previousValue = beerSearchEl.value.trim() || pendingBeerSearchValue;
       const allLabels = getUniqueBeerLabels(rows);
       const freeLabels = FREE_PREVIEW_BEER_CHIPS.map((beer) => beer.label);
-      const hasFullBeerAccess = Boolean(businessAccess.hasFullAccess);
+      const hasFullBeerAccess = Boolean(businessAccess.canUseBeerSearch || businessAccess.hasFullAccess);
       const selectableLabels = hasFullBeerAccess ? allLabels : freeLabels;
       const selectedValue = getMatchingBeerOptionValue(selectableLabels, previousValue);
       const upgradeMarkup = hasFullBeerAccess

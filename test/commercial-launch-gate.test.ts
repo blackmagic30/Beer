@@ -62,10 +62,12 @@ describe("commercial launch gate", () => {
     expect(accountResume).toContain("Paid subscriptions are not available in the current Free release.");
     expect(accountResume).not.toContain("Existing subscriptions can still be managed or cancelled");
     expect(accountHtml).toContain("const COMMERCIAL_LAUNCH_ENABLED =");
-    expect(accountHtml).toContain("const PINT_POINTS_REWARDS_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&");
+    expect(accountHtml).toContain("const PINT_POINTS_REWARDS_ENABLED = BAR_PILOT_ENABLED || (COMMERCIAL_LAUNCH_ENABLED &&");
+    expect(accountHtml).toContain("if (!COMMERCIAL_LAUNCH_ENABLED && !BAR_PILOT_ENABLED)");
+    expect(readRepoFile("src/config/env.ts")).toContain("BAR_PILOT_ENABLED: booleanFromEnv.default(false)");
     expect(accountHtml).toContain('COMMERCIAL_LAUNCH_ENABLED ? "Freemium" : "Free"');
     expect(accountHtml).toContain('accountDiscountFeature accountHeroMetric accountHeroMetric--special" data-commercial-surface hidden');
-    expect(accountHtml).toContain('id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" data-commercial-surface hidden');
+    expect(accountHtml).toContain('id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" data-counter-surface hidden');
     expect(accountHtml).toContain('id="discountPassModal" class="discountPassModal" role="dialog" aria-modal="true" aria-labelledby="discountPassModalTitle" data-commercial-surface hidden');
     expect(accountHtml).toContain('id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta"');
     expect(accountHtml).toContain('aria-selected="false" data-commercial-surface hidden>Beta tools</button>');
@@ -96,7 +98,7 @@ describe("commercial launch gate", () => {
     expect(venuePortalHtml).toContain("syncCommercialCheckoutControls");
     expect(venuePortalHtml).toContain("removeDeferredCommercialSurfaces");
     expect(venuePortalHtml).toContain("new MutationObserver");
-    expect(venuePortalHtml).toContain("surfaces.forEach((surface) => surface.remove())");
+    expect(venuePortalHtml).toContain('if (!(BAR_PILOT_ENABLED && surface.hasAttribute("data-pilot-surface"))) surface.remove()');
     const portalInitialization = venuePortalHtml.slice(
       venuePortalHtml.indexOf("revealEnabledCommercialSurfaces();"),
       venuePortalHtml.indexOf('window.addEventListener("DOMContentLoaded"'),
@@ -133,8 +135,8 @@ describe("commercial launch gate", () => {
     expect(upgradeActionRenderer.indexOf("if (!COMMERCIAL_LAUNCH_ENABLED)"))
       .toBeLessThan(upgradeActionRenderer.indexOf('return `<button class="${escapeHtml(className)}"'));
     expect(upgradeActionRenderer).toContain('return ""');
-    expect(venuePortalHtml).toContain('data-panel="redemption" data-commercial-surface hidden');
-    expect(venuePortalHtml).toContain('data-panel="staff-access" data-commercial-surface hidden');
+    expect(venuePortalHtml).toContain('data-panel="redemption" data-commercial-surface data-pilot-surface hidden');
+    expect(venuePortalHtml).toContain('data-panel="staff-access" data-commercial-surface data-pilot-surface hidden');
     expect(venuePortalHtml).toContain('data-panel="specials" data-commercial-surface hidden');
     expect(venuePortalHtml).toContain('data-panel="report" data-commercial-surface hidden');
     expect(venuePortalHtml).toContain("if (!COMMERCIAL_LAUNCH_ENABLED) return;");
@@ -147,6 +149,7 @@ describe("commercial launch gate", () => {
     expect(portalAccessSync).toContain("!COMMERCIAL_LAUNCH_ENABLED");
     expect(portalAccessSync).toContain('element.matches("[data-commercial-surface]")');
     expect(portalAccessSync).toContain("element.hidden = counterOnly || commercialSurfaceClosed");
+    expect(portalAccessSync).toContain('data?.pilot?.enabled && element.hasAttribute("data-pilot-surface")');
 
     const paidTerms = termsHtml.slice(
       termsHtml.indexOf("<h2>9. Paid access and billing</h2>"),
