@@ -83,6 +83,12 @@ describe.skipIf(!configuredAdminUrl)("pilot fixture on restricted canonical Post
     expect(await access.getVenueAssignment({ userId: "demo-staff", venueId: PILOT_DEMO_VENUE_ID, activeOnly: true }))
       .toMatchObject({ accessLevel: "counter_staff" });
     const inventory = new VenueInventoryRepository(database);
+    expect((await inventory.getBarProfile(PILOT_DEMO_VENUE_ID))?.openingHours).toMatchObject({
+      format: "weekly", timezone: "Australia/Melbourne", days: {
+        mon: { open: true, openTime: "12:00", closeTime: "23:00" },
+        sun: { open: true, openTime: "12:00", closeTime: "23:00" },
+      },
+    });
     const beers = await inventory.listBarBeers(PILOT_DEMO_VENUE_ID);
     expect(beers).toHaveLength(3);
     expect(beers.every(beer => beer.price && beer.serveSize === "pint" && beer.onTap && beer.inStock)).toBe(true);

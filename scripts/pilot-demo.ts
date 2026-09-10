@@ -123,8 +123,8 @@ export async function preparePilotDemo(input: {
       address: "120 Brunswick Street, Fitzroy VIC", suburb: "Fitzroy", area: "Inner North",
       phone: null, website: null, instagram: null,
       description: "Isolated PintPath pilot demonstration venue. Not a real public listing.",
-      openingHours: Object.fromEntries(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map(day =>
-        [day, { open: true, openTime: "12:00", closeTime: "23:00" }])),
+      openingHours: { format: "weekly", timezone: "Australia/Melbourne", days: Object.fromEntries(["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map(day =>
+        [day, { open: true, openTime: "12:00", closeTime: "23:00" }])) },
       venueTags: ["pilot-demo"], membershipTier: "basic", highlightedName: false, premiumBadge: null, promoted: false,
       featuredSpecialEligible: false, acceptsPintPathCodes: true, active: true, expectedUpdatedAt: profile?.updatedAt ?? null, now });
     await identity.upsertVenueLocationCache({ venueId: PILOT_DEMO_VENUE_ID, venueName: PILOT_DEMO_NAME, suburb: "Fitzroy",
