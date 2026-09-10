@@ -34,11 +34,13 @@ import { SourceEvidenceObjectRepository } from "../../src/db/source-evidence-obj
 import { SourceEvidenceRetentionRepository } from "../../src/db/source-evidence-retention.repository.js";
 import { VenuePendingChangeRepository } from "../../src/db/venue-pending-change.repository.js";
 import { VenueDataReadRepository } from "../../src/db/venue-data-read.repository.js";
+import { trackPostgresPoolShutdown } from "./postgres-pool-shutdown.js";
 
 /** Test-only: rejects hosted destinations and selects the normal runtime role. */
 export class PilotLoopbackDatabase implements SqlDatabase {
   readonly dialect = "postgres" as const;
   private readonly pool: Pool;
+  private readonly closePool: () => Promise<void>;
   private readonly active = new AsyncLocalStorage<{ client: PoolClient; next: number }>();
   private completedQueries = 0;
   constructor(connectionString: string, private readonly options: {
@@ -57,6 +59,7 @@ export class PilotLoopbackDatabase implements SqlDatabase {
       connectionTimeoutMillis: options.connectionTimeoutMs ?? 10000,
       types: sqlDatabaseInternals.createPostgresTypeOverrides(),
       options: "-c role=pintpath_runtime -c search_path=pintpath_app,pg_catalog -c statement_timeout=30000 -c lock_timeout=10000" });
+    this.closePool = trackPostgresPoolShutdown(this.pool);
   }
   private bindings(values: unknown[]): SqlBindings {
     return values.length === 1 && typeof values[0] === "object" && values[0] !== null
@@ -103,7 +106,7 @@ export class PilotLoopbackDatabase implements SqlDatabase {
       finally { client.release(); }
     };
   }
-  async close() { await this.pool.end(); }
+  async close() { await this.closePool(); }
   metrics() { return { dialect: this.dialect, totalConnections: this.pool.totalCount,
     idleConnections: this.pool.idleCount, waitingRequests: this.pool.waitingCount,
     completedQueries: this.completedQueries, failedQueries: 0, transactionFailures: 0, lastQueryDurationMs: null }; }

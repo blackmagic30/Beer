@@ -26,7 +26,11 @@ or commercial launch. Contribution points remain a separate balance.
   successor. The hosted smoke then exposed a public price-feed failure and
   hidden active-map list controls on mobile. The follow-up branch,
   `codex/bar-pilot-hosted-smoke-fixes`, addresses only those failures and the
-  protected replacement of the now-running staging candidate.
+  protected replacement of the now-running staging candidate. PR #110 merged
+  as `64677e28d1b8740634a2d9c684fa69a57757e333`; its first main CI run exposed
+  a test-database teardown error after all 13 points assertions passed. The
+  `codex/bar-pilot-pg-test-cleanup` follow-up corrects that test lifecycle
+  before any staging replacement, without changing application behavior.
 - Pre-existing work in `/Users/zac/Desktop/Beer` is preserved: modified closeout,
   reviewed-candidate verifier and workflow tests; untracked stopped-topology
   recovery workflow, scripts, policy, tests, and incident evidence. None of
