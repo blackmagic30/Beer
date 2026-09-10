@@ -1,6 +1,6 @@
 # pint-path
 
-`pint-path` is a production-minded Node.js + TypeScript app for Melbourne beer-price discovery. The current full-scale public launch scope is the Free web experience, contributor account flow, Free venue portal, admin review workflow, server-gated price/submission APIs, and an iOS app. Pricing, paid enrolment, trials, Pro, rewards, counter/redemption/POS, public happy-hour discovery, report delivery, and Android are deferred.
+`pint-path` is a Node.js + TypeScript app for Melbourne beer-price discovery. The current candidate targets the first 2–5 bars: venue management and public discovery, plus drink Pint Points and a 50-point one-use free-pint reward for explicitly enrolled pilot venues. See the [finite pilot acceptance record](docs/bar-pilot-ready.md) and [bar demo runbook](docs/venue-pilot-runbook.md) for tested status and preparation. Paid enrolment, trials, Pro, POS, public happy-hour discovery, report delivery, Android and the full public launch remain deferred.
 
 ## Production architecture status
 
@@ -35,7 +35,7 @@ Use two different pre-production systems: permanent integrated staging for routi
   - `partial`
   - `needs_review`
   - `failed`
-- Retains dormant business-model code for later evaluation, but the current release exposes no paid, trial, Pro, reward, redemption, counter, POS, public happy-hour, or report-delivery mode.
+- Explicit pilot allowlists enable staff purchases, drink Pint Points, one-use rewards and auditable corrections independently of payments. Broad commercial/reward/gamification flags stay disabled.
 
 ## Main Routes
 

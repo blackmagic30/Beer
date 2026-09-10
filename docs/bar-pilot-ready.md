@@ -41,22 +41,22 @@ retest. A passing area is not re-audited without a later regression.
 | ID | Acceptance area | Status / evidence |
 | --- | --- | --- |
 | PILOT-01 | Source/PR inspection, isolated candidate, no unrelated changes | PASS; source record above |
-| PILOT-02 | Claim, independent approval, manager assignment, staff invitation and revocation | Existing venue contracts passed; pilot staff validation pending |
+| PILOT-02 | Claim, independent approval, manager assignment, staff invitation and revocation | PASS locally; existing venue contracts and real PostgreSQL pilot role/revocation tests |
 | PILOT-03 | Profile/hours/3+ beer rows/size/stock/price/create/edit/delete | Existing scoped venue tests passed |
 | PILOT-04 | Consumer publication, review boundary, stale-write conflict, cross-venue isolation | Existing scoped venue tests passed |
-| PILOT-05 | Canonical PostgreSQL drink ledger, contribution separation, audit associations | IN PROGRESS |
-| PILOT-06 | Eligible purchase +1, invalid purchase denied, retry/idempotency +0 | IN PROGRESS |
-| PILOT-07 | Rotating identity expiry/session binding/server validation | IN PROGRESS |
-| PILOT-08 | Threshold 50, below-threshold denial, reward visibly available | IN PROGRESS |
-| PILOT-09 | Atomic one-use redemption, exactly -50, zero award, replay/concurrent denial | IN PROGRESS |
-| PILOT-10 | Append-only reversal/history and correct balance | IN PROGRESS |
-| PILOT-11 | Limited pilot entitlement, no Pro/payment requirement, role/venue isolation | IN PROGRESS |
-| PILOT-12 | Understandable manager setup/staff/history/reward/error/empty screens | IN PROGRESS |
-| PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | IN PROGRESS |
-| PILOT-14 | Connected browser publication/award/reward/redemption/history updates | IN PROGRESS |
-| PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | IN PROGRESS |
+| PILOT-05 | Canonical PostgreSQL drink ledger, contribution separation, audit associations | PASS; restricted-role PostgreSQL integration |
+| PILOT-06 | Eligible purchase +1, invalid purchase denied, retry/idempotency +0 | PASS; eight-way duplicate award records one point; signed receipt reuse adds zero |
+| PILOT-07 | Rotating identity expiry/session binding/server validation | PASS; invalid, expired, replaced, consumed and revoked-session identities denied |
+| PILOT-08 | Threshold 50, below-threshold denial, reward visibly available | PASS locally; PostgreSQL threshold tests and connected mobile wallet |
+| PILOT-09 | Atomic one-use redemption, exactly -50, zero award, replay/concurrent denial | PASS; eight concurrent requests across two staff yield one success, balance zero |
+| PILOT-10 | Append-only reversal/history and correct balance | PASS; backend invariants and browser reversal, original transaction retained with linked correction |
+| PILOT-11 | Limited pilot entitlement, no Pro/payment requirement, role/venue isolation | PASS; pilot runs with old commercial/reward/gamification flags false; protected route and cross-venue tests |
+| PILOT-12 | Understandable manager setup/staff/history/reward/error/empty screens | PASS local browser; setup checklist, role-specific actions, clear redemption and correction states |
+| PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | PASS at 390×844 in Chromium; actual iPhone/hosted Google ceremony remains owner verification |
+| PILOT-14 | Connected browser publication/award/reward/redemption/history updates | PASS; 21 checks against real PostgreSQL, zero page exceptions |
+| PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | PASS tooling and local fixture; hosted setup awaits legitimate Google identities |
 | PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | IN PROGRESS |
-| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | NOT RUN; app stopped (HTTP 502) |
+| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | IN PROGRESS deployment; authenticated hosted loop awaits owner sign-in (staging Auth has zero users, identities and sessions) |
 | PILOT-18 | Real iPhone, real bar/eligible purchase, owner legal and staff approval | OWNER_ACTION_REQUIRED; only after software acceptance |
 | PILOT-19 | Candidate commits, PR, clean worktree, exact test evidence and handoff | IN PROGRESS |
 
@@ -71,6 +71,47 @@ retest. A passing area is not re-audited without a later regression.
 - Environment contracts: **149 passed**, including explicit pilot allowlists,
   independent paid-feature flags, approval-reference boundary and production
   rejection of demo threshold access.
+- Drink-points PostgreSQL integration: **13 passed** with the real application
+  service/router and a restricted, non-superuser, non-`BYPASSRLS` database role.
+  Focused backend, authorization and release contracts: **287 passed**.
+- Existing Supabase migrations remain unchanged. An isolated reset and drift
+  rehearsals passed; database lint and security advisor returned zero issues,
+  and **68 pgTAP checks across five files passed**. Existing performance warnings
+  are outside the finite pilot scope.
+- Read-only staging Supabase inspection found zero users, identities and sessions.
+  Hosted Google identities were not fabricated, and no hosted sign-in or connected
+  acceptance is claimed from local password-based fixtures.
+- Connected paired-browser acceptance: **21 passed**, zero page exceptions;
+  mobile viewport **390×844**, touch enabled, scale factor 3. Evidence is in
+  `/tmp/pintpath-pilot-browser-evidence/results.json` and the adjacent
+  `iphone-wallet.png`, `iphone-venue.png`, `iphone-venue-beers.png`, and
+  `manager-history.png`. The screenshots were visually inspected. Focused UI,
+  commercial-gating, serving-size and wallet regressions: **147 passed**.
+  Real browser findings fixed were distinct serving sizes collapsing into one
+  row, an anonymous venue-link/cookie-dialog conflict, and low-contrast wallet
+  hover/locked controls. No redesign was needed.
+
+## Runtime and owner boundaries
+
+The canonical pilot uses PostgreSQL and explicit `BAR_PILOT_ENABLED` plus
+`BAR_PILOT_VENUE_IDS`. Paid plans and the previous broad rewards/gamification
+flags remain disabled. Real venue enrolment is separate from demo access.
+`BAR_PILOT_DEMO_ENABLED` and `BAR_PILOT_DEMO_CUSTOMER_IDS` limit test credits to
+the isolated labelled staging fixture. The public customer API cannot set a
+balance, and ordinary staff cannot choose arbitrary point values.
+
+The customer identity lasts five minutes, belongs to the authenticated session,
+and is consumed by a new purchase. An identical signed purchase retry returns
+the prior result; a new transaction requires a fresh customer identity.
+Redemption is a separate one-use reward operation. A correction appends history
+and cannot make the balance negative; spent points cannot be reversed until
+sufficient points are available.
+
+The live production site is a separate older candidate and was not promoted by
+this work. Staging deployment and authenticated acceptance must be recorded
+separately. Google sign-in, real iPhone/camera use, physical purchases and bar
+staff practice are not proven by desktop Chromium emulation. Alcohol-promotion
+approval remains an owner action; passing software tests is not legal approval.
 
 ## Deferred
 
