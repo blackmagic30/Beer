@@ -325,3 +325,74 @@ passed. The secret scan checked **1,102 files** with no findings. Logs use
 `/tmp/pintpath-bar-pilot-startup-recovery-{build,artifact-smoke,scan,deploy-guard}.log`.
 Required GitHub checks and actual hosted runtime acceptance are recorded
 separately; these local results do not replace them.
+
+## Hosted runtime recovery and public smoke (2026-09-10)
+
+Merged candidate `cfd8a534336623fdb8e7a9bcc3a22e1b3bff774b` passed all eight
+required main checks and three required artifact digests. Main CI `34443225030`
+passed **5,221 tests**, with 154 gated skips; dedicated PostgreSQL Pint Points
+passed **13/13**, Supabase passed **68**, and artifact browser checks passed
+**six desktop and two mobile routes**. The secret scan checked **1,102 files**;
+dependency audit reported zero vulnerabilities. CodeQL workflow `34443225024`
+and its three uploaded language analyses succeeded. The optional aggregate
+check was absent on this push, not counted as a pass or invented as a new gate.
+
+Protected deployment [34444953562](https://github.com/blackmagic30/Beer/actions/runs/34444953562)
+completed all eight configuration settings and **one acknowledged source
+upload**. The receipt outcome is `deployed`; all deployment checks passed.
+The intent hash, archive identity, exact staging scope, disabled maintenance,
+and `/health`, `/startup`, `/ready` responses matched. Production and staging
+collateral were unchanged, with staging still one `us-west2` replica.
+
+The actual public browser smoke then found two scoped failures rather than
+declaring the site ready from health alone:
+
+- `/api/business/price-records` returned a safe generic HTTP 500. A `limit=1`
+  probe succeeded in 13.85 seconds; the unseeded demo-venue query returned an
+  empty HTTP 200 in 1.47 seconds. Normal price batches enqueue many identity
+  lookups against the intentionally bounded two-connection runtime pool.
+- When the map was active, the mobile venue rail started closed and its
+  `Visible now` opener remained hidden. The existing map-fallback path had
+  opened the rail automatically, so earlier fallback tests did not cover this
+  condition. The minimal visibility/tap-target fix passed **eight focused
+  tests** and **nine rendered 390×844 checks**, with no overflow or exceptions.
+
+The failed report is preserved at
+`/tmp/pintpath-bar-pilot-hosted-evidence-0hfmmX/public-smoke.json`. The private
+read-only harness now permits only the observed Google Maps `GetViewportInfo`
+POST read request; application writes remain blocked. It also keeps PASS status
+separate from HTTP status. No forced click or skipped list assertion conceals
+the mobile failure. The follow-up candidate must pass its own hosted smoke;
+Google sign-in and authenticated hosted acceptance remain owner prerequisites.
+
+The price-feed regression reproduced the queued identity failure, then the
+same failure in per-submission evidence reads after identity batching. The
+scoped correction batches both reads while keeping the two-connection budget,
+alias depth/cycle validation, publication rules, evidence privacy and cursors.
+The complete service regression uses **400 PostgreSQL price rows**, two-hop
+aliases, mixed evidence presence, two anonymous pages and delayed queries.
+Both responses passed with **eight queries per page**; the test enforces a
+bounded total rather than per-row fanout. The related ten-file price, identity,
+evidence, business-service and fixture boundary passed **308/308 tests**.
+The final two-case feed regression completed both delayed-query pages in
+**402 ms total**, with 16 queries against a limit of 20. The shared test-pool
+change also passed the dedicated **13/13 Pint Points PostgreSQL tests**.
+Typecheck, configured lint and source formatting passed. Evidence uses
+`/tmp/pintpath-price-batch-{related,final,pintpoints,lint}.log`; the task-owned
+PostgreSQL instance was stopped after these checks.
+
+Healthy candidate replacement passed **82 focused rollout tests** and **106
+related policy tests**. It requires the exact current deployment and previous
+candidate, proves previous-source ancestry and all three existing runtime
+routes, then retains the immediate snapshot check, one upload and all new
+runtime checks. Actual temporary-Git regressions reject divergent or missing
+history, tag-object substitution and reverse ancestry. Historical production
+executor and release-policy bytes remain unchanged.
+
+Follow-up packaging passed all **12 required artifacts**, the isolated
+`/health`/`/startup`/viewer artifact smoke, production/restore deployment
+guards, source formatting, and the **1,106-file** secret scan. The guard was
+rerun after the build completed because its first local invocation overlapped
+artifact creation; that ordering failure was not an application regression.
+Logs use `/tmp/pintpath-bar-pilot-hosted-fix-*.log`. These checks still do not
+substitute for the follow-up's new protected deployment and public smoke.

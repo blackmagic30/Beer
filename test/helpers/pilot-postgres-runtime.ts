@@ -40,7 +40,12 @@ export class PilotLoopbackDatabase implements SqlDatabase {
   readonly dialect = "postgres" as const;
   private readonly pool: Pool;
   private readonly active = new AsyncLocalStorage<{ client: PoolClient; next: number }>();
-  constructor(connectionString: string) {
+  private completedQueries = 0;
+  constructor(connectionString: string, private readonly options: {
+    maxConnections?: number;
+    connectionTimeoutMs?: number;
+    queryDelayMs?: number;
+  } = {}) {
     const url = new URL(connectionString);
     if (!["postgres:", "postgresql:"].includes(url.protocol)
       || !["127.0.0.1", "localhost"].includes(url.hostname)
@@ -48,7 +53,9 @@ export class PilotLoopbackDatabase implements SqlDatabase {
       || url.searchParams.get("sslmode") !== "disable") {
       throw new Error("Pilot tests require an isolated loopback PostgreSQL database.");
     }
-    this.pool = new Pool({ connectionString, max: 8, types: sqlDatabaseInternals.createPostgresTypeOverrides(),
+    this.pool = new Pool({ connectionString, max: options.maxConnections ?? 8,
+      connectionTimeoutMillis: options.connectionTimeoutMs ?? 10000,
+      types: sqlDatabaseInternals.createPostgresTypeOverrides(),
       options: "-c role=pintpath_runtime -c search_path=pintpath_app,pg_catalog -c statement_timeout=30000 -c lock_timeout=10000" });
   }
   private bindings(values: unknown[]): SqlBindings {
@@ -57,9 +64,17 @@ export class PilotLoopbackDatabase implements SqlDatabase {
   }
   private async query(sql: string, values: unknown[]) {
     const compiled = sqlDatabaseInternals.compilePostgresQuery(sql, this.bindings(values));
-    const result = await (this.active.getStore()?.client ?? this.pool).query(compiled.text, compiled.values);
-    return { rows: result.rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) =>
-      [key, value instanceof Date ? value.toISOString() : value]))), count: result.rowCount ?? 0 };
+    const active = this.active.getStore()?.client;
+    const client = active ?? await this.pool.connect();
+    try {
+      if (this.options.queryDelayMs) await client.query("SELECT pg_sleep($1)", [this.options.queryDelayMs / 1000]);
+      const result = await client.query(compiled.text, compiled.values);
+      this.completedQueries += 1;
+      return { rows: result.rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) =>
+        [key, value instanceof Date ? value.toISOString() : value]))), count: result.rowCount ?? 0 };
+    } finally {
+      if (!active) client.release();
+    }
   }
   prepare(sql: string): SqlStatement {
     return {
@@ -91,7 +106,7 @@ export class PilotLoopbackDatabase implements SqlDatabase {
   async close() { await this.pool.end(); }
   metrics() { return { dialect: this.dialect, totalConnections: this.pool.totalCount,
     idleConnections: this.pool.idleCount, waitingRequests: this.pool.waitingCount,
-    completedQueries: 0, failedQueries: 0, transactionFailures: 0, lastQueryDurationMs: null }; }
+    completedQueries: this.completedQueries, failedQueries: 0, transactionFailures: 0, lastQueryDurationMs: null }; }
 }
 
 export function createPilotTestService(database: SqlDatabase, config: ConstructorParameters<typeof BusinessService>[1]) {

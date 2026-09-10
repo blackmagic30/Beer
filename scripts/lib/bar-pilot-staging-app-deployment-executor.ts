@@ -49,6 +49,10 @@ import {
   barPilotFailedStartupRecoveryRequested,
   readBarPilotFailedStartupCorrectionProof,
 } from "./bar-pilot-failed-startup-recovery.js";
+import {
+  assertBarPilotPreviousCandidateAncestor,
+  barPilotPreviousCandidateSha,
+} from "./bar-pilot-healthy-rollout.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
   "pintpath-railway-application-deployment-policy/v6" as const;
@@ -3032,6 +3036,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let outcome: PermanentStagingAppDeploymentExecutorReceipt["outcome"] = "blocked";
   let failureCode: PermanentStagingAppDeploymentFailureCode | null = null;
   let preflightAlreadyCandidate = false;
+  let previousCandidateSha: string | null = null;
+  let previousRuntime: RuntimeObservation | null = null;
   let failedStartupCorrectionProofSha256: string | null = null;
   let preservedReplicaCount: number | null = null;
   let parsedArgs: ReturnType<typeof parseArguments> | null = null;
@@ -3059,6 +3065,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       || dependencies.env.GITHUB_SHA !== candidateSha
     ) throw new Error("github_authority_failed");
     checks.githubMainExact = true;
+    previousCandidateSha = barPilotPreviousCandidateSha(dependencies.env, candidateSha);
     if (
       sha256(fs.readFileSync(path.resolve(dependencies.cwd,
         policy.mutationBoundary.policyPath)))
@@ -3150,6 +3157,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       && path.isAbsolute(sourceAuthority.snapshotPath)
       && path.isAbsolute(sourceAuthority.deploymentPath);
     if (!checks.sourceAuthorityExact) throw new Error("source_authority_failed");
+    assertBarPilotPreviousCandidateAncestor(dependencies.cwd, previousCandidateSha, candidateSha);
     cliAuthority = await dependencies.validateCli(policy, dependencies);
     checks.cliExact = true;
     const writeToken = dependencies.env.PINTPATH_RAILWAY_WRITE_TOKEN;
@@ -3243,21 +3251,23 @@ export async function runPermanentStagingAppDeploymentExecutor(
           && preflight.collateralSha256 === BAR_PILOT_FAILED_STARTUP_RECOVERY.collateralSha256
         : currentId
         ? barPilotCurrentDeploymentExact(preflight.snapshot, currentId)
-          && deploymentHealthy(preflight, policy, candidateSha, preservedReplicaCount)
+          && deploymentHealthy(preflight, policy, previousCandidateSha, preservedReplicaCount)
         : barPilotStoppedDeploymentExact(preflight.snapshot)
           && preflight.snapshot.deployment.commitHash === BAR_PILOT_STOPPED_SOURCE_SHA;
       if (!exact) throw new Error("target_preflight_failed");
       if (currentId) {
         const currentRuntime = await dependencies.probeRuntime(
-          policy.target.publicOrigin, candidateSha, policy,
+          policy.target.publicOrigin, previousCandidateSha, policy,
           policy.target.environmentId, currentId,
         );
         for (const [index, route] of RUNTIME_ROUTES.entries()) {
           if (!runtimeMatches(
             route, [currentRuntime.health, currentRuntime.startup, currentRuntime.ready][index]!,
-            candidateSha, policy, policy.target.environmentId, currentId,
+            previousCandidateSha, policy, policy.target.environmentId, currentId,
+            currentRuntime.health.deployment.sourceArchive,
           )) throw new Error("target_preflight_failed");
         }
+        previousRuntime = currentRuntime;
       }
       // Applying skipDeploys configuration needs a new process even when source
       // is unchanged. The pilot always uploads the exact archive once.
@@ -3290,6 +3300,17 @@ export async function runPermanentStagingAppDeploymentExecutor(
         "deployment",
         preflight.snapshot.deployment.id,
       ),
+      ...(previousRuntime ? { healthyCurrentSource: {
+        candidateSha: previousCandidateSha,
+        ancestorOfCandidate: true,
+        sourceArchive: previousRuntime.health.deployment.sourceArchive,
+        snapshotId: preflight.snapshot.deployment.snapshotId,
+        runtimeResponseSha256s: {
+          health: previousRuntime.health.responseSha256,
+          startup: previousRuntime.startup.responseSha256,
+          ready: previousRuntime.ready.responseSha256,
+        },
+      } } : {}),
       ...(failedStartupCorrectionProofSha256 ? { failedStartupRecovery: {
         previousRunId: BAR_PILOT_FAILED_STARTUP_RECOVERY.workflowRunId,
         previousIntentSha256: BAR_PILOT_FAILED_STARTUP_RECOVERY.intentSha256,
@@ -3374,6 +3395,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
     sourceAuthority.reassert();
     checks.sourceReasserted = true;
     cliAuthority.assertExact();
+    assertBarPilotPreviousCandidateAncestor(dependencies.cwd, previousCandidateSha, candidateSha);
 
     if (!preflightAlreadyCandidate) {
       writeAttempts = 1;

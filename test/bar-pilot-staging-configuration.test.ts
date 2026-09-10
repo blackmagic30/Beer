@@ -7,10 +7,16 @@ import { barPilotStagingConfigurationPlan, runBarPilotStagingConfiguration } fro
 import { BAR_PILOT_STAGING_VARIABLES, BAR_PILOT_STOPPED_DEPLOYMENT_ID, barPilotCurrentDeploymentExact, barPilotStoppedDeploymentExact, barPilotVariableValueExact } from "../scripts/lib/bar-pilot-staging-contract.js";
 import { protectedRuntimeVariableInternals } from "../scripts/execute-protected-runtime-variable-upsert.js";
 import { TEST_POSTGRES_RAILWAY_ROOT_CA_PEM } from "./postgres-railway-stock-localhost-ca.fixtures.js";
+import * as healthyRollout from "../scripts/lib/bar-pilot-healthy-rollout.js";
+import { railwayDeploymentIdentityIdSha256 } from "../src/lib/railway-deployment-identity.js";
+import { canonicalProtectedSourceArchiveManifest } from "../src/lib/protected-source-archive.js";
 
 const candidate = "a".repeat(40);
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
 function environment() {
   return {
     GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_RUN_ATTEMPT: "1", GITHUB_SHA: candidate,
@@ -49,6 +55,8 @@ describe("bar pilot staging configuration", () => {
     { GITHUB_RUN_ATTEMPT: "2" }, { GITHUB_REF: "refs/heads/pilot" }, { PINTPATH_BAR_PILOT_CANDIDATE_SHA: "b".repeat(40) },
     { PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: "yes" },
     { PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: "true", PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: "11111111-1111-4111-8111-111111111111" },
+    { PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: "b".repeat(40) },
+    { PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: "HEAD~1", PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: "11111111-1111-4111-8111-111111111111" },
     { PINTPATH_BAR_PILOT_VENUE_IDS: "*" }, { PINTPATH_BAR_PILOT_VENUE_IDS: "venue,venue" },
     { PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS: "customer\nsecret" },
     { PINTPATH_BAR_PILOT_ENABLED: "true", PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS: "" },
@@ -104,6 +112,57 @@ describe("bar pilot staging configuration", () => {
       upsert, output: vi.fn() })).toBe(1);
     expect(upsert).not.toHaveBeenCalled();
   });
+  it("proves the declared previous runtime and ancestry before configuring the reviewed successor", async () => {
+    const previous = "b".repeat(40);
+    const id = "11111111-1111-4111-8111-111111111111";
+    const env = { ...environment(), PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: id,
+      PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: previous };
+    const ancestry = vi.spyOn(healthyRollout, "assertBarPilotPreviousCandidateAncestor").mockReturnValue();
+    const manifest = { schemaVersion: "protected-source-archive/v1" as const,
+      candidateSha: previous, treeSha: "c".repeat(40), sourceArchiveSha256: "d".repeat(64),
+      sourceBaseManifestSha256: "e".repeat(64), uploadNonce: "f".repeat(64) };
+    const runtime = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const route = new URL(String(input)).pathname;
+      return Response.json({ ok: true, data: { service: "pint-path",
+        status: route === "/health" ? "ok" : route === "/startup" ? "startup_ready" : "ready",
+        deployment: { version: "0.1.0", commitSha: "unknown", environment: "production",
+          projectIdSha256: railwayDeploymentIdentityIdSha256("project", "48d8c6cd-1c66-4148-874b-20877f48e1a5"),
+          environmentIdSha256: railwayDeploymentIdentityIdSha256("environment", "a4e0f507-d6d3-4df9-a818-ad92c0071a35"),
+          serviceIdSha256: railwayDeploymentIdentityIdSha256("service", "6816c4a2-e392-4ee5-826f-2584cb599ec0"),
+          deploymentIdSha256: railwayDeploymentIdentityIdSha256("deployment", id),
+          replicaIdSha256: "c".repeat(64),
+          sourceArchive: { ...manifest, sourceIdentitySha256: crypto.createHash("sha256")
+            .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex") },
+        }, automaticMaintenance: { enabled: false, candidateBound: true },
+        ...(route === "/health" ? {} : { dependencies: {} }),
+      } });
+    });
+    const upsert = vi.fn().mockResolvedValue(0);
+    const currentMain = vi.fn();
+    expect(await runBarPilotStagingConfiguration({ env, evidenceDirectory: directory(),
+      assertCurrentMain: currentMain, upsert, output: vi.fn() })).toBe(0);
+    expect(runtime.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://beer-staging.up.railway.app/health", "https://beer-staging.up.railway.app/startup",
+      "https://beer-staging.up.railway.app/ready",
+    ]);
+    expect(currentMain).toHaveBeenCalledTimes(9);
+    expect(ancestry).toHaveBeenCalledTimes(9);
+    expect(ancestry).toHaveBeenCalledWith(process.cwd(), previous, candidate);
+    expect(upsert).toHaveBeenCalledTimes(8);
+    expect(ancestry.mock.invocationCallOrder[0]).toBeLessThan(runtime.mock.invocationCallOrder[0]!);
+    expect(runtime.mock.invocationCallOrder[0]).toBeLessThan(upsert.mock.invocationCallOrder[0]!);
+  });
+  it("rejects foreign ancestry before reading runtime or changing any configuration", async () => {
+    vi.spyOn(healthyRollout, "assertBarPilotPreviousCandidateAncestor")
+      .mockImplementation(() => { throw new Error("source_authority_failed"); });
+    const upsert = vi.fn(); const runtime = vi.fn();
+    expect(await runBarPilotStagingConfiguration({ env: { ...environment(),
+      PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: "11111111-1111-4111-8111-111111111111",
+      PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: "b".repeat(40) }, evidenceDirectory: directory(),
+      assertCurrentMain: vi.fn(), assertCurrentRuntime: runtime, upsert, output: vi.fn() })).toBe(1);
+    expect(runtime).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
   it("does not grant production access or enable unrelated workers", () => {
     for (const variable of BAR_PILOT_STAGING_VARIABLES) {
       expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging", variable)).toBe(true);
@@ -141,5 +200,7 @@ describe("bar pilot staging configuration", () => {
     expect(workflow).toContain("github:release-candidate:verify");
     expect(configure).toContain("PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}");
     expect(deploy).toContain("PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}");
+    expect(configure).toContain("PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: ${{ inputs.expected_previous_candidate_sha }}");
+    expect(deploy).toContain("PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: ${{ inputs.expected_previous_candidate_sha }}");
   });
 });

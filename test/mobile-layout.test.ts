@@ -51,6 +51,7 @@ describe("mobile layout guardrails", () => {
     expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.overlayPanel__close\s*\{[\s\S]*width:\s*44px;[\s\S]*height:\s*44px;/);
     expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.venueRail__sortChip\s*\{[\s\S]*min-height:\s*44px;/);
     expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.venueDetailOverlay__close\s*\{[\s\S]*width:\s*44px;[\s\S]*height:\s*44px;/);
+    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.overlayTab\s*\{[\s\S]*min-height:\s*44px;/);
     expect(html).toContain('class="mapNavCard topNav"');
     expect(html).toContain('aria-controls="topbarBusinessLinks" data-mobile-nav-toggle');
     expect(html).toContain('id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation" data-mobile-nav-panel');

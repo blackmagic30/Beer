@@ -8,6 +8,7 @@ const MAX_VENUE_NAME_LENGTH = 240;
 const MAX_SUBURB_LENGTH = 160;
 const MAX_IDENTITY_IDS = 257;
 const MAX_CANONICAL_DEPTH = 32;
+const MAX_CANONICAL_BATCH = 500;
 
 const ALIAS_PROJECTION = `
   alias.alias_venue_id AS "aliasVenueId",
@@ -376,6 +377,49 @@ export class VenueIdentityRepository {
   async getCanonicalVenueId(venueId: string): Promise<string> {
     const normalized = inputText(venueId, "venueId", MAX_ID_LENGTH);
     return this.translated(() => this.resolveCanonicalVenueId(normalized));
+  }
+
+  /** Resolve a public-price page without queuing one pool checkout per row. */
+  async getCanonicalVenueIds(venueIds: readonly string[]): Promise<Map<string, string>> {
+    if (!Array.isArray(venueIds) || venueIds.length > MAX_CANONICAL_BATCH) return fail("invalid_input");
+    const pending = [...new Set(venueIds)].map((original) => ({
+      original,
+      current: inputText(original, "venueId", MAX_ID_LENGTH),
+      visited: new Set<string>(),
+    }));
+    return this.translated(async () => {
+      const result = new Map<string, string>();
+      const aliases = new Map<string, VenueIdentityAliasRecord | null>();
+      for (let depth = 0; depth < MAX_CANONICAL_DEPTH && pending.length; depth += 1) {
+        const missing = [...new Set(pending.map(({ current }) => current))]
+          .filter((venueId) => !aliases.has(venueId));
+        if (missing.length) {
+          const rows = await this.database.prepare(
+            `SELECT ${ALIAS_PROJECTION}
+               FROM venue_identity_aliases alias
+              WHERE alias.alias_venue_id IN (${missing.map(() => "?").join(", ")})`,
+          ).all<AliasRow>(...missing);
+          for (const venueId of missing) aliases.set(venueId, null);
+          for (const row of rows) {
+            const alias = aliasRecord(row);
+            aliases.set(alias.aliasVenueId, alias);
+          }
+        }
+        for (let index = pending.length - 1; index >= 0; index -= 1) {
+          const item = pending[index]!;
+          if (item.visited.has(item.current)) return fail("identity_cycle");
+          item.visited.add(item.current);
+          const alias = aliases.get(item.current);
+          if (alias) item.current = alias.canonicalVenueId;
+          else {
+            result.set(item.original, item.current);
+            pending.splice(index, 1);
+          }
+        }
+      }
+      if (pending.length) return fail("identity_limit_exceeded");
+      return result;
+    });
   }
 
   async listVenueIdentityIds(venueId: string): Promise<string[]> {

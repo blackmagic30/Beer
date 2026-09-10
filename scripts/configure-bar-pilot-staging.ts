@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import { runProtectedRuntimeVariableUpsert } from "./execute-protected-runtime-variable-upsert.js";
 import { barPilotVariableValueExact } from "./lib/bar-pilot-staging-contract.js";
 import {
+  assertBarPilotPreviousCandidateAncestor,
+  barPilotPreviousCandidateSha,
+} from "./lib/bar-pilot-healthy-rollout.js";
+import {
   BAR_PILOT_FAILED_STARTUP_RECOVERY,
   barPilotFailedStartupDeploymentExact,
   barPilotFailedStartupRecoveryRequested,
@@ -28,6 +32,7 @@ type Environment = Readonly<Record<string, string | undefined>>;
 export function barPilotStagingConfigurationPlan(env: Environment): ReadonlyArray<readonly [string, string]> {
   barPilotFailedStartupRecoveryRequested(env);
   const candidate = env.GITHUB_SHA ?? "";
+  barPilotPreviousCandidateSha(env, candidate);
   const enabled = env.PINTPATH_BAR_PILOT_ENABLED ?? "";
   const venueIds = env.PINTPATH_BAR_PILOT_VENUE_IDS ?? "";
   const customerIds = env.PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS ?? "";
@@ -101,7 +106,8 @@ async function assertCurrentRuntime(env: Environment): Promise<void> {
     return;
   }
   await permanentStagingAppDeploymentExecutorInternals.defaultProbeRuntime(
-    fetch, policy.target.publicOrigin, env.GITHUB_SHA!, policy, policy.target.environmentId, id);
+    fetch, policy.target.publicOrigin, barPilotPreviousCandidateSha(env, env.GITHUB_SHA!),
+    policy, policy.target.environmentId, id);
 }
 
 function assertCurrentMain(): void {
@@ -133,6 +139,11 @@ export async function runBarPilotStagingConfiguration(overrides: Partial<Depende
   let ok = false;
   try {
     const plan = barPilotStagingConfigurationPlan(deps.env);
+    const previousCandidate = barPilotPreviousCandidateSha(deps.env, deps.env.GITHUB_SHA!);
+    if (previousCandidate !== deps.env.GITHUB_SHA) {
+      deps.assertCurrentMain();
+      assertBarPilotPreviousCandidateAncestor(process.cwd(), previousCandidate, deps.env.GITHUB_SHA!);
+    }
     await deps.assertCurrentRuntime(deps.env);
     if (!path.isAbsolute(deps.evidenceDirectory)) throw new Error("Evidence path is invalid.");
     fs.mkdirSync(deps.evidenceDirectory, { mode: 0o700 });
@@ -140,6 +151,7 @@ export async function runBarPilotStagingConfiguration(overrides: Partial<Depende
     fs.chmodSync(inputs, 0o700);
     for (const [index, [name, value]] of plan.entries()) {
       deps.assertCurrentMain();
+      assertBarPilotPreviousCandidateAncestor(process.cwd(), previousCandidate, deps.env.GITHUB_SHA!);
       const leaf = `${index}-${name}`;
       writePrivateExclusiveFile(inputs, leaf, value, { requireOwner: true });
       const evidence = path.join(deps.evidenceDirectory, leaf);

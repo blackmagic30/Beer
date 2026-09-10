@@ -70,6 +70,16 @@ authenticated versioned runtime login; the retired predecessor stays disabled.
 Do not run the historical fixed-predecessor URL repair after this handoff.
 After successful recovery, leave this option false for ordinary pilot enablement.
 
+For a reviewed **new** main candidate replacing the healthy staging source,
+supply both `expected_current_deployment_id` and
+`expected_previous_candidate_sha`. The previous SHA must be an ancestor of the
+new current main. Before any setting changes, the workflow verifies all three
+running routes against that previous source and exact deployment; the upload
+retains its immediate snapshot check and one-attempt limit. The new deployment
+must then prove the new archive identity on all three routes. For enablement
+using the same candidate, omit `expected_previous_candidate_sha`. Never combine
+this healthy replacement flow with `recover_failed_startup=true`.
+
 The CLI deployment reports explicit `protected-source-archive/v1` provenance,
 including the reviewed candidate and a unique upload identity. Match that
 identity to the protected deployment receipt on all three routes. A CLI upload

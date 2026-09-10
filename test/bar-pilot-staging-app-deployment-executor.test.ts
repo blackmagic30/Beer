@@ -33,6 +33,7 @@ import { BAR_PILOT_STOPPED_DEPLOYMENT_ID, BAR_PILOT_STOPPED_SOURCE_SHA } from
   "../scripts/lib/bar-pilot-staging-contract.js";
 import * as failedStartupRecovery from
   "../scripts/lib/bar-pilot-failed-startup-recovery.js";
+import * as healthyRollout from "../scripts/lib/bar-pilot-healthy-rollout.js";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const SOURCE_MANIFEST = {
@@ -233,6 +234,9 @@ function runtimeObservation(
   candidateSha: string,
   deploymentId: string,
 ) {
+  const manifest = { ...SOURCE_MANIFEST, candidateSha };
+  const identity = { ...manifest, sourceIdentitySha256: crypto.createHash("sha256")
+    .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex") };
   const response = (
     route: "/health" | "/startup" | "/ready",
     status: "ok" | "startup_ready" | "ready",
@@ -243,7 +247,7 @@ function runtimeObservation(
     deployment: {
       version: "0.1.0",
       commitSha: "unknown",
-      sourceArchive: SOURCE_IDENTITY,
+      sourceArchive: identity,
       environment: "production",
       projectIdSha256:
         railwayDeploymentIdentityIdSha256("project", exactPolicy.projectId)!,
@@ -626,6 +630,7 @@ describe("bar pilot fresh-source staging deployment", () => {
     wrongCandidate?: boolean; missingProvenance?: boolean; acknowledgedOtherId?: boolean;
     acknowledgedOldId?: boolean; wrongIntent?: boolean; explicitPatch?: boolean;
     snapshotMismatch?: boolean; imageDrift?: boolean; missingImage?: boolean; failedUpload?: boolean;
+    previousCandidate?: string;
   } = {}) {
     const exactPolicy = pilotPolicy();
     const fixture = harness(exactPolicy, { acknowledgementTimedOut: options.uncertain });
@@ -634,7 +639,7 @@ describe("bar pilot fresh-source staging deployment", () => {
     fixture.overrides.queryTarget.mockImplementation(async () => {
       const before = calls++ < (options.oldCandidateVisibleDuringPoll ? 3 : 2);
       const value = providerObservation(exactPolicy,
-        before ? (options.wrongSource ? "d".repeat(40) : options.current ? CANDIDATE_SHA : BAR_PILOT_STOPPED_SOURCE_SHA) : CANDIDATE_SHA,
+        before ? (options.wrongSource ? "d".repeat(40) : options.current ? options.previousCandidate ?? CANDIDATE_SHA : BAR_PILOT_STOPPED_SOURCE_SHA) : CANDIDATE_SHA,
         before ? beforeId : DEPLOYMENT_AFTER,
         before ? SNAPSHOT_BEFORE : SNAPSHOT_AFTER, "SUCCESS", null);
       if (!before || (options.current && !options.wrongSource)) value.snapshot.deployment.commitHash = null;
@@ -691,6 +696,7 @@ describe("bar pilot fresh-source staging deployment", () => {
       });
     }
     if (options.current) fixture.overrides.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID = beforeId;
+    if (options.previousCandidate) fixture.overrides.env.PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA = options.previousCandidate;
     return { ...fixture, args: ["--policy", policyPath, "--candidate-sha", CANDIDATE_SHA, "--evidence-dir", fixture.evidenceDir] };
   }
   it("only permits US1 with workers disabled and the current reviewed lockfile", () => {
@@ -758,6 +764,43 @@ describe("bar pilot fresh-source staging deployment", () => {
     expect(fixture.runCommand).toHaveBeenCalledTimes(1);
     expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(4);
   });
+  it("uploads an exact main successor only after proving all three previous runtime routes and ancestry", async () => {
+    const previous = "c".repeat(40);
+    const ancestry = vi.spyOn(healthyRollout, "assertBarPilotPreviousCandidateAncestor").mockReturnValue();
+    const fixture = pilotFixture({ current: true, previousCandidate: previous });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(ancestry).toHaveBeenCalledTimes(2);
+    expect(ancestry).toHaveBeenCalledWith(process.cwd(), previous, CANDIDATE_SHA);
+    expect(fixture.overrides.probeRuntime.mock.calls.map((call) => [call[1], call[4]]))
+      .toEqual([[previous, DEPLOYMENT_BEFORE], [CANDIDATE_SHA, DEPLOYMENT_AFTER]]);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    const intent = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir, "deployment-intent.json"), "utf8"));
+    expect(intent.healthyCurrentSource).toMatchObject({ candidateSha: previous, ancestorOfCandidate: true,
+      snapshotId: SNAPSHOT_BEFORE, sourceArchive: { candidateSha: previous } });
+    expect(Object.keys(intent.healthyCurrentSource.runtimeResponseSha256s)).toEqual(["health", "startup", "ready"]);
+  });
+  it.each(["malformed", "unpaired", "failed-recovery", "foreign-ancestor", "changed-prewrite", "wrong-current-id", "/health", "/startup", "/ready"])(
+    "rejects a healthy successor rollout with %s before upload", async (failure) => {
+      const previous = "c".repeat(40);
+      const ancestry = vi.spyOn(healthyRollout, "assertBarPilotPreviousCandidateAncestor").mockReturnValue();
+      const fixture = pilotFixture({ current: true, previousCandidate: previous, drift: failure === "changed-prewrite" });
+      if (failure === "malformed") fixture.overrides.env.PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA = "HEAD~1";
+      if (failure === "unpaired") fixture.overrides.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID = "";
+      if (failure === "failed-recovery") fixture.overrides.env.PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP = "true";
+      if (failure === "wrong-current-id") fixture.overrides.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID = DEPLOYMENT_AFTER;
+      if (failure === "foreign-ancestor") ancestry.mockImplementation(() => { throw new Error("source_authority_failed"); });
+      if (failure.startsWith("/")) fixture.overrides.probeRuntime.mockImplementation(async (
+        _origin, requestedCandidate, inputPolicy, _environment, deploymentId,
+      ) => {
+        const value = runtimeObservation(inputPolicy, requestedCandidate, deploymentId);
+        const route = [value.health, value.startup, value.ready].find((entry) => entry.route === failure)!;
+        route.deployment.sourceArchive = SOURCE_IDENTITY;
+        return value;
+      });
+      expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+      expect(fixture.runCommand).not.toHaveBeenCalled();
+    },
+  );
   function failedStartupFixture() {
     const fixture = pilotFixture();
     const lock = failedStartupRecovery.BAR_PILOT_FAILED_STARTUP_RECOVERY;

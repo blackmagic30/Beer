@@ -13237,10 +13237,6 @@ export class BusinessService {
     const identityVenueIds = requestedVenueId
       ? await this.venueIdentityRepository.listVenueIdentityIds(requestedVenueId)
       : [];
-    const canonicalizeRecord = async (record: PublicVenuePriceRecord): Promise<PublicVenuePriceRecord> => {
-      const canonicalVenueId = await this.venueIdentityRepository.getCanonicalVenueId(record.venueId);
-      return canonicalVenueId === record.venueId ? record : { ...record, venueId: canonicalVenueId };
-    };
     const cursor = decodePriceCursor(input.cursor);
     const batchSize = Math.min(500, Math.max(50, input.limit * 2));
     const maxBatches = 10;
@@ -13273,7 +13269,13 @@ export class BusinessService {
       scanHasMore = candidates.length > batchSize || currentBatch.length === batchSize ||
         managerBatches.some((managerBatch) => managerBatch.length === batchSize);
 
-      const canonicalBatch = await Promise.all(globalBatch.map(canonicalizeRecord));
+      const canonicalVenueIds = await this.venueIdentityRepository.getCanonicalVenueIds(
+        [...new Set(globalBatch.map((record) => record.venueId))],
+      );
+      const canonicalBatch = globalBatch.map((record) => {
+        const venueId = canonicalVenueIds.get(record.venueId)!;
+        return venueId === record.venueId ? record : { ...record, venueId };
+      });
       const specialRecords = canonicalBatch.filter((record) =>
         isPublicLaunchPriceRecord(record) &&
         record.displayKind === "special" &&
@@ -13309,26 +13311,22 @@ export class BusinessService {
     const publicVenueMetadata = await this.loadPublicVenueTierMetadata(
       [...new Set(records.map((record) => record.venueId))],
     );
-    const submissionEvidencePresence = new Map<string, boolean>();
-    await Promise.all([...new Set(records
+    const submissionIds = [...new Set(records
       .map((record) => record.sourceSubmissionId)
-      .filter((submissionId): submissionId is string => Boolean(submissionId)))].map(async (submissionId) => {
-      const evidenceIds = await this.sourceEvidenceRetentionRepository.listSubmissionSourceEvidenceIds({
-        submissionId,
-        limit: 1,
-      });
-      submissionEvidencePresence.set(submissionId, evidenceIds.length > 0);
-    }));
-    const hasSubmissionEvidence = (submissionId: string) => {
-      const cached = submissionEvidencePresence.get(submissionId);
-      return cached ?? false;
-    };
+      .filter((submissionId): submissionId is string => Boolean(submissionId)))];
+    const submissionEvidencePresence = new Set<string>();
+    for (let start = 0; start < submissionIds.length; start += 500) {
+      const present = await this.sourceEvidenceRetentionRepository.listSubmissionsWithSourceEvidence(
+        submissionIds.slice(start, start + 500),
+      );
+      for (const submissionId of present) submissionEvidencePresence.add(submissionId);
+    }
     const addVenueMetadata = (record: PublicVenuePriceRecord): PublicVenuePriceRecord => ({
       ...record,
       ...publicVenueMetadata.get(record.venueId),
       hasSourceLinkage: record.hasSourceLinkage || Boolean(record.sourceSubmissionId),
       hasSourceEvidence: record.sourceSubmissionId
-        ? hasSubmissionEvidence(record.sourceSubmissionId)
+        ? submissionEvidencePresence.has(record.sourceSubmissionId)
         : Boolean(record.hasSourceEvidence),
     });
     const allCurrentRecords = dedupePublicPriceRecords(records.map(addVenueMetadata))
