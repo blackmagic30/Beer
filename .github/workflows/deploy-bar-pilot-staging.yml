@@ -23,7 +23,11 @@ on:
         required: false
         type: string
       expected_current_deployment_id:
-        description: Empty for known stopped-source recovery; later use the exact healthy deployment of this same candidate
+        description: Empty for known stopped-source recovery; otherwise the exact healthy current deployment
+        required: false
+        type: string
+      expected_previous_candidate_sha:
+        description: Optional exact healthy previous SHA, which must be an ancestor of candidate; empty requires same candidate
         required: false
         type: string
       recover_failed_startup:
@@ -103,6 +107,7 @@ jobs:
           PINTPATH_BAR_PILOT_VENUE_IDS: ${{ inputs.venue_ids }}
           PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS: ${{ inputs.demo_customer_ids }}
           PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: ${{ inputs.expected_current_deployment_id }}
+          PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: ${{ inputs.expected_previous_candidate_sha }}
           PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}
           PINTPATH_BAR_PILOT_CONFIGURATION_EVIDENCE: ${{ runner.temp }}/bar-pilot-configuration
           PINTPATH_STAGING_DATABASE_MAINTENANCE_URL: ${{ secrets.PINTPATH_STAGING_DATABASE_MAINTENANCE_URL }}
@@ -220,6 +225,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: ${{ inputs.expected_current_deployment_id }}
+          PINTPATH_BAR_PILOT_PREVIOUS_CANDIDATE_SHA: ${{ inputs.expected_previous_candidate_sha }}
           PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
