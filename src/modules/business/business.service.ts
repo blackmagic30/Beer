@@ -5020,6 +5020,8 @@ export class BusinessService {
     return {
       id: activity.id,
       publicAccountId: activity.publicAccountId,
+      operatorPublicAccountId: activity.operatorPublicAccountId ?? null,
+      voidedByPublicAccountId: activity.voidedByPublicAccountId ?? null,
       itemName: activity.itemName,
       beverageCategory: activity.beverageCategory,
       quantity: activity.quantity,

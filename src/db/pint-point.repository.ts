@@ -46,9 +46,11 @@ interface VenuePintPointActivityRow {
     points_awarded: number;
     source: string;
     recorded_by_user_id: string | null;
+    operator_public_account_id: string | null;
     status: PintPointDrinkRecordStatus;
     voided_at: string | null;
     voided_by_user_id: string | null;
+    voided_by_public_account_id: string | null;
     void_reason: string | null;
     recorded_at: string;
 }
@@ -417,13 +419,17 @@ export class PintPointRepository {
            r.points_awarded,
            r.source,
            r.recorded_by_user_id,
+           operator.public_account_id AS operator_public_account_id,
            r.status,
            r.voided_at,
            r.voided_by_user_id,
+           corrector.public_account_id AS voided_by_public_account_id,
            r.void_reason,
            r.recorded_at
          FROM pint_point_drink_records r
          LEFT JOIN accounts a ON a.id = r.user_id
+         LEFT JOIN accounts operator ON operator.id = r.recorded_by_user_id
+         LEFT JOIN accounts corrector ON corrector.id = r.voided_by_user_id
          WHERE r.venue_id = ?
          ORDER BY r.recorded_at DESC
          LIMIT ? OFFSET ?`)
@@ -437,9 +443,11 @@ export class PintPointRepository {
             pointsAwarded: Number(row.points_awarded),
             source: row.source,
             recordedByUserId: row.recorded_by_user_id,
+            operatorPublicAccountId: row.operator_public_account_id,
             status: row.status ?? "active",
             voidedAt: row.voided_at,
             voidedByUserId: row.voided_by_user_id,
+            voidedByPublicAccountId: row.voided_by_public_account_id,
             voidReason: row.void_reason,
             recordedAt: row.recorded_at,
         }));

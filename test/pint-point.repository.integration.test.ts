@@ -326,6 +326,8 @@ describe.skipIf(!configuredAdminUrl)("canonical PostgreSQL Pint Points pilot", (
     expect(ledger.filter(row=>row.type==="drink_void")).toHaveLength(1);
     expect((await repo.getPintPointDrinkRecordById(purchaseRecord.id))?.voidReason).toBe("Wrong purchase");
     expect((await repo.listVenueLedgerHistory("venue-a",100)).length).toBeGreaterThan(0);
+    const activity = (await repo.listPintPointDrinkRecordsForVenue("venue-a",100)).find(row => row.id === purchaseRecord.id);
+    expect(activity).toMatchObject({ operatorPublicAccountId: "PP-STAFF", voidedByPublicAccountId: "PP-MANAGER" });
   });
   it("executes the HTTP purchase-to-reward loop for an ordinary free pilot customer with commercial flags off", async () => {
     const user = await customer();
@@ -369,6 +371,14 @@ describe.skipIf(!configuredAdminUrl)("canonical PostgreSQL Pint Points pilot", (
       const redeemed=await request("/venue-portal/venue-a/free-pint-rewards",staffToken,{code:reward.data.code,action:"confirm"});expect(redeemed.status).toBe(201);expect(redeemed.data).toMatchObject({title:"FREE PINT REDEEMED",wallet:{balance:0,lifetimeRedeemed:50}});expect(redeemed.data.wallet).not.toHaveProperty("rewardRedemptions");
       expect((await request("/venue-portal/venue-a/free-pint-rewards",staffToken,{code:reward.data.code,action:"confirm"})).status).toBe(409);
       const history=await request("/venue-portal/venue-a/reconciliation",managerToken);expect(history.status).toBe(200);expect(history.data.freePintRedemptions.items.some((item:{userId:string})=>item.userId===user.id)).toBe(true);
+      const purchaseActivity = history.data.pintPointActivity.items.find((item: { id: string }) => item.id === award.data.record.id);
+      expect(purchaseActivity).toMatchObject({operatorPublicAccountId:"PP-STAFF",voidedByPublicAccountId:null});
+      expect(purchaseActivity).not.toHaveProperty("recordedByUserId");
+      expect(purchaseActivity).not.toHaveProperty("voidedByUserId");
+      expect(JSON.stringify(purchaseActivity)).not.toContain("staff@example.test");
+      const correctedActivity = history.data.pintPointActivity.items.find((item: { status: string }) => item.status === "void");
+      expect(correctedActivity).toMatchObject({operatorPublicAccountId:"PP-STAFF",voidedByPublicAccountId:"PP-MANAGER"});
+      expect(correctedActivity).not.toHaveProperty("voidedByUserId");
       expect((await request("/venue-portal/venue-a/reconciliation",staffToken)).status).toBe(403);
       expect((await request("/account/discount-pass",customerToken,{})).status).toBe(404);
       expect((await request("/account/free-pint-reward-code",customerToken,{})).status).toBe(403);
