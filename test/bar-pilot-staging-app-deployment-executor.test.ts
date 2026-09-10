@@ -14,7 +14,13 @@ import {
   parsePermanentStagingAppDeploymentPolicy,
   runPermanentStagingAppDeploymentExecutor,
   type PermanentStagingAppDeploymentPolicy,
+  type PilotProviderSnapshot,
 } from "../scripts/lib/bar-pilot-staging-app-deployment-executor.js";
+import {
+  canonicalProtectedSourceArchiveManifest,
+  type ProtectedSourceArchiveIdentity,
+  type ProtectedSourceArchiveRuntimeResponse,
+} from "../src/lib/protected-source-archive.js";
 import type {
   RailwayApplicationDeploymentAttestationProviderSnapshot,
   RailwayApplicationDeploymentAttestationRuntimeResponse,
@@ -27,6 +33,19 @@ import { BAR_PILOT_STOPPED_DEPLOYMENT_ID, BAR_PILOT_STOPPED_SOURCE_SHA } from
   "../scripts/lib/bar-pilot-staging-contract.js";
 
 const CANDIDATE_SHA = "a".repeat(40);
+const SOURCE_MANIFEST = {
+  schemaVersion: "protected-source-archive/v1" as const,
+  candidateSha: CANDIDATE_SHA,
+  treeSha: "d".repeat(40),
+  sourceArchiveSha256: "e".repeat(64),
+  sourceBaseManifestSha256: "8".repeat(64),
+  uploadNonce: "9".repeat(64),
+};
+const SOURCE_IDENTITY: ProtectedSourceArchiveIdentity = {
+  ...SOURCE_MANIFEST,
+  sourceIdentitySha256: crypto.createHash("sha256")
+    .update(canonicalProtectedSourceArchiveManifest(SOURCE_MANIFEST)).digest("hex"),
+};
 const DEPLOYMENT_BEFORE = "11111111-1111-4111-8111-111111111111";
 const DEPLOYMENT_AFTER = "22222222-2222-4222-8222-222222222222";
 const SNAPSHOT_BEFORE = "33333333-3333-4333-8333-333333333333";
@@ -112,7 +131,7 @@ function providerObservation(
     configuredReplicas: configuredReplicaCount,
     configuredRegions,
   };
-  const snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot = {
+  const snapshot: PilotProviderSnapshot = {
     serviceInstanceId: INSTANCE_ID,
     serviceId: exactPolicy.target.serviceId,
     environmentId: exactPolicy.target.environmentId,
@@ -139,6 +158,9 @@ function providerObservation(
       commitHash: candidateSha,
       imageDigest: `sha256:${"b".repeat(64)}`,
       patchId: null,
+      providerSource: null,
+      providerMessage: null,
+      providerMessageField: null,
     },
   };
   return {
@@ -212,13 +234,14 @@ function runtimeObservation(
   const response = (
     route: "/health" | "/startup" | "/ready",
     status: "ok" | "startup_ready" | "ready",
-  ): RailwayApplicationDeploymentAttestationRuntimeResponse => ({
+  ): ProtectedSourceArchiveRuntimeResponse => ({
     route,
     service: "pint-path",
     status,
     deployment: {
       version: "0.1.0",
-      commitSha: candidateSha,
+      commitSha: "unknown",
+      sourceArchive: SOURCE_IDENTITY,
       environment: "production",
       projectIdSha256:
         railwayDeploymentIdentityIdSha256("project", exactPolicy.projectId)!,
@@ -237,7 +260,7 @@ function runtimeObservation(
       replicaIdSha256: crypto.createHash("sha256").update("replica").digest("hex"),
     },
     automaticMaintenance: {
-      enabled: exactPolicy.target.name === "permanent-staging",
+      enabled: exactPolicy.postflightContract.automaticMaintenanceEnabled,
       candidateBound: true,
     },
     restoreMarkerPresent: false,
@@ -391,7 +414,10 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       code: options.acknowledgementCode ?? 0,
       signal: null,
       timedOut: options.acknowledgementTimedOut ?? false,
-      stdout: "queued",
+      stdout: options.acknowledgementTimedOut ? "" : JSON.stringify({
+        deploymentId: DEPLOYMENT_AFTER,
+        logsUrl: `https://railway.com/project/${exactPolicy.projectId}`,
+      }),
       stderr: "",
     };
   });
@@ -404,6 +430,7 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
     candidateSha: CANDIDATE_SHA,
     treeSha: "d".repeat(40),
     archiveSha256: "e".repeat(64),
+    sourceArchive: SOURCE_IDENTITY,
     snapshotManifestSha256: "f".repeat(64),
     snapshotPath,
     deploymentPath: snapshotPath,
@@ -591,7 +618,13 @@ describe("bar pilot fresh-source staging deployment", () => {
     if (!parsed) throw new Error("pilot policy invalid");
     return parsed;
   }
-  function pilotFixture(options: { current?: boolean; oldCandidateVisibleDuringPoll?: boolean; wrongSource?: boolean; runningOld?: boolean; drift?: boolean; uncertain?: boolean } = {}) {
+  function pilotFixture(options: {
+    current?: boolean; oldCandidateVisibleDuringPoll?: boolean; wrongSource?: boolean;
+    runningOld?: boolean; drift?: boolean; uncertain?: boolean; wrongNonce?: boolean;
+    wrongCandidate?: boolean; missingProvenance?: boolean; acknowledgedOtherId?: boolean;
+    acknowledgedOldId?: boolean; wrongIntent?: boolean; explicitPatch?: boolean;
+    snapshotMismatch?: boolean; imageDrift?: boolean;
+  } = {}) {
     const exactPolicy = pilotPolicy();
     const fixture = harness(exactPolicy, { acknowledgementTimedOut: options.uncertain });
     const beforeId = options.current ? DEPLOYMENT_BEFORE : BAR_PILOT_STOPPED_DEPLOYMENT_ID;
@@ -602,6 +635,14 @@ describe("bar pilot fresh-source staging deployment", () => {
         before ? (options.wrongSource ? "d".repeat(40) : options.current ? CANDIDATE_SHA : BAR_PILOT_STOPPED_SOURCE_SHA) : CANDIDATE_SHA,
         before ? beforeId : DEPLOYMENT_AFTER,
         before ? SNAPSHOT_BEFORE : SNAPSHOT_AFTER, "SUCCESS", null);
+      if (!before || (options.current && !options.wrongSource)) value.snapshot.deployment.commitHash = null;
+      if (!before && options.wrongIntent) {
+        value.snapshot.deployment.providerMessage = `pintpath:permanent-staging:${CANDIDATE_SHA}:${"0".repeat(64)}`;
+        value.snapshot.deployment.providerMessageField = "observedIntentField";
+      }
+      if (!before && options.explicitPatch) value.snapshot.deployment.patchId = SNAPSHOT_AFTER;
+      if (!before && options.snapshotMismatch) value.snapshot.latestDeployment.snapshotId = SNAPSHOT_BEFORE;
+      if (!before && options.imageDrift && calls >= 4) value.snapshot.deployment.imageDigest = `sha256:${"c".repeat(64)}`;
       if (before && !options.current && !options.runningOld) {
         value.snapshot.latestDeployment.deploymentStopped = true;
         value.snapshot.activeDeployments[0]!.deploymentStopped = true;
@@ -609,6 +650,37 @@ describe("bar pilot fresh-source staging deployment", () => {
       if (options.drift && calls === 2) value.collateralSha256 = "f".repeat(64);
       return value;
     });
+    if (options.acknowledgedOtherId || options.acknowledgedOldId) {
+      fixture.runCommand.mockResolvedValue({
+        code: 0, signal: null, timedOut: false, stderr: "",
+        stdout: JSON.stringify({
+          deploymentId: options.acknowledgedOldId ? beforeId : TERMINAL_DRIFT_DEPLOYMENT,
+          logsUrl: `https://railway.com/project/${exactPolicy.projectId}`,
+        }),
+      });
+    }
+    if (options.wrongNonce || options.wrongCandidate || options.missingProvenance) {
+      fixture.overrides.probeRuntime.mockImplementation(async (
+        _origin, candidate, inputPolicy, _environmentId, deploymentId,
+      ) => {
+        const runtime = structuredClone(runtimeObservation(inputPolicy, candidate, deploymentId));
+        for (const response of [runtime.health, runtime.startup, runtime.ready]) {
+          if (options.missingProvenance) {
+            delete (response.deployment as unknown as Record<string, unknown>).sourceArchive;
+          } else {
+            const manifest = { ...SOURCE_MANIFEST,
+              uploadNonce: options.wrongNonce ? "7".repeat(64) : SOURCE_MANIFEST.uploadNonce,
+              candidateSha: options.wrongCandidate ? "c".repeat(40) : CANDIDATE_SHA,
+            };
+            response.deployment.sourceArchive = {
+              ...manifest, sourceIdentitySha256: crypto.createHash("sha256")
+                .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex"),
+            };
+          }
+        }
+        return runtime;
+      });
+    }
     if (options.current) fixture.overrides.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID = beforeId;
     return { ...fixture, args: ["--policy", policyPath, "--candidate-sha", CANDIDATE_SHA, "--evidence-dir", fixture.evidenceDir] };
   }
@@ -682,7 +754,7 @@ describe("bar pilot fresh-source staging deployment", () => {
     expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
     expect(fixture.runCommand).toHaveBeenCalledTimes(1);
     expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(5);
-    expect(fixture.overrides.probeRuntime.mock.calls[0]![4]).toBe(DEPLOYMENT_AFTER);
+    expect(fixture.overrides.probeRuntime.mock.calls.at(-1)![4]).toBe(DEPLOYMENT_AFTER);
   });
   it.each([{ runningOld: true }, { wrongSource: true }, { current: true, wrongSource: true }, { drift: true }])(
     "blocks changed predecessor/source/collateral before upload: %j", async (options) => {
@@ -694,5 +766,101 @@ describe("bar pilot fresh-source staging deployment", () => {
     const fixture = pilotFixture({ uncertain: true });
     expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
     expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.probeRuntime.mock.calls[0]![5]).toEqual(SOURCE_IDENTITY);
+    const receipt = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir, "deployment-receipt.json"), "utf8"));
+    expect(receipt.outcome).toBe("reconciled_success");
+    expect(receipt.acknowledgement).toBe("missing_or_failed");
+  });
+
+  it.each([
+    { uncertain: true, wrongNonce: true }, { wrongCandidate: true },
+    { missingProvenance: true }, { acknowledgedOtherId: true },
+    { acknowledgedOldId: true }, { wrongIntent: true }, { explicitPatch: true },
+    { snapshotMismatch: true }, { imageDrift: true },
+  ])("rejects mismatched upload provenance after exactly one attempt: %j", async (options) => {
+    const fixture = pilotFixture(options);
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    const receipt = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir, "deployment-receipt.json"), "utf8"));
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.writeAttempts).toBe(1);
+  });
+
+  it("binds the nonce identity and full snapshot digest into the exact upload message", async () => {
+    const fixture = pilotFixture();
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    const intentBytes = fs.readFileSync(path.join(fixture.evidenceDir, "deployment-intent.json"), "utf8");
+    const intent = JSON.parse(intentBytes);
+    expect(intent.sourceArchive).toEqual(SOURCE_IDENTITY);
+    expect(intent.sourceSnapshotManifestSha256).toBe(fixture.sourceAuthority.snapshotManifestSha256);
+    const command = fixture.runCommand.mock.calls[0]!;
+    expect(command[1].at(-1)).toBe(`pintpath:permanent-staging:${CANDIDATE_SHA}:${crypto.createHash("sha256").update(intentBytes).digest("hex")}`);
+    expect(command[2].env).toEqual({ CI: "true", NO_COLOR: "1", RAILWAY_TOKEN: "w".repeat(32) });
+  });
+
+  it("parses genuine CLI metadata without inventing Git/source/message fields", () => {
+    const exact = pilotPolicy();
+    const raw = JSON.parse(providerSnapshotResponse(exact, {
+      services: { [exact.target.serviceId]: { deploy: { multiRegionConfig: {
+        "us-west2": { numReplicas: 1 },
+      } } } },
+    }, null));
+    const meta = raw.data.deployment.meta;
+    delete meta.commitHash; delete meta.patchId;
+    meta.cliCaller = "reviewed-cli";
+    const parsed = permanentStagingAppDeploymentExecutorInternals.parseProviderSnapshotWithConfiguredTopology(
+      JSON.stringify(raw), exact, exact.target.environmentId);
+    expect(parsed?.snapshot.deployment).toMatchObject({
+      commitHash: null, patchId: null, providerSource: null, providerMessage: null,
+      imageDigest: `sha256:${"b".repeat(64)}`,
+    });
+    for (const bad of [SNAPSHOT_AFTER, false, {}, ""]) {
+      meta.patchId = bad;
+      expect(permanentStagingAppDeploymentExecutorInternals.parseProviderSnapshotWithConfiguredTopology(
+        JSON.stringify(raw), exact, exact.target.environmentId)).toBeNull();
+    }
+    delete meta.patchId;
+    delete meta.imageDigest;
+    expect(permanentStagingAppDeploymentExecutorInternals.parseProviderSnapshotWithConfiguredTopology(
+      JSON.stringify(raw), exact, exact.target.environmentId)).toBeNull();
+  });
+
+  it("only records an actually present, unambiguous intent value regardless of opaque metadata key", () => {
+    const exact = pilotPolicy();
+    const raw = JSON.parse(providerSnapshotResponse(exact, {}, null));
+    const message = `pintpath:permanent-staging:${CANDIDATE_SHA}:${"f".repeat(64)}`;
+    raw.data.deployment.meta.actualOpaqueField = message;
+    const parse = () => permanentStagingAppDeploymentExecutorInternals.parsePilotProviderSnapshot(
+      raw.data.serviceInstance, raw.data.deployment);
+    expect(parse()?.deployment).toMatchObject({ providerMessage: message, providerMessageField: "actualOpaqueField" });
+    raw.data.deployment.meta.anotherField = message;
+    expect(parse()).toBeNull();
+  });
+
+  it("materializes distinct immutable upload identities for identical reviewed source bytes", () => {
+    const identities = [];
+    const finals = [];
+    for (let index = 0; index < 2; index += 1) {
+      const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pilot-source-nonce-")));
+      temporaryRoots.push(root);
+      fs.writeFileSync(path.join(root, "app.js"), "reviewed source", { mode: 0o644 });
+      const before = permanentStagingAppDeploymentExecutorInternals.snapshotManifestSha256(root);
+      const identity = permanentStagingAppDeploymentExecutorInternals.materializeSourceArchiveIdentity(
+        root, CANDIDATE_SHA, SOURCE_MANIFEST.treeSha, SOURCE_MANIFEST.sourceArchiveSha256);
+      expect(identity.sourceBaseManifestSha256).toBe(before);
+      expect(identity.uploadNonce).toMatch(/^[a-f0-9]{64}$/);
+      expect(fs.statSync(path.join(root, ".pintpath-source-archive.json")).mode & 0o777).toBe(0o444);
+      expect(fs.readFileSync(path.join(root, "app.js"), "utf8")).toBe("reviewed source");
+      const final = permanentStagingAppDeploymentExecutorInternals.snapshotManifestSha256(root);
+      expect(final).not.toBe(before);
+      identities.push(identity); finals.push(final);
+      expect(() => permanentStagingAppDeploymentExecutorInternals.materializeSourceArchiveIdentity(
+        root, CANDIDATE_SHA, SOURCE_MANIFEST.treeSha, SOURCE_MANIFEST.sourceArchiveSha256)).toThrow();
+      fs.writeFileSync(path.join(root, "app.js"), "tampered source");
+      expect(permanentStagingAppDeploymentExecutorInternals.snapshotManifestSha256(root)).not.toBe(final);
+    }
+    expect(identities[0]!.sourceBaseManifestSha256).toBe(identities[1]!.sourceBaseManifestSha256);
+    expect(identities[0]!.sourceIdentitySha256).not.toBe(identities[1]!.sourceIdentitySha256);
+    expect(finals[0]).not.toBe(finals[1]);
   });
 });

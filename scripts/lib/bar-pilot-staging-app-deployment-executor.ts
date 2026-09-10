@@ -14,12 +14,17 @@ import { runRailwayMutationBoundaryCheck } from
   "../check-railway-mutation-boundary.js";
 import {
   parseRailwayApplicationDeploymentAttestationEmptyPatchResponse,
-  parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse,
-  parseRailwayApplicationDeploymentAttestationRuntimeResponse,
   parseRailwayApplicationDeploymentAttestationTokenScopeResponse,
   type RailwayApplicationDeploymentAttestationProviderSnapshot,
   type RailwayApplicationDeploymentAttestationRuntimeResponse,
 } from "../../src/lib/railway-application-deployment-attestation.js";
+import {
+  canonicalProtectedSourceArchiveManifest,
+  parseProtectedSourceArchiveManifest,
+  parseProtectedSourceArchiveRuntimeResponse,
+  type ProtectedSourceArchiveIdentity,
+  type ProtectedSourceArchiveManifest,
+} from "../../src/lib/protected-source-archive.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../../src/lib/railway-deployment-identity.js";
 import {
@@ -701,12 +706,32 @@ interface SourceAuthority {
   readonly candidateSha: string;
   readonly treeSha: string;
   readonly archiveSha256: string;
+  readonly sourceArchive: ProtectedSourceArchiveIdentity;
   readonly snapshotManifestSha256: string;
   readonly snapshotPath: string;
   readonly deploymentPath: string;
   readonly close: () => void;
   readonly cleanup: () => void;
   readonly reassert: () => void;
+}
+
+export interface PilotProviderSnapshot extends Omit<
+  RailwayApplicationDeploymentAttestationProviderSnapshot, "deployment"
+> {
+  readonly deployment: Omit<
+    RailwayApplicationDeploymentAttestationProviderSnapshot["deployment"], "commitHash"
+  > & {
+    readonly commitHash: string | null;
+    readonly providerSource: string | null;
+    readonly providerMessage: string | null;
+    readonly providerMessageField: string | null;
+  };
+}
+
+interface UploadIdentity {
+  readonly deploymentId: string | null;
+  readonly message: string;
+  readonly sourceArchive: ProtectedSourceArchiveIdentity;
 }
 
 interface HeldSnapshotRoot {
@@ -733,13 +758,16 @@ interface ProviderObservation {
   readonly gitAutodeployAbsent: boolean;
   readonly collateralSha256: string;
   readonly configuredTopology: ConfiguredTopologyEvidence;
-  readonly snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot;
+  readonly snapshot: PilotProviderSnapshot;
 }
 
+type PilotRuntimeResponse = NonNullable<
+  ReturnType<typeof parseProtectedSourceArchiveRuntimeResponse>
+>;
 interface RuntimeObservation {
-  readonly health: RailwayApplicationDeploymentAttestationRuntimeResponse;
-  readonly startup: RailwayApplicationDeploymentAttestationRuntimeResponse;
-  readonly ready: RailwayApplicationDeploymentAttestationRuntimeResponse;
+  readonly health: PilotRuntimeResponse;
+  readonly startup: PilotRuntimeResponse;
+  readonly ready: PilotRuntimeResponse;
 }
 
 interface BoundaryObservation {
@@ -801,6 +829,7 @@ interface ExecutorDependencies {
     policy: PermanentStagingAppDeploymentPolicy,
     environmentId: string,
     deploymentId: string,
+    expectedSourceArchive?: ProtectedSourceArchiveIdentity,
   ) => Promise<RuntimeObservation>;
   readonly probeRuntimeAbsent: (
     origin: string,
@@ -1344,6 +1373,35 @@ function readSourceArchiveSha256(filename: string): string {
   }
 }
 
+function materializeSourceArchiveIdentity(
+  snapshotPath: string,
+  candidateSha: string,
+  treeSha: string,
+  archiveSha256: string,
+): ProtectedSourceArchiveIdentity {
+  const sourceManifest: ProtectedSourceArchiveManifest = {
+    schemaVersion: "protected-source-archive/v1",
+    candidateSha,
+    treeSha,
+    sourceArchiveSha256: archiveSha256,
+    sourceBaseManifestSha256: snapshotManifestSha256(snapshotPath),
+    uploadNonce: crypto.randomBytes(32).toString("hex"),
+  };
+  const sourceManifestBytes = canonicalProtectedSourceArchiveManifest(sourceManifest);
+  if (!parseProtectedSourceArchiveManifest(sourceManifestBytes)) {
+    throw new Error("source_authority_failed");
+  }
+  // The sole documented augmentation of the reviewed git archive. Exclusive
+  // creation rejects repository-provided provenance. The final held snapshot
+  // hash includes these bytes; the private parent excludes other local users.
+  fs.writeFileSync(path.join(snapshotPath, ".pintpath-source-archive.json"),
+    sourceManifestBytes, { flag: "wx", mode: 0o444 });
+  return Object.freeze({
+    ...sourceManifest,
+    sourceIdentitySha256: sha256(sourceManifestBytes),
+  });
+}
+
 async function defaultCreateSourceAuthority(
   cwd: string,
   candidateSha: string,
@@ -1397,6 +1455,9 @@ async function defaultCreateSourceAuthority(
     fs.chmodSync(archivePath, 0o600);
     await checkedCommand("tar", ["-xf", archivePath, "-C", snapshotPath], cwd);
     const archiveSha256 = readSourceArchiveSha256(archivePath);
+    const sourceArchive = materializeSourceArchiveIdentity(
+      snapshotPath, candidateSha, treeSha, archiveSha256,
+    );
     const manifestSha256 = snapshotManifestSha256(snapshotPath);
     heldSnapshotRoot = holdSnapshotRootDirectory(snapshotPath);
     const snapshotRoot = heldSnapshotRoot;
@@ -1427,6 +1488,7 @@ async function defaultCreateSourceAuthority(
       candidateSha,
       treeSha,
       archiveSha256,
+      sourceArchive,
       snapshotManifestSha256: manifestSha256,
       snapshotPath,
       deploymentPath: snapshotRoot.authorityPath,
@@ -1510,6 +1572,25 @@ function parseDiscoveryDeploymentId(source: string): string | null {
     if (typeof latest !== "object" || latest === null || Array.isArray(latest)) return null;
     const id = (latest as Record<string, unknown>).id;
     return typeof id === "string" && UUID_PATTERN.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseUploadDeploymentId(source: string): string | null {
+  try {
+    // Pinned Railway 5.32.0 `up --detach --json` emits exactly this object.
+    // A timeout without its deployment ID requires nonce-bound runtime
+    // reconciliation, never a second upload.
+    if (Buffer.byteLength(source) > 4_096) return null;
+    const value = exactRecord(JSON.parse(source), ["deploymentId", "logsUrl"]);
+    if (!value || typeof value.deploymentId !== "string"
+      || !UUID_PATTERN.test(value.deploymentId)
+      || typeof value.logsUrl !== "string" || value.logsUrl.length > 2_048) return null;
+    const logsUrl = new URL(value.logsUrl);
+    if (logsUrl.protocol !== "https:" || logsUrl.hostname !== "railway.com"
+      || logsUrl.username || logsUrl.password || logsUrl.port) return null;
+    return value.deploymentId;
   } catch {
     return null;
   }
@@ -1882,10 +1963,11 @@ function parseProviderSnapshotWithConfiguredTopology(
   policy: PermanentStagingAppDeploymentPolicy,
   environmentId: string,
 ): {
-  readonly snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot;
+  readonly snapshot: PilotProviderSnapshot;
   readonly configuredTopology: ConfiguredTopologyEvidence;
 } | null {
   try {
+    if (Buffer.byteLength(source) > MAX_PROVIDER_BYTES) return null;
     const root = exactRecord(JSON.parse(source), ["data"]);
     const data = exactRecord(root?.data, [
       "environment",
@@ -1899,19 +1981,91 @@ function parseProviderSnapshotWithConfiguredTopology(
       policy.target.serviceId,
     );
     if (!topology) return null;
-    const snapshot =
-      parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
-        JSON.stringify({
-          data: {
-            serviceInstance: data.serviceInstance,
-            deployment: data.deployment,
-          },
-        }),
-      );
+    const snapshot = parsePilotProviderSnapshot(data.serviceInstance, data.deployment);
     return snapshot ? { snapshot, configuredTopology: topology } : null;
   } catch {
     return null;
   }
+}
+
+function parsePilotProviderSnapshot(
+  instanceInput: unknown,
+  deploymentInput: unknown,
+): PilotProviderSnapshot | null {
+  // CLI uploads have no provider Git SHA. Validate the actual fields directly;
+  // never manufacture a Git-shaped response for the historical shared parser.
+  const uuid = z.string().regex(UUID_PATTERN);
+  const summary = z.object({
+    id: uuid,
+    status: z.string().regex(/^[A-Z_]{1,32}$/),
+    deploymentStopped: z.boolean(),
+  }).strict();
+  const domain = z.object({
+    id: uuid,
+    domain: z.string().min(1).max(253).refine((value) =>
+      value === value.toLowerCase() && !/[\r\n\0/:?#@\s]/.test(value)),
+    targetPort: z.number().int().min(1).max(65_535).nullable(),
+  }).strict();
+  const instanceResult = z.object({
+    id: uuid, serviceId: uuid, environmentId: uuid,
+    numReplicas: z.number().int().min(0).max(50).nullable(),
+    latestDeployment: summary.extend({ snapshotId: uuid }).strict(),
+    activeDeployments: z.array(summary).max(100),
+    domains: z.object({
+      serviceDomains: z.array(domain).max(100),
+      customDomains: z.array(domain).max(100),
+    }).strict(),
+  }).strict().safeParse(instanceInput);
+  const deploymentResult = z.object({
+    id: uuid, projectId: uuid, environmentId: uuid, serviceId: uuid, snapshotId: uuid,
+    meta: z.object({
+      commitHash: z.string().regex(SHA1_PATTERN).nullable().optional(),
+      imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      // Railway omits optional patchId for some real deployments. Independent
+      // scoped staged-patch reads remain mandatory before and after upload.
+      patchId: z.null().optional(),
+      source: z.string().min(1).max(128).nullable().optional(),
+    }).passthrough(),
+  }).strict().safeParse(deploymentInput);
+  if (!instanceResult.success || !deploymentResult.success) return null;
+  const instance = instanceResult.data;
+  const deployment = deploymentResult.data;
+  const domains = [
+    ...instance.domains.serviceDomains.map((value) => ({ kind: "service" as const, ...value })),
+    ...instance.domains.customDomains.map((value) => ({ kind: "custom" as const, ...value })),
+  ];
+  if (new Set(instance.activeDeployments.map((value) => value.id)).size
+      !== instance.activeDeployments.length
+    || new Set(domains.map((value) => value.id)).size !== domains.length
+    || new Set(domains.map((value) => value.domain)).size !== domains.length) return null;
+  // The provider's opaque metadata has no documented CLI message key. Record
+  // only an actually observed bounded PintPath intent value and its actual key.
+  // Its absence cannot replace the required nonce-bound runtime observation.
+  const intentMessages = Object.entries(deployment.meta).filter(([key, value]) =>
+    /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)
+    && typeof value === "string"
+    && /^pintpath:permanent-staging:[a-f0-9]{40}:[a-f0-9]{64}$/.test(value));
+  if (intentMessages.length > 1) return null;
+  return {
+    serviceInstanceId: instance.id,
+    serviceId: instance.serviceId,
+    environmentId: instance.environmentId,
+    numReplicas: instance.numReplicas,
+    latestDeployment: instance.latestDeployment,
+    activeDeployments: instance.activeDeployments,
+    domains,
+    deployment: {
+      id: deployment.id, projectId: deployment.projectId,
+      environmentId: deployment.environmentId, serviceId: deployment.serviceId,
+      snapshotId: deployment.snapshotId,
+      commitHash: deployment.meta.commitHash ?? null,
+      imageDigest: deployment.meta.imageDigest,
+      patchId: null,
+      providerSource: deployment.meta.source ?? null,
+      providerMessage: intentMessages[0]?.[1] as string | undefined ?? null,
+      providerMessageField: intentMessages[0]?.[0] ?? null,
+    },
+  };
 }
 
 function configuredTopologyAllowed(
@@ -1954,7 +2108,7 @@ function validatedProviderObservation(
   publicOrigin: string,
   scope: { readonly projectId: string; readonly environmentId: string },
   patch: { readonly environmentId: string; readonly patchEmpty: true },
-  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null,
+  snapshot: PilotProviderSnapshot | null,
   configuredTopology: ConfiguredTopologyEvidence | null,
   collateral: ReturnType<typeof parseCollateralSnapshot>,
 ): ProviderObservation {
@@ -2112,11 +2266,12 @@ function tokenForTarget(
 
 function runtimeMatches(
   route: typeof RUNTIME_ROUTES[number],
-  response: RailwayApplicationDeploymentAttestationRuntimeResponse,
+  response: PilotRuntimeResponse,
   candidateSha: string,
   policy: PermanentStagingAppDeploymentPolicy,
   environmentId: string,
   deploymentId: string,
+  expectedSourceArchive?: ProtectedSourceArchiveIdentity,
 ): boolean {
   const automaticMaintenanceEnabled = environmentId === policy.target.environmentId
     ? policy.postflightContract.automaticMaintenanceEnabled
@@ -2125,7 +2280,9 @@ function runtimeMatches(
       : null;
   if (automaticMaintenanceEnabled === null) return false;
   return response.route === route
-    && response.deployment.commitSha === candidateSha
+    && response.deployment.sourceArchive.candidateSha === candidateSha
+    && (!expectedSourceArchive || canonicalJson(response.deployment.sourceArchive)
+      === canonicalJson(expectedSourceArchive))
     && response.deployment.projectIdSha256
       === railwayDeploymentIdentityIdSha256("project", policy.projectId)
     && response.deployment.environmentIdSha256
@@ -2148,8 +2305,9 @@ async function defaultProbeRuntime(
   policy: PermanentStagingAppDeploymentPolicy,
   environmentId: string,
   deploymentId: string,
+  expectedSourceArchive?: ProtectedSourceArchiveIdentity,
 ): Promise<RuntimeObservation> {
-  const parsed: RailwayApplicationDeploymentAttestationRuntimeResponse[] = [];
+  const parsed: PilotRuntimeResponse[] = [];
   for (const route of RUNTIME_ROUTES) {
     const response = await fetchImpl(`${origin}${route}`, {
       method: "GET",
@@ -2159,7 +2317,7 @@ async function defaultProbeRuntime(
       signal: AbortSignal.timeout(20_000),
     });
     const source = await readBoundedResponse(response);
-    const runtime = parseRailwayApplicationDeploymentAttestationRuntimeResponse(
+    const runtime = parseProtectedSourceArchiveRuntimeResponse(
       route,
       source,
     );
@@ -2170,6 +2328,7 @@ async function defaultProbeRuntime(
       policy,
       environmentId,
       deploymentId,
+      expectedSourceArchive,
     )) throw new Error("runtime_probe_failed");
     parsed.push(runtime);
   }
@@ -2390,6 +2549,7 @@ function deploymentHealthy(
   policy: PermanentStagingAppDeploymentPolicy,
   candidateSha: string,
   expectedReplicaCount: number,
+  uploadIdentity?: UploadIdentity,
 ): boolean {
   const snapshot = observation.snapshot;
   return observation.tokenScopeExact
@@ -2405,13 +2565,22 @@ function deploymentHealthy(
       snapshot.environmentId,
     )
     && snapshot.latestDeployment.id === snapshot.deployment.id
+    && snapshot.latestDeployment.snapshotId === snapshot.deployment.snapshotId
     && snapshot.latestDeployment.status === "SUCCESS"
     && snapshot.latestDeployment.deploymentStopped === false
     && snapshot.activeDeployments.length === 1
     && snapshot.activeDeployments[0]?.id === snapshot.deployment.id
     && snapshot.activeDeployments[0]?.status === "SUCCESS"
     && snapshot.activeDeployments[0]?.deploymentStopped === false
-    && snapshot.deployment.commitHash === candidateSha
+    && (snapshot.deployment.commitHash === null
+      || snapshot.deployment.commitHash === candidateSha)
+    && (!uploadIdentity || (
+      uploadIdentity.sourceArchive.candidateSha === candidateSha
+      && (uploadIdentity.deploymentId === null
+        || snapshot.deployment.id === uploadIdentity.deploymentId)
+      && (snapshot.deployment.providerMessage === null
+        || snapshot.deployment.providerMessage === uploadIdentity.message)
+    ))
     && snapshot.deployment.patchId === null;
 }
 
@@ -2671,8 +2840,9 @@ async function pollForCandidate(
   candidateSha: string,
   preservedReplicaCount: number,
   dependencies: ExecutorDependencies,
+  uploadIdentity: UploadIdentity,
   previousDeploymentId: string | null = null,
-): Promise<ProviderObservation | null> {
+): Promise<{ observation: ProviderObservation; runtime: RuntimeObservation } | null> {
   const deadline = dependencies.now().getTime()
     + policy.postflightContract.maximumObservationSeconds * 1000;
   do {
@@ -2689,9 +2859,26 @@ async function pollForCandidate(
         policy,
         candidateSha,
         preservedReplicaCount,
-      )) return observation;
+        uploadIdentity,
+      )) {
+        const runtime = await dependencies.probeRuntime(
+          policy.target.publicOrigin,
+          candidateSha,
+          policy,
+          policy.target.environmentId,
+          observation.snapshot.deployment.id,
+          uploadIdentity.sourceArchive,
+        );
+        // Even injected/runtime adapters must preserve per-upload identity.
+        if (!RUNTIME_ROUTES.every((route, index) => runtimeMatches(
+          route, [runtime.health, runtime.startup, runtime.ready][index]!,
+          candidateSha, policy, policy.target.environmentId,
+          observation.snapshot.deployment.id, uploadIdentity.sourceArchive,
+        ))) throw new Error("runtime_probe_failed");
+        return { observation, runtime };
+      }
       if (
-        observation.snapshot.deployment.commitHash === candidateSha
+        observation.snapshot.deployment.id === uploadIdentity.deploymentId
         && ["FAILED", "CRASHED", "REMOVED", "CANCELLED", "SKIPPED"]
           .includes(observation.snapshot.latestDeployment.status)
       ) return null;
@@ -2778,6 +2965,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       exactPolicy,
       environmentId,
       deploymentId,
+      expectedSourceArchive,
     ) => defaultProbeRuntime(
       provisional.fetchImpl,
       origin,
@@ -2785,6 +2973,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       exactPolicy,
       environmentId,
       deploymentId,
+      expectedSourceArchive,
     )),
     probeRuntimeAbsent: overrides.probeRuntimeAbsent ?? ((origin) =>
       defaultProbeRuntimeAbsent(
@@ -2813,6 +3002,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let reconciledCandidate: ProviderObservation | null = null;
   let postflight: ProviderObservation | null = null;
   let runtime: RuntimeObservation | null = null;
+  let uploadIdentity: UploadIdentity | null = null;
   let runtimeAbsentStableBeforeWrite: boolean | null = null;
   let runtimeAbsentImmediatelyBeforeWrite: boolean | null = null;
   let runtimeAbsentPostflight: boolean | null = null;
@@ -2936,6 +3126,11 @@ export async function runPermanentStagingAppDeploymentExecutor(
       && SHA1_PATTERN.test(sourceAuthority.treeSha)
       && SHA256_PATTERN.test(sourceAuthority.archiveSha256)
       && SHA256_PATTERN.test(sourceAuthority.snapshotManifestSha256)
+      && sourceAuthority.sourceArchive.candidateSha === candidateSha
+      && sourceAuthority.sourceArchive.treeSha === sourceAuthority.treeSha
+      && sourceAuthority.sourceArchive.sourceArchiveSha256 === sourceAuthority.archiveSha256
+      && sourceAuthority.sourceArchive.sourceIdentitySha256 === sha256(
+        canonicalProtectedSourceArchiveManifest(sourceAuthority.sourceArchive))
       && path.isAbsolute(sourceAuthority.snapshotPath)
       && path.isAbsolute(sourceAuthority.deploymentPath);
     if (!checks.sourceAuthorityExact) throw new Error("source_authority_failed");
@@ -3029,6 +3224,18 @@ export async function runPermanentStagingAppDeploymentExecutor(
         : barPilotStoppedDeploymentExact(preflight.snapshot)
           && preflight.snapshot.deployment.commitHash === BAR_PILOT_STOPPED_SOURCE_SHA;
       if (!exact) throw new Error("target_preflight_failed");
+      if (currentId) {
+        const currentRuntime = await dependencies.probeRuntime(
+          policy.target.publicOrigin, candidateSha, policy,
+          policy.target.environmentId, currentId,
+        );
+        for (const [index, route] of RUNTIME_ROUTES.entries()) {
+          if (!runtimeMatches(
+            route, [currentRuntime.health, currentRuntime.startup, currentRuntime.ready][index]!,
+            candidateSha, policy, policy.target.environmentId, currentId,
+          )) throw new Error("target_preflight_failed");
+        }
+      }
       // Applying skipDeploys configuration needs a new process even when source
       // is unchanged. The pilot always uploads the exact archive once.
       preflightAlreadyCandidate = false;
@@ -3055,6 +3262,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       treeSha: sourceAuthority.treeSha,
       sourceArchiveSha256: sourceAuthority.archiveSha256,
       sourceSnapshotManifestSha256: sourceAuthority.snapshotManifestSha256,
+      sourceArchive: sourceAuthority.sourceArchive,
       previousDeploymentIdSha256: railwayDeploymentIdentityIdSha256(
         "deployment",
         preflight.snapshot.deployment.id,
@@ -3088,6 +3296,11 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.sourceReasserted = true;
 
     const message = `pintpath:${policy.target.name}:${candidateSha}:${intentSha256}`;
+    uploadIdentity = {
+      deploymentId: null,
+      message,
+      sourceArchive: sourceAuthority.sourceArchive,
+    };
     cliAuthority.assertExact();
     if (isFencedDeploymentPolicy(policy)) {
       runtimeAbsentStableBeforeWrite =
@@ -3172,37 +3385,35 @@ export async function runPermanentStagingAppDeploymentExecutor(
         }
       }
       cliOutputSha256 = sha256(`${writeResult.stdout}\0${writeResult.stderr}`);
-      acknowledgement = writeResult.code === 0 && !writeResult.timedOut
+      const uploadedDeploymentId = parseUploadDeploymentId(writeResult.stdout);
+      if (uploadedDeploymentId === preflight.snapshot.deployment.id) {
+        throw new Error("reconciliation_failed");
+      }
+      uploadIdentity = { ...uploadIdentity, deploymentId: uploadedDeploymentId };
+      acknowledgement = writeResult.code === 0 && !writeResult.timedOut && uploadedDeploymentId
         ? "received"
         : "missing_or_failed";
     }
     checks.writeAttemptedAtMostOnce = writeAttempts <= 1;
-    reconciledCandidate = preflightAlreadyCandidate
-      ? preflight
-      : await pollForCandidate(
+    const reconciled = await pollForCandidate(
         policy,
         targetToken,
         candidateSha,
         preservedReplicaCount,
         dependencies,
+        uploadIdentity,
         policy.policyId === BAR_PILOT_STAGING_POLICY_ID ? preflight.snapshot.deployment.id : null,
       );
+    reconciledCandidate = reconciled?.observation ?? null;
+    runtime = reconciled?.runtime ?? null;
     if (reconciledCandidate) {
       checks.deploymentExact = deploymentHealthy(
         reconciledCandidate,
         policy,
         candidateSha,
         preservedReplicaCount,
+        uploadIdentity,
       );
-      runtime = policy.postflightContract.runtimeProbeRequired
-        ? await dependencies.probeRuntime(
-          policy.target.publicOrigin,
-          candidateSha,
-          policy,
-          policy.target.environmentId,
-          reconciledCandidate.snapshot.deployment.id,
-        )
-        : null;
       checks.runtimeHealthExact = true;
       checks.runtimeStartupExact = true;
       checks.runtimeReadinessExact = true;
@@ -3253,6 +3464,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
             policy,
             candidateSha,
             preservedReplicaCount,
+            uploadIdentity ?? undefined,
           );
           checks.topologyPreserved =
             postflight.configuredTopology.configuredReplicas
@@ -3457,10 +3669,13 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   holdSnapshotRootDirectory,
   parseArguments,
   parseCollateralSnapshot,
+  parsePilotProviderSnapshot,
   parseProviderSnapshotWithConfiguredTopology,
+  materializeSourceArchiveIdentity,
   queryCollateralSnapshot,
   readSourceArchiveSha256,
   parseDiscoveryDeploymentId,
+  parseUploadDeploymentId,
   policyMatchesLock,
   providerDeploymentUnchanged,
   runtimeMatches,
