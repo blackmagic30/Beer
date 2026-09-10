@@ -363,6 +363,17 @@ describe("SourceEvidenceRetentionRepository with AsyncSqliteDatabase", () => {
       .toEqual(["link-a"]);
     expect(await repository.isSourceEvidenceLinked("link-a")).toBe(true);
     expect(await repository.isSourceEvidenceLinked("unlinked")).toBe(false);
+    expect(await repository.listSubmissionsWithSourceEvidence(["submission-links", "missing", "submission-links"]))
+      .toEqual(new Set(["submission-links"]));
+    expect(await repository.listSubmissionsWithSourceEvidence([])).toEqual(new Set());
+    const maximum = Array.from({ length: 500 }, (_, index) => `missing-${index}`);
+    expect(await repository.listSubmissionsWithSourceEvidence(maximum)).toEqual(new Set());
+    await expectCode(repository.listSubmissionsWithSourceEvidence([...maximum, "overflow"]), "invalid_input");
+    await expectCode(repository.listSubmissionsWithSourceEvidence(["\n"]), "invalid_input");
+    insertSubmission(raw, "malformed-link", "approved");
+    insertEvidence(raw, { id: "x".repeat(201) });
+    linkEvidence(raw, "malformed-link", "x".repeat(201), 0);
+    await expectCode(repository.listSubmissionsWithSourceEvidence(["malformed-link"]), "malformed_record");
   });
 
   it("fails closed on malformed native records and invalid bounds", async () => {

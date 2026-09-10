@@ -255,6 +255,9 @@ jobs:
       - name: Run Pint Points pilot PostgreSQL integrity and concurrency contract
         run: npx vitest run test/pint-point.repository.integration.test.ts
 
+      - name: Run public price feed with the canonical PostgreSQL connection budget
+        run: npx vitest run test/public-price.service.integration.test.ts
+
       - name: Run venue access Postgres contract
         run: npx vitest run test/venue-access.repository.integration.test.ts
 

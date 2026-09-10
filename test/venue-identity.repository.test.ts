@@ -180,6 +180,40 @@ describe("VenueIdentityRepository with AsyncSqliteDatabase", () => {
       .toMatchObject({ code: "alias_version_conflict" });
   });
 
+  it("batches duplicate identities and alias hops while bounding the public read", async () => {
+    const { raw, repository, database } = fixture();
+    const insert = raw.prepare(`INSERT INTO venue_identity_aliases
+      (alias_venue_id,canonical_venue_id,identity_key,created_at,updated_at) VALUES (?,?,?,?,?)`);
+    insert.run("first", "second", "hotel", BASE_TIME, BASE_TIME);
+    insert.run("second", "canonical", "hotel", BASE_TIME, BASE_TIME);
+    const before = database.metrics().completedQueries;
+    const result = await repository.getCanonicalVenueIds(["first", "second", "first", "canonical", " missing "]);
+    expect(result).toEqual(new Map([
+      ["first", "canonical"], ["second", "canonical"], ["canonical", "canonical"], [" missing ", "missing"],
+    ]));
+    expect(database.metrics().completedQueries - before).toBe(1);
+    expect(await repository.getCanonicalVenueIds([])).toEqual(new Map());
+    const maximum = Array.from({ length: 500 }, (_, index) => `venue-${index}`);
+    expect((await repository.getCanonicalVenueIds(maximum)).size).toBe(500);
+    await expectCode(repository.getCanonicalVenueIds([...maximum, "overflow"]), "invalid_input");
+    await expectCode(repository.getCanonicalVenueIds(["valid", "\n"]), "invalid_input");
+    raw.prepare("UPDATE venue_identity_aliases SET identity_key = '' WHERE alias_venue_id = 'first'").run();
+    await expectCode(repository.getCanonicalVenueIds(["first"]), "malformed_record");
+    await database.close();
+    await expectCode(repository.getCanonicalVenueIds(["missing"]), "persistence_failure");
+  });
+
+  it("retains the canonical depth bound in a batch", async () => {
+    const { raw, repository } = fixture();
+    const insert = raw.prepare(`INSERT INTO venue_identity_aliases
+      (alias_venue_id,canonical_venue_id,identity_key,created_at,updated_at) VALUES (?,?,?,?,?)`);
+    for (let index = 0; index < 32; index += 1) {
+      insert.run(`depth-${index}`, `depth-${index + 1}`, "hotel", BASE_TIME, BASE_TIME);
+    }
+    await expectCode(repository.getCanonicalVenueIds(["depth-0"]), "identity_limit_exceeded");
+    expect((await repository.getCanonicalVenueIds(["depth-1"])).get("depth-1")).toBe("depth-32");
+  });
+
   it("rejects self-aliases and direct or persisted cycles", async () => {
     const { raw, repository } = fixture();
     await expectCode(repository.upsertVenueIdentityAlias({
@@ -213,6 +247,7 @@ describe("VenueIdentityRepository with AsyncSqliteDatabase", () => {
     insert.run("cycle-x", "cycle-y", "x", BASE_TIME, BASE_TIME);
     insert.run("cycle-y", "cycle-x", "y", BASE_TIME, BASE_TIME);
     await expectCode(repository.getCanonicalVenueId("cycle-x"), "identity_cycle");
+    await expectCode(repository.getCanonicalVenueIds(["missing", "cycle-x"]), "identity_cycle");
   });
 
   it("rolls back descendant re-homing when the root alias insert fails", async () => {

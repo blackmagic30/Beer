@@ -507,6 +507,32 @@ export class SourceEvidenceRetentionRepository {
     });
   }
 
+  /** Page-sized evidence presence, with the same first-link validation as a single lookup. */
+  async listSubmissionsWithSourceEvidence(submissionIds: readonly string[]): Promise<Set<string>> {
+    if (!Array.isArray(submissionIds) || submissionIds.length > MAX_BATCH_LIMIT) return fail("invalid_input");
+    const ids = [...new Set(submissionIds.map((id) => requiredInputText(id)))];
+    if (!ids.length) return new Set();
+    return this.translate(async () => {
+      const rows = await this.database.prepare(
+        `SELECT ranked.submission_id AS "submissionId", ranked.evidence_id AS "evidenceId"
+           FROM (
+             SELECT link.submission_id, link.evidence_id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY link.submission_id
+                      ORDER BY link.sort_order ASC, link.evidence_id ${this.collation()} ASC
+                    ) AS link_rank
+               FROM submission_source_evidence link
+              WHERE link.submission_id IN (${ids.map(() => "?").join(", ")})
+           ) ranked
+          WHERE ranked.link_rank = 1`,
+      ).all<{ submissionId: unknown; evidenceId: unknown }>(...ids);
+      return new Set(rows.map((row) => {
+        requiredRecordText(row.evidenceId, MAX_ID_LENGTH);
+        return requiredRecordText(row.submissionId, MAX_ID_LENGTH);
+      }));
+    });
+  }
+
   async isSourceEvidenceLinked(id: string): Promise<boolean> {
     const evidenceId = requiredInputText(id);
     return this.translate(async () => Boolean(await this.database.prepare(
