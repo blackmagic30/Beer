@@ -20,10 +20,13 @@ or commercial launch. Contribution points remain a separate balance.
   `befe7fbe7c9339ee45353d34428c6d9f9d9ec80f`, fixing the observed
   101-variable hosted configuration boundary. PR #108 merged as
   `1d17eaf937f1c3561f0a42a0e4e3d2d7f356999a`, adding honest CLI archive
-  provenance. The startup recovery branch, `codex/bar-pilot-startup-recovery`,
-  handles the observed failed staging startup after independently validating
-  the existing restricted database successor. It does not reopen passing
-  product acceptance.
+  provenance. PR #109 merged as
+  `cfd8a534336623fdb8e7a9bcc3a22e1b3bff774b`; protected run `34444953562`
+  successfully recovered staging using the existing restricted database
+  successor. The hosted smoke then exposed a public price-feed failure and
+  hidden active-map list controls on mobile. The follow-up branch,
+  `codex/bar-pilot-hosted-smoke-fixes`, addresses only those failures and the
+  protected replacement of the now-running staging candidate.
 - Pre-existing work in `/Users/zac/Desktop/Beer` is preserved: modified closeout,
   reviewed-candidate verifier and workflow tests; untracked stopped-topology
   recovery workflow, scripts, policy, tests, and incident evidence. None of
@@ -62,11 +65,11 @@ retest. A passing area is not re-audited without a later regression.
 | PILOT-10 | Append-only reversal/history and correct balance | PASS; backend invariants and browser reversal, original transaction retained with linked correction |
 | PILOT-11 | Limited pilot entitlement, no Pro/payment requirement, role/venue isolation | PASS; pilot runs with old commercial/reward/gamification flags false; protected route and cross-venue tests |
 | PILOT-12 | Understandable manager setup/staff/history/reward/error/empty screens | PASS local browser; setup checklist, role-specific actions, clear redemption and correction states |
-| PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | PASS at 390×844 in Chromium; actual iPhone/hosted Google ceremony remains owner verification |
+| PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | Local connected 390×844 checks passed. Hosted active-map list controls exposed a separate defect; its three-line fix passed eight focused tests and nine rendered phone checks. Final hosted smoke must cover the active-map path; actual iPhone/Google ceremony remains owner verification |
 | PILOT-14 | Connected browser publication/award/reward/redemption/history updates | PASS; 21 checks against real PostgreSQL, zero page exceptions |
 | PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | PASS tooling and local fixture; hosted setup awaits legitimate Google identities |
 | PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | PASS on the product candidate; 5,129 local aggregate tests plus explicitly enabled PostgreSQL and Supabase runs below; required PR #106 and merged-main checks passed |
-| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | Authenticated acceptance OWNER_ACTION_REQUIRED; provider disabled and zero accounts. Public deployment must have its own successful exact-candidate workflow receipt; not inferred from local tests |
+| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | Run 34444953562 proves one successful source upload and all three exact-candidate runtime routes. Its public smoke found the price-feed and active-map defects recorded below; the follow-up needs its own deployment and smoke evidence. Authenticated acceptance remains OWNER_ACTION_REQUIRED: Google provider disabled and zero accounts |
 | PILOT-18 | Real iPhone, real bar/eligible purchase, owner legal and staff approval | OWNER_ACTION_REQUIRED; only after software acceptance |
 | PILOT-19 | Candidate commits, PR, clean worktree, exact test evidence and handoff | Recorded in [PR #106](https://github.com/blackmagic30/Beer/pull/106), this isolated branch and the final handoff; merge/deployment require the protected candidate checks |
 
