@@ -27,6 +27,10 @@ import {
   resolveAccountDeletionLedgerRuntimeConfig,
 } from "./lib/deployment-environment.js";
 import { railwayDeploymentIdentityHashes } from "./lib/railway-deployment-identity.js";
+import {
+  loadProtectedSourceArchiveRuntime,
+  type ProtectedSourceArchiveIdentity,
+} from "./lib/protected-source-archive.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { redactSecrets } from "./lib/redact.js";
@@ -56,6 +60,9 @@ type LazyRouters = {
 let lazyRoutersPromise: Promise<LazyRouters> | undefined;
 let initializingServicesCleanup: (() => Promise<void>) | undefined;
 let verifiedRestoreRuntime: VerifiedRestoreRuntimeAttestation | undefined;
+// Read and bind the packaged immutable source identity before any services or
+// automatic workers initialize. Ordinary Git deployments have no manifest.
+const protectedSourceArchiveIdentity = loadProtectedSourceArchiveRuntime();
 
 export const LARGE_JSON_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
 const FORM_FALLBACK_MAX_DECLARED_BODY_BYTES = 64 * 1024;
@@ -532,6 +539,7 @@ export function shouldRunAutomaticMaintenance(
   automaticMaintenanceEnabled = env.PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED,
   configuredCandidateSha = env.PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA,
   deployedCandidateSha = ownProcessEnvironmentString("RAILWAY_GIT_COMMIT_SHA"),
+  sourceArchive: ProtectedSourceArchiveIdentity | null = protectedSourceArchiveIdentity,
 ): boolean {
   const candidateBound = nodeEnv !== "production" || (
     typeof configuredCandidateSha === "string"
@@ -540,6 +548,7 @@ export function shouldRunAutomaticMaintenance(
     && configuredCandidateSha === deployedCandidateSha
   );
   return automaticMaintenanceEnabled
+    && sourceArchive === null
     && candidateBound
     && nodeEnv !== "test"
     && !restoreRehearsalMode
@@ -556,7 +565,7 @@ function automaticMaintenanceMetadata() {
         typeof configuredCandidateSha === "string"
         && APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_COMMIT_PATTERN, [configuredCandidateSha])
           !== null
-        && configuredCandidateSha === deployedCandidateSha
+        && configuredCandidateSha === (protectedSourceArchiveIdentity?.candidateSha ?? deployedCandidateSha)
       ),
     },
   } as const;
@@ -584,6 +593,7 @@ function deploymentMetadata() {
       !== null ? rawCommit : "unknown",
     environment: env.NODE_ENV,
     ...railwayDeploymentIdentityHashes(APP_PROCESS_ENV),
+    ...(protectedSourceArchiveIdentity ? { sourceArchive: protectedSourceArchiveIdentity } : {}),
   };
 }
 

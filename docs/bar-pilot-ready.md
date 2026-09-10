@@ -12,12 +12,16 @@ or commercial launch. Contribution points remain a separate balance.
 - Initial main inspected: `e3b0eb821d4d474776c966d94c9061375fbbe4af`.
 - PR #105 inspected and reused; recent merged #104/#103/#102/#99/#98/#97 concern
   staging containment. Open dependency/native PRs are outside this pilot.
-- Candidate branch: `codex/bar-pilot-ready`, isolated worktree
+- Product implementation branch: `codex/bar-pilot-ready`, isolated worktree
   `/Users/zac/Desktop/Beer-bar-pilot-ready`.
 - PR #106 merged as `e1073602985d8008eeded54f2462d100fda380cd` after all
   required checks and the aggregate CodeQL gate passed; PR #105 is superseded
-  and closed. A scoped follow-up, `codex/bar-pilot-staging-pagination`, fixes
-  the observed 101-variable hosted configuration boundary described below.
+  and closed. PR #107 merged as
+  `befe7fbe7c9339ee45353d34428c6d9f9d9ec80f`, fixing the observed
+  101-variable hosted configuration boundary. The source-attestation follow-up,
+  `codex/bar-pilot-source-attestation`,
+  addresses the subsequent provider metadata/CLI provenance incompatibility;
+  it does not reopen already-passing product acceptance.
 - Pre-existing work in `/Users/zac/Desktop/Beer` is preserved: modified closeout,
   reviewed-candidate verifier and workflow tests; untracked stopped-topology
   recovery workflow, scripts, policy, tests, and incident evidence. None of
@@ -125,6 +129,13 @@ retest. A passing area is not re-audited without a later regression.
   Configuration reached 101 environment variables, exposing the existing
   verifier's one-page limit. The follow-up adds bounded metadata pagination;
   it does not relax deployment, staging-patch, or production isolation checks.
+- PR #107 and its exact merged-main candidate passed all eight required checks,
+  three required artifacts, and all three CodeQL languages. The main CI run
+  passed **5,136 tests**, with **154 gated skips**, plus the dedicated **13
+  PostgreSQL pilot tests** and **68 pgTAP checks**. Protected run `34432814153`
+  then completed all eight declared staging configuration settings without a
+  deployment. Source upload stopped at provider parsing with **zero write
+  attempts**; the diagnosis and limited follow-up are recorded below.
 
 The required remote checks and later hosted deployment are live evidence on
 [PR #106](https://github.com/blackmagic30/Beer/pull/106) and the

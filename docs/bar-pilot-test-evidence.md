@@ -201,3 +201,70 @@ deployment and empty staged patch across every page before using a snapshot.
 Its regression covers the observed 101-variable boundary. A later deployment
 still needs its own successful workflow and runtime evidence; these attempts
 do not establish hosted public or authenticated acceptance.
+
+### Successful configuration and source identity compatibility
+
+[PR #107](https://github.com/blackmagic30/Beer/pull/107) merged as
+`befe7fbe7c9339ee45353d34428c6d9f9d9ec80f`. Its exact-main
+[CI run 34431841160](https://github.com/blackmagic30/Beer/actions/runs/34431841160)
+passed **5,136 tests** in 274 files, with 154 gated skips, the separate **13
+PostgreSQL pilot checks**, **68 pgTAP checks**, and the compiled artifact's
+six desktop/two mobile routes. All eight release checks, three required
+artifacts and the three-language CodeQL run passed for that exact main SHA.
+The variable verifier's **29 tests** include 20 pagination cases.
+
+[Protected run 34432814153](https://github.com/blackmagic30/Beer/actions/runs/34432814153)
+successfully configured the eight declared values, keeping maintenance and
+pilot/demo access disabled. The source deployment stopped before upload with
+`writeAttempts: 0`. Read-only diagnosis using actual provider responses found:
+
+- The retained deployment's opaque metadata has valid commit/image identifiers
+  but omits the optional `patchId` member. The historical shared snapshot parser
+  requires it to be explicitly present.
+- Discovery, the empty staged patch, configured US-West single-replica topology,
+  and complete collateral inventory (**103 variables**, two volumes, three
+  services) pass their existing contracts.
+- Pinned Railway CLI **5.32.0** uploads an archive and deployment message; it
+  does not submit Git commit metadata and excludes `.git`. Railway documents
+  Git variables as GitHub-deployment metadata. Staging has no connected Git
+  repository, and automatic Git deployment remains disabled.
+
+These are deployment compatibility failures, not evidence of a hosted product
+pass. The pilot-only follow-up uses explicit immutable archive provenance;
+it must not manufacture reserved Git variables or provider commit metadata.
+The historical production executor, shared Git attestor and original release
+policy retain their existing contracts. A later source upload and runtime
+walkthrough still require their own successful receipts.
+
+Primary transport evidence: [pinned CLI upload implementation](https://github.com/railwayapp/cli/blob/5a8c5065b5cb929d7a1cadf7e168c2eed9453999/src/controllers/upload.rs),
+[Railway variable reference](https://docs.railway.com/variables/reference).
+
+The scoped source identity fix passed **24 executor tests** and **63 runtime,
+packaging, metadata and maintenance tests**. These cover the observed missing
+metadata, per-upload nonce binding, lost acknowledgement without a write retry,
+wrong deployment/candidate/intent, stale image/snapshot, malformed or replaced
+manifest, exact staging scope, preserved genuine Git metadata, disabled workers,
+actual health-route output and repeatable compiled-artifact verification.
+Build, typecheck, JavaScript lint and source formatting passed. Logs:
+`/tmp/pintpath-source-attestation-executor-tests.log`,
+`/tmp/pintpath-source-archive-runtime-tests.log`, and
+`/tmp/pintpath-bar-pilot-source-lint.log`. These remain local tests; the next
+protected upload and hosted smoke must supply their own evidence.
+
+At **2026-09-10 03:52:59 UTC**, the new pilot snapshot parser and existing
+discovery, empty-patch, topology and paginated collateral parsers also passed
+against actual read-only Railway responses. The retained staging deployment
+was still stopped at its expected ID with US-West ×1; the inventory contained
+103 variables, two volumes and three services with no Git autodeploy.
+Production's running deployment, snapshot, source, active rows and Singapore ×1
+topology were unchanged from the saved baseline. No executor invocation,
+simulated GitHub authority, source upload or provider mutation was used for
+this compatibility check.
+
+The source-attestation follow-up's full `npm run check` passed: **276 files,
+5,204 tests**, with 48 gated files and 142 gated tests skipped. Typecheck,
+JavaScript lint, formatting, production build, isolated artifact smoke,
+secret scan (**1,096 files**) and deployment guard checks all passed. Evidence:
+`/tmp/pintpath-bar-pilot-source-check.log`. Dedicated PostgreSQL/pgTAP evidence
+above remains separate from environment-gated skips; exact remote candidate
+checks and a hosted upload are still required before promotion.

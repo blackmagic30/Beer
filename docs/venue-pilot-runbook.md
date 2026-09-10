@@ -60,6 +60,12 @@ inputs. It configures missing verified database transport values without
 restarting retained source, then uploads fresh source once. Production and the
 configured staging region/replica count are unchanged; automatic maintenance
 stays disabled. `/health`, `/startup` and `/ready` must pass for the new deployment.
+The CLI deployment reports explicit `protected-source-archive/v1` provenance,
+including the reviewed candidate and a unique upload identity. Match that
+identity to the protected deployment receipt on all three routes. A CLI upload
+does not receive GitHub-origin commit metadata; an `unknown` Git commit field
+alone is not a failed source match. Do not substitute a Git environment variable
+for the archive proof.
 
 **Owner prerequisite observed on 2026-09-10:** staging Google authorization
 returns “provider is not enabled”; the available Management API credential
