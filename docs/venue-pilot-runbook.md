@@ -60,6 +60,16 @@ inputs. It configures missing verified database transport values without
 restarting retained source, then uploads fresh source once. Production and the
 configured staging region/replica count are unchanged; automatic maintenance
 stays disabled. `/health`, `/startup` and `/ready` must pass for the new deployment.
+
+For the specifically reconciled failed upload `8b8bfe67-9829-4223-960f-2900d1c08c39`,
+the startup recovery candidate adds `recover_failed_startup=true`. This option
+requires the checked-in successful database identity correction proof and the
+exact failed deployment/snapshot/source intent. It does not permit arbitrary
+failed deployments or repeat uploads. The corrected reference uses the already
+authenticated versioned runtime login; the retired predecessor stays disabled.
+Do not run the historical fixed-predecessor URL repair after this handoff.
+After successful recovery, leave this option false for ordinary pilot enablement.
+
 The CLI deployment reports explicit `protected-source-archive/v1` provenance,
 including the reviewed candidate and a unique upload identity. Match that
 identity to the protected deployment receipt on all three routes. A CLI upload

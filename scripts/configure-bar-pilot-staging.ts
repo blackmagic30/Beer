@@ -5,6 +5,12 @@ import { fileURLToPath } from "node:url";
 
 import { runProtectedRuntimeVariableUpsert } from "./execute-protected-runtime-variable-upsert.js";
 import { barPilotVariableValueExact } from "./lib/bar-pilot-staging-contract.js";
+import {
+  BAR_PILOT_FAILED_STARTUP_RECOVERY,
+  barPilotFailedStartupDeploymentExact,
+  barPilotFailedStartupRecoveryRequested,
+  readBarPilotFailedStartupCorrectionProof,
+} from "./lib/bar-pilot-failed-startup-recovery.js";
 import { writePrivateExclusiveFile } from "./lib/trusted-filesystem.js";
 import {
   assertPostgresRailwayStockLocalhostRootCaPem,
@@ -20,6 +26,7 @@ type Environment = Readonly<Record<string, string | undefined>>;
 // All inputs are validated before the first skipDeploys mutation. With no
 // legitimate demo customer supplied, the demo endpoint stays disabled.
 export function barPilotStagingConfigurationPlan(env: Environment): ReadonlyArray<readonly [string, string]> {
+  barPilotFailedStartupRecoveryRequested(env);
   const candidate = env.GITHUB_SHA ?? "";
   const enabled = env.PINTPATH_BAR_PILOT_ENABLED ?? "";
   const venueIds = env.PINTPATH_BAR_PILOT_VENUE_IDS ?? "";
@@ -78,10 +85,21 @@ interface Dependencies {
 
 async function assertCurrentRuntime(env: Environment): Promise<void> {
   const id = env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID ?? "";
-  if (!id) return;
+  const failedStartupRecovery = barPilotFailedStartupRecoveryRequested(env);
+  if (!id && !failedStartupRecovery) return;
   const policy = parsePermanentStagingAppDeploymentPolicy(fs.readFileSync(
     "ops/railway/bar-pilot-staging-app-deployment-policy.json", "utf8"));
   if (!policy) throw new Error("Pilot policy is invalid.");
+  if (failedStartupRecovery) {
+    readBarPilotFailedStartupCorrectionProof(process.cwd());
+    const observation = await permanentStagingAppDeploymentExecutorInternals.defaultQueryTarget(
+      fetch, policy, policy.target.environmentId, policy.target.allowedReplicaCounts,
+      policy.target.publicOrigin, env.PINTPATH_RAILWAY_TARGET_METADATA_TOKEN ?? "");
+    if (!barPilotFailedStartupDeploymentExact(observation.snapshot)
+      || observation.collateralSha256 !== BAR_PILOT_FAILED_STARTUP_RECOVERY.collateralSha256
+      || !observation.gitAutodeployAbsent) throw new Error("failed_startup_recovery_invalid");
+    return;
+  }
   await permanentStagingAppDeploymentExecutorInternals.defaultProbeRuntime(
     fetch, policy.target.publicOrigin, env.GITHUB_SHA!, policy, policy.target.environmentId, id);
 }

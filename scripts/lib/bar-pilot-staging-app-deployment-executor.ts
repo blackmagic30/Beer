@@ -43,6 +43,12 @@ import {
   barPilotCurrentDeploymentExact,
   barPilotStoppedDeploymentExact,
 } from "./bar-pilot-staging-contract.js";
+import {
+  BAR_PILOT_FAILED_STARTUP_RECOVERY,
+  barPilotFailedStartupDeploymentExact,
+  barPilotFailedStartupRecoveryRequested,
+  readBarPilotFailedStartupCorrectionProof,
+} from "./bar-pilot-failed-startup-recovery.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
   "pintpath-railway-application-deployment-policy/v6" as const;
@@ -64,6 +70,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES = Object.freeze([
   "evidence_directory_unsafe",
   "evidence_exists",
   "evidence_leaf_invalid",
+  "failed_startup_recovery_invalid",
   "git_autodeploy_active",
   "github_authority_failed",
   "metadata_token_missing",
@@ -719,9 +726,10 @@ export interface PilotProviderSnapshot extends Omit<
   RailwayApplicationDeploymentAttestationProviderSnapshot, "deployment"
 > {
   readonly deployment: Omit<
-    RailwayApplicationDeploymentAttestationProviderSnapshot["deployment"], "commitHash"
+    RailwayApplicationDeploymentAttestationProviderSnapshot["deployment"], "commitHash" | "imageDigest"
   > & {
     readonly commitHash: string | null;
+    readonly imageDigest: string | null;
     readonly providerSource: string | null;
     readonly providerMessage: string | null;
     readonly providerMessageField: string | null;
@@ -2020,7 +2028,7 @@ function parsePilotProviderSnapshot(
     id: uuid, projectId: uuid, environmentId: uuid, serviceId: uuid, snapshotId: uuid,
     meta: z.object({
       commitHash: z.string().regex(SHA1_PATTERN).nullable().optional(),
-      imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      imageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable().optional(),
       // Railway omits optional patchId for some real deployments. Independent
       // scoped staged-patch reads remain mandatory before and after upload.
       patchId: z.null().optional(),
@@ -2030,6 +2038,11 @@ function parsePilotProviderSnapshot(
   if (!instanceResult.success || !deploymentResult.success) return null;
   const instance = instanceResult.data;
   const deployment = deploymentResult.data;
+  // A failed source upload can terminate before Railway publishes an image
+  // digest. Keep that absence explicit so read-only reconciliation can finish;
+  // it must never qualify a successful or still-running deployment.
+  if (!deployment.meta.imageDigest && (instance.latestDeployment.status !== "FAILED"
+    || !instance.latestDeployment.deploymentStopped)) return null;
   const domains = [
     ...instance.domains.serviceDomains.map((value) => ({ kind: "service" as const, ...value })),
     ...instance.domains.customDomains.map((value) => ({ kind: "custom" as const, ...value })),
@@ -2059,7 +2072,7 @@ function parsePilotProviderSnapshot(
       environmentId: deployment.environmentId, serviceId: deployment.serviceId,
       snapshotId: deployment.snapshotId,
       commitHash: deployment.meta.commitHash ?? null,
-      imageDigest: deployment.meta.imageDigest,
+      imageDigest: deployment.meta.imageDigest ?? null,
       patchId: null,
       providerSource: deployment.meta.source ?? null,
       providerMessage: intentMessages[0]?.[1] as string | undefined ?? null,
@@ -2572,6 +2585,8 @@ function deploymentHealthy(
     && snapshot.activeDeployments[0]?.id === snapshot.deployment.id
     && snapshot.activeDeployments[0]?.status === "SUCCESS"
     && snapshot.activeDeployments[0]?.deploymentStopped === false
+    && typeof snapshot.deployment.imageDigest === "string"
+    && /^sha256:[a-f0-9]{64}$/.test(snapshot.deployment.imageDigest)
     && (snapshot.deployment.commitHash === null
       || snapshot.deployment.commitHash === candidateSha)
     && (!uploadIdentity || (
@@ -3017,6 +3032,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let outcome: PermanentStagingAppDeploymentExecutorReceipt["outcome"] = "blocked";
   let failureCode: PermanentStagingAppDeploymentFailureCode | null = null;
   let preflightAlreadyCandidate = false;
+  let failedStartupCorrectionProofSha256: string | null = null;
   let preservedReplicaCount: number | null = null;
   let parsedArgs: ReturnType<typeof parseArguments> | null = null;
   let writeResult: CommandResult | null = null;
@@ -3218,7 +3234,14 @@ export async function runPermanentStagingAppDeploymentExecutor(
     preflightAlreadyCandidate = preflight.snapshot.deployment.commitHash === candidateSha;
     if (policy.policyId === BAR_PILOT_STAGING_POLICY_ID) {
       const currentId = dependencies.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID ?? "";
-      const exact = currentId
+      const failedStartupRecovery = barPilotFailedStartupRecoveryRequested(dependencies.env);
+      if (failedStartupRecovery) {
+        failedStartupCorrectionProofSha256 = readBarPilotFailedStartupCorrectionProof(dependencies.cwd);
+      }
+      const exact = failedStartupRecovery
+        ? barPilotFailedStartupDeploymentExact(preflight.snapshot)
+          && preflight.collateralSha256 === BAR_PILOT_FAILED_STARTUP_RECOVERY.collateralSha256
+        : currentId
         ? barPilotCurrentDeploymentExact(preflight.snapshot, currentId)
           && deploymentHealthy(preflight, policy, candidateSha, preservedReplicaCount)
         : barPilotStoppedDeploymentExact(preflight.snapshot)
@@ -3267,6 +3290,15 @@ export async function runPermanentStagingAppDeploymentExecutor(
         "deployment",
         preflight.snapshot.deployment.id,
       ),
+      ...(failedStartupCorrectionProofSha256 ? { failedStartupRecovery: {
+        previousRunId: BAR_PILOT_FAILED_STARTUP_RECOVERY.workflowRunId,
+        previousIntentSha256: BAR_PILOT_FAILED_STARTUP_RECOVERY.intentSha256,
+        previousSourceIdentitySha256: BAR_PILOT_FAILED_STARTUP_RECOVERY.sourceIdentitySha256,
+        previousSnapshotId: BAR_PILOT_FAILED_STARTUP_RECOVERY.snapshotId,
+        correctionProofSha256: failedStartupCorrectionProofSha256,
+        previousOutcome: "FAILED",
+        automaticRetryAllowed: false,
+      } } : {}),
       workerFencePrerequisite,
       preservedReplicaCount,
       legacyReplicaCountBefore: preflight.snapshot.numReplicas,
@@ -3664,6 +3696,7 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   configuredTopologyEvidence,
   costPolicyExact,
   defaultProbeRuntime,
+  defaultQueryTarget,
   defaultProbeRuntimeAbsent,
   deploymentHealthy,
   holdSnapshotRootDirectory,

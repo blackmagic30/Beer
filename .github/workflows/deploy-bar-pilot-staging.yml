@@ -26,6 +26,11 @@ on:
         description: Empty for known stopped-source recovery; later use the exact healthy deployment of this same candidate
         required: false
         type: string
+      recover_failed_startup:
+        description: Recover only the reviewed FAILED upload 8b8bfe67 after its pinned database correction proof
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -98,6 +103,7 @@ jobs:
           PINTPATH_BAR_PILOT_VENUE_IDS: ${{ inputs.venue_ids }}
           PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS: ${{ inputs.demo_customer_ids }}
           PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: ${{ inputs.expected_current_deployment_id }}
+          PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}
           PINTPATH_BAR_PILOT_CONFIGURATION_EVIDENCE: ${{ runner.temp }}/bar-pilot-configuration
           PINTPATH_STAGING_DATABASE_MAINTENANCE_URL: ${{ secrets.PINTPATH_STAGING_DATABASE_MAINTENANCE_URL }}
           PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_PEM: ${{ secrets.PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_PEM }}
@@ -214,6 +220,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: ${{ inputs.expected_current_deployment_id }}
+          PINTPATH_BAR_PILOT_RECOVER_FAILED_STARTUP: ${{ inputs.recover_failed_startup && 'true' || 'false' }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_WRITE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN }}
