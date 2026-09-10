@@ -1162,8 +1162,8 @@ export class CommunitySubmissionRepository {
       const rows = await this.database.prepare(
         `SELECT ${SUBMISSION_PROJECTION}
            FROM submissions submission
-          WHERE (@userId IS NULL OR submission.user_id = @userId)
-            AND (@status IS NULL OR submission.status = @status)
+          WHERE (CAST(@userId AS TEXT) IS NULL OR submission.user_id = @userId)
+            AND (CAST(@status AS TEXT) IS NULL OR submission.status = @status)
           ORDER BY submission.created_at DESC, submission.id DESC
           LIMIT @limit OFFSET @offset`,
       ).all<SubmissionRow>({ userId, status: input.status ?? null, limit, offset });
@@ -1180,8 +1180,8 @@ export class CommunitySubmissionRepository {
     return this.translate(async () => {
       const row = await this.database.prepare(
         `SELECT count(*) AS "count" FROM submissions submission
-          WHERE (@userId IS NULL OR submission.user_id = @userId)
-            AND (@status IS NULL OR submission.status = @status)`,
+          WHERE (CAST(@userId AS TEXT) IS NULL OR submission.user_id = @userId)
+            AND (CAST(@status AS TEXT) IS NULL OR submission.status = @status)`,
       ).get<{ count: number | string }>({ userId, status: input.status ?? null });
       return row ? safeInteger(row.count) : 0;
     });
