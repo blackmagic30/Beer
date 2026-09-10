@@ -1,3 +1,4 @@
+import { PintPointRepository } from "./db/pint-point.repository.js";
 import crypto from "node:crypto";
 import { ServerResponse } from "node:http";
 import path from "node:path";
@@ -1039,6 +1040,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
         }
       : async () => businessRepository.checkDatabaseHealth(),
     savedUpdatesReadRepository,
+    new PintPointRepository(sqlDatabase),
   );
   const schedulerStops: Array<() => Promise<void>> = [];
   const schedulerOwner = `${process.pid}:${crypto.randomUUID()}`;
@@ -2162,6 +2164,7 @@ export function createApp() {
           fieldTestMode: env.FIELD_TEST_MODE || env.RESTORE_REHEARSAL_MODE,
           restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
           pintPointsRewardsEnabled: publicConfig.pintPointsRewardsEnabled,
+          barPilotEnabled: publicConfig.barPilotEnabled,
           alcoholGamificationEnabled: publicConfig.alcoholGamificationEnabled,
           happyHourDiscoveryEnabled: publicConfig.happyHourDiscoveryEnabled,
           happyHourContributionsEnabled: publicConfig.happyHourContributionsEnabled,

@@ -1,3 +1,4 @@
+import { PintPointRepository } from "../../db/pint-point.repository.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -1212,6 +1213,7 @@ const PINT_POINT_CHECKOUT_AUTHORIZATION_MINUTES = 30;
 
 interface PintPointCheckoutClaims {
   version: 1;
+  memberPassId: string;
   userId: string;
   venueId: string;
   authorizedByUserId: string;
@@ -3224,6 +3226,10 @@ export class BusinessService {
       | "GOOGLE_MAPS_API_KEY"
       | "GOOGLE_PLACES_API_KEY"
     > & Partial<Pick<Env,
+      | "BAR_PILOT_ENABLED"
+      | "BAR_PILOT_VENUE_IDS"
+      | "BAR_PILOT_DEMO_ENABLED"
+      | "BAR_PILOT_DEMO_CUSTOMER_IDS"
       | "DATABASE_PATH"
       | "RESTORE_REHEARSAL_MODE"
       | "POSTGRES_RECOVERY_REHEARSAL_MODE"
@@ -3285,6 +3291,7 @@ export class BusinessService {
       poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
     }>,
     savedUpdatesReadRepository?: SavedUpdatesReadRepository,
+    private readonly pintPointRepository: PintPointRepository | BusinessRepository = repository,
   ) {
     this.activityAuditRepository = this.wrapActivityAuditRepository(activityAuditRepository);
     this.supportFeedbackRepository = this.wrapSupportFeedbackRepository(supportFeedbackRepository);
@@ -4342,7 +4349,8 @@ export class BusinessService {
       commercialLaunchEnabled,
       consumerPaidEnrollmentEnabled,
       fieldTestMode: this.config.FIELD_TEST_MODE,
-      pintPointsRewardsEnabled: commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED,
+      barPilotEnabled: Boolean(this.config.BAR_PILOT_ENABLED),
+      pintPointsRewardsEnabled: this.pintPointsEnabled(),
       alcoholGamificationEnabled: commercialLaunchEnabled && this.config.ALCOHOL_GAMIFICATION_ENABLED,
       venueProTrialDays: commercialLaunchEnabled ? this.config.VENUE_PRO_TRIAL_DAYS : 0,
       venueProTrialRequiresPaymentMethod: commercialLaunchEnabled
@@ -6276,7 +6284,7 @@ export class BusinessService {
   }
 
   private async getCounterStaffAssignmentsForAccount(accountId: string) {
-    if (!this.config.COMMERCIAL_LAUNCH_ENABLED) {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED && !this.config.BAR_PILOT_ENABLED) {
       return [];
     }
     await this.expireVenueCounterStaffInvitations(nowIso());
@@ -6285,6 +6293,7 @@ export class BusinessService {
       accessLevel: "counter_staff",
       status: "active",
     }))
+      .filter(assignment => this.config.COMMERCIAL_LAUNCH_ENABLED || this.isPilotVenue(assignment.venueId))
       .map((assignment) => ({
         id: assignment.id,
         venueId: assignment.venueId,
@@ -6295,9 +6304,9 @@ export class BusinessService {
         portalPath: `/venue-portal.html?venueId=${encodeURIComponent(assignment.venueId)}&tab=redemption`,
         capabilities: {
           openCounter: true,
-          recordPintPointPurchases: this.config.PINT_POINTS_REWARDS_ENABLED,
-          redeemFreePintRewards: this.config.PINT_POINTS_REWARDS_ENABLED,
-          voidOwnRecentPurchases: this.config.PINT_POINTS_REWARDS_ENABLED,
+          recordPintPointPurchases: this.pintPointsEnabled(),
+          redeemFreePintRewards: this.pintPointsEnabled(),
+          voidOwnRecentPurchases: this.pintPointsEnabled(),
           manageVenue: false,
           viewVenueAnalytics: false,
         },
@@ -6560,7 +6569,7 @@ export class BusinessService {
       priceAccessModel: hasFullAccess ? "full" : "fixed_preview",
       canViewAllPrices: hasFullAccess,
       canUseCheapestSort: hasFullAccess,
-      canUseBeerSearch: hasFullAccess,
+      canUseBeerSearch: hasFullAccess || Boolean(this.config.BAR_PILOT_ENABLED),
       canUseHappyHourActiveNow: false,
       canUseVerifiedOnly: hasFullAccess,
       canViewSpecialDiscounts: hasFullAccess && this.config.COMMERCIAL_LAUNCH_ENABLED,
@@ -7108,12 +7117,13 @@ export class BusinessService {
   }
 
   async getDiscountPass(account: BusinessAccount, authorizationHeader: string | undefined) {
-    this.assertCommercialVenueFeatureOpen();
+    this.assertBarPilotFeatureOpen();
     this.requireCurrentLegalAcceptance(account);
-    if (!isFullAccess(account, this.isAdmin(account))) {
+    if (!this.config.BAR_PILOT_ENABLED && !isFullAccess(account, this.isAdmin(account))) {
       throw new AppError("Discount passes are for full-map accounts.", 403);
     }
 
+    this.requirePintPointCustomer(account);
     const token = getBearerToken(authorizationHeader);
     if (!token) {
       throw new AppError("Login required.", 401);
@@ -7121,7 +7131,7 @@ export class BusinessService {
 
     const now = nowIso();
     const sessionTokenHash = hashToken(token);
-    this.repository.revokeDiscountPassesForSession({ sessionTokenHash, revokedAt: now });
+    (await this.pintPointRepository.revokeDiscountPassesForSession({ sessionTokenHash, revokedAt: now }));
 
     let passId = "";
     let code = "";
@@ -7130,14 +7140,14 @@ export class BusinessService {
       try {
         code = generateDiscountCode();
         passId = crypto.randomUUID();
-        this.repository.createDiscountPass({
+        (await this.pintPointRepository.createDiscountPass({
           id: passId,
           userId: account.id,
           sessionTokenHash,
           codeHash: hashDiscountCode(code),
           createdAt: now,
-          expiresAt: addMinutes(now, 30),
-        });
+          expiresAt: addMinutes(now, this.config.BAR_PILOT_ENABLED ? 5 : 30),
+        }));
         lastError = null;
         break;
       } catch (error) {
@@ -7149,7 +7159,7 @@ export class BusinessService {
       throw new AppError("Could not generate a discount pass right now.", 500);
     }
 
-    const pass = this.repository.getDiscountPassById(passId);
+    const pass = (await this.pintPointRepository.getDiscountPassById(passId));
     if (!pass) {
       throw new AppError("Could not generate a discount pass right now.", 500);
     }
@@ -7179,8 +7189,8 @@ export class BusinessService {
       qrDataUrl,
       redeemUrl: redeemUrl.toString(),
       expiresAt: pass.expiresAt,
-      validMinutes: 30,
-      copy: "This code is personal, rotates per session, and should only be shown to venue staff when redeeming a Pint Path special.",
+      validMinutes: this.config.BAR_PILOT_ENABLED ? 5 : 30,
+      copy: "Show this rotating code to staff when recording a purchase. Refresh it after each purchase.",
     };
   }
 
@@ -7274,7 +7284,7 @@ export class BusinessService {
       ? `pos:v2:${crypto.createHash("sha256").update(`${normalizedTerminalId}\0${posReference}`).digest("hex").slice(0, 40)}`
       : `pass:${hashDiscountCode(input.code)}`;
     const codeHash = hashDiscountCode(input.code);
-    const anyPass = this.repository.getDiscountPassByCodeHash(codeHash);
+    const anyPass = (await this.pintPointRepository.getDiscountPassByCodeHash(codeHash));
     let existingRedemption = this.repository.getDiscountRedemptionByIdempotencyKey({
       venueId: input.venueId,
       idempotencyKey,
@@ -7322,10 +7332,10 @@ export class BusinessService {
         copy: "This one-time discount was already recorded. No duplicate saving or Pint Points were added.",
       };
     }
-    const pass = this.repository.getActiveDiscountPassByCodeHash({
+    const pass = (await this.pintPointRepository.getActiveDiscountPassByCodeHash({
       codeHash,
       now,
-    });
+    }));
 
     if (!pass) {
       throw new AppError("Discount code expired or not found. Ask the user to refresh their Pint Path discount pass.", 404);
@@ -7602,12 +7612,56 @@ export class BusinessService {
     return result;
   }
 
-  private expirePintPointRewardCodesForAccount(accountId: string, now = nowIso()) {
-    this.repository.expireFreePintRewardCodesForUser({ userId: accountId, now });
+  private async expirePintPointRewardCodesForAccount(accountId: string, now = nowIso()) {
+    (await this.pintPointRepository.expireFreePintRewardCodesForUser({ userId: accountId, now }));
+  }
+
+  private pintPointsEnabled(): boolean {
+    return Boolean(this.config.BAR_PILOT_ENABLED || (this.config.COMMERCIAL_LAUNCH_ENABLED && this.config.PINT_POINTS_REWARDS_ENABLED));
+  }
+
+  private isPilotVenue(venueId: string): boolean {
+    return Boolean(this.config.BAR_PILOT_ENABLED && (this.config.BAR_PILOT_VENUE_IDS ?? "").split(",").map(id => id.trim()).includes(venueId));
+  }
+
+  assertBarPilotFeatureOpen(): void {
+    if (!this.config.BAR_PILOT_ENABLED) this.assertCommercialVenueFeatureOpen();
+  }
+
+  private requirePilotVenueOrCommercial(venueId: string): void {
+    if (this.isPilotVenue(venueId)) return;
+    if (this.config.BAR_PILOT_ENABLED) throw new AppError("This venue is not enrolled in the Pint Points pilot.", 403);
+    this.assertCommercialVenueFeatureOpen();
+  }
+
+  private requirePintPointCustomer(account: BusinessAccount): void {
+    if (this.config.BAR_PILOT_ENABLED) {
+      if (account.status !== "active" || !account.ageConfirmedAt) throw new AppError("An active account and age confirmation are required to use Pint Points.", 403);
+      this.requireCurrentLegalAcceptance(account);
+    } else if (!isFullAccess(account, this.isAdmin(account))) {
+      throw new AppError("This Pint Path account cannot use Pint Points right now.", 403);
+    }
+  }
+
+  async createPintPointPass(account: BusinessAccount, authorizationHeader: string | undefined) {
+    this.requirePintPointsRewardsEnabled();
+    return this.getDiscountPass(account, authorizationHeader);
+  }
+
+  async preparePilotDemoThreshold(account: BusinessAccount, venueId: string, input: { customerAccountId: string; target: 49 | 50 }) {
+    this.requirePilotVenueOrCommercial(venueId);
+    if (!this.config.BAR_PILOT_DEMO_ENABLED || !this.isPilotVenue(venueId)) throw new AppError("Pilot demonstration setup is not available here.", 403);
+    await this.requireAssignedVenue(account, venueId);
+    const customer = await this.accountSessionRepository.getAccountByPublicAccountId(input.customerAccountId);
+    const allowed = (this.config.BAR_PILOT_DEMO_CUSTOMER_IDS ?? "").split(",").map(id => id.trim());
+    if (!customer || (!allowed.includes(customer.id) && !allowed.includes(customer.publicAccountId))) throw new AppError("This account is not an authorised demonstration customer.", 403);
+    if (!(this.pintPointRepository instanceof PintPointRepository)) throw new AppError("Pilot demonstration setup is unavailable.", 503);
+    await this.pintPointRepository.prepareDemoBalance({userId: customer.id, venueId, actorUserId: account.id, target: input.target, now: nowIso()});
+    return {wallet: this.pintPointCounterWallet(await this.getPintPointWalletForAccount(customer)), copy: `Demo customer prepared at ${input.target} Pint Points. This is recorded as test activity, not a purchase.`};
   }
 
   private requirePintPointsRewardsEnabled(): void {
-    if (!this.config.PINT_POINTS_REWARDS_ENABLED) {
+    if (!this.pintPointsEnabled()) {
       throw new AppError(
         "Pint Points and Free Pint Rewards are paused while the launch promotion completes legal and venue approval.",
         503,
@@ -7615,16 +7669,16 @@ export class BusinessService {
     }
   }
 
-  private getPintPointWalletForAccount(account: BusinessAccount, now = nowIso()) {
-    this.expirePintPointRewardCodesForAccount(account.id, now);
-    const balance = this.repository.getPintPointBalance(account.id);
+  private async getPintPointWalletForAccount(account: BusinessAccount, now = nowIso()) {
+    (await this.expirePintPointRewardCodesForAccount(account.id, now));
+    const balance = (await this.pintPointRepository.getPintPointBalance(account.id));
     const rewardProgress = Math.min(FREE_PINT_REWARD_POINTS, balance.available);
-    const activeCodes = this.repository
-      .listFreePintRewardCodesForUser(account.id, 10)
+    const activeCodes = (await this.pintPointRepository
+      .listFreePintRewardCodesForUser(account.id, 10))
       .filter((code) => code.status === "active" && code.expiresAt > now);
-    const recentDrinkRecords = this.repository.listPintPointDrinkRecordsForUser(account.id, 25);
-    const recentLedger = this.repository.listPintPointLedgerForUser(account.id, 20);
-    const rewardRedemptions = this.repository.listFreePintRewardRedemptionsForUser(account.id, 10);
+    const recentDrinkRecords = (await this.pintPointRepository.listPintPointDrinkRecordsForUser(account.id, 25));
+    const recentLedger = (await this.pintPointRepository.listPintPointLedgerForUser(account.id, 20));
+    const rewardRedemptions = (await this.pintPointRepository.listFreePintRewardRedemptionsForUser(account.id, 10));
 
     return {
       balance: balance.balance,
@@ -7653,6 +7707,14 @@ export class BusinessService {
     };
   }
 
+  private pintPointCounterWallet(wallet: Awaited<ReturnType<BusinessService["getPintPointWalletForAccount"]>>) {
+    return {
+      balance: wallet.balance, reserved: wallet.reserved, available: wallet.available,
+      threshold: wallet.threshold, progress: wallet.progress, pointsUntilReward: wallet.pointsUntilReward,
+      rewardAvailable: wallet.rewardAvailable, lifetimeRedeemed: wallet.lifetimeRedeemed,
+    };
+  }
+
   private getPintPointCheckoutSigningSecret(): string {
     const configuredSecret = this.config.SOURCE_EVIDENCE_SIGNING_SECRET;
     if (!configuredSecret && this.config.NODE_ENV === "production") {
@@ -7675,7 +7737,7 @@ export class BusinessService {
     transactionReference: string;
     now: string;
     allowExpired?: boolean;
-  }): Promise<BusinessAccount> {
+  }): Promise<{ user: BusinessAccount; memberPassId: string }> {
     const [payload, signature, extra] = input.token.split(".");
     if (!payload || !signature || extra) {
       throw new AppError("Member checkout authorization is invalid. Check the member code again.", 401);
@@ -7697,6 +7759,7 @@ export class BusinessService {
     if (
       claims.version !== 1 ||
       typeof claims.userId !== "string" ||
+      typeof claims.memberPassId !== "string" ||
       claims.venueId !== input.venueId ||
       claims.authorizedByUserId !== input.authorizedByUserId ||
       claims.transactionReference !== normalizePintPointTransactionReference(input.transactionReference) ||
@@ -7711,7 +7774,9 @@ export class BusinessService {
     if (!user) {
       throw new AppError("Pint Path account not found.", 404);
     }
-    return user;
+    const pass = await this.pintPointRepository.getDiscountPassById(claims.memberPassId);
+    if (!pass || pass.userId !== user.id) throw new AppError("Customer authorisation is invalid. Check the code again.", 401);
+    return { user, memberPassId: claims.memberPassId };
   }
 
   private async resolvePintPointUser(input: {
@@ -7724,10 +7789,9 @@ export class BusinessService {
     allowExpiredCheckoutToken?: boolean;
   }) {
     if (input.code) {
-      const pass = this.repository.getActiveDiscountPassByCodeHash({
-        codeHash: hashDiscountCode(input.code),
-        now: input.now,
-      });
+      const pass = input.allowExpiredCheckoutToken
+        ? await this.pintPointRepository.getDiscountPassByCodeHash(hashDiscountCode(input.code))
+        : await this.pintPointRepository.getActiveDiscountPassByCodeHash({codeHash: hashDiscountCode(input.code), now: input.now});
       if (!pass) {
         throw new AppError("Pint Path code expired or not found. Ask the user to refresh their code.", 404);
       }
@@ -7735,7 +7799,7 @@ export class BusinessService {
       if (!user) {
         throw new AppError("Pint Path account not found.", 404);
       }
-      return user;
+      return { user, memberPassId: pass.id };
     }
 
     if (input.checkoutToken) {
@@ -7755,34 +7819,37 @@ export class BusinessService {
   }
 
   async previewPintPointMember(account: BusinessAccount, venueId: string, input: PintPointMemberPreviewInput) {
-    this.assertCommercialVenueFeatureOpen();
+    this.requirePilotVenueOrCommercial(venueId);
     this.requirePintPointsRewardsEnabled();
     const assignment = await this.requireAssignedVenue(account, venueId, "counter");
     const venue = await this.getDiscountVenueIdentity(venueId, assignment);
     const profile = await this.venueInventoryRepository.getBarProfile(venueId);
-    if (!profile?.acceptsPintPathCodes) {
+    if (this.isPilotVenue(venueId) && !profile?.active) throw new AppError("This pilot venue is not active right now.", 403);
+    if (!this.isPilotVenue(venueId) && !profile?.acceptsPintPathCodes) {
       throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
     }
 
     const now = nowIso();
-    const pass = this.repository.getActiveDiscountPassByCodeHash({
+    const pass = (await this.pintPointRepository.getActiveDiscountPassByCodeHash({
       codeHash: hashDiscountCode(input.code),
       now,
-    });
+    }));
     if (!pass) {
       throw new AppError("Pint Path code expired or not found. Ask the user to refresh their code.", 404);
     }
     const user = await this.accountSessionRepository.getAccountById(pass.userId);
-    if (!user || !isFullAccess(user, this.isAdmin(user))) {
+    if (!user) {
       throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
     }
 
+    this.requirePintPointCustomer(user);
     const dayRange = getZonedDayRangeIso(new Date(now), this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
-    const pointsToday = this.repository.countPintPointsAwardedSince({ userId: user.id, since: dayRange.startIso });
-    const wallet = this.getPintPointWalletForAccount(user, now);
-    const authorizationExpiresAt = addMinutes(now, PINT_POINT_CHECKOUT_AUTHORIZATION_MINUTES);
+    const pointsToday = (await this.pintPointRepository.countPintPointsAwardedSince({ userId: user.id, since: dayRange.startIso }));
+    const wallet = (await this.getPintPointWalletForAccount(user, now));
+    const authorizationExpiresAt = pass.expiresAt < addMinutes(now, PINT_POINT_CHECKOUT_AUTHORIZATION_MINUTES) ? pass.expiresAt : addMinutes(now, PINT_POINT_CHECKOUT_AUTHORIZATION_MINUTES);
     const checkoutToken = this.createPintPointCheckoutToken({
       version: 1,
+      memberPassId: pass.id,
       userId: user.id,
       venueId,
       authorizedByUserId: account.id,
@@ -7814,15 +7881,17 @@ export class BusinessService {
   }
 
   async createFreePintRewardCode(account: BusinessAccount, input: FreePintRewardCodeInput) {
-    this.assertCommercialVenueFeatureOpen();
+    this.assertBarPilotFeatureOpen();
     this.requirePintPointsRewardsEnabled();
+    this.requirePintPointCustomer(account);
+    if (input.venueId) this.requirePilotVenueOrCommercial(input.venueId);
     this.requireCurrentLegalAcceptance(account);
     if (account.status !== "active") {
       throw new AppError("Suspended accounts cannot create Free Pint Reward codes.", 403);
     }
 
     const now = nowIso();
-    const wallet = this.getPintPointWalletForAccount(account, now);
+    const wallet = (await this.getPintPointWalletForAccount(account, now));
     if (wallet.available < FREE_PINT_REWARD_POINTS) {
       throw new AppError(`${FREE_PINT_REWARD_POINTS} Pint Points are required for a Free Pint Reward.`, 403);
     }
@@ -7834,7 +7903,7 @@ export class BusinessService {
       try {
         code = generateDiscountCode();
         rewardCodeId = crypto.randomUUID();
-        this.repository.createFreePintRewardCode({
+        (await this.pintPointRepository.createFreePintRewardCode({
           id: rewardCodeId,
           userId: account.id,
           publicAccountId: account.publicAccountId,
@@ -7845,7 +7914,7 @@ export class BusinessService {
             requestedVenueId: input.venueId,
             reward: "free_pint",
           },
-        });
+        }));
         lastError = null;
         break;
       } catch (error) {
@@ -7860,7 +7929,7 @@ export class BusinessService {
       throw new AppError("Could not create a Free Pint Reward code right now.", 500);
     }
 
-    const rewardCode = this.repository.getFreePintRewardCodeById(rewardCodeId);
+    const rewardCode = (await this.pintPointRepository.getFreePintRewardCodeById(rewardCodeId));
     if (!rewardCode) {
       throw new AppError("Could not create a Free Pint Reward code right now.", 500);
     }
@@ -7889,7 +7958,7 @@ export class BusinessService {
       metadata: { expiresAt: rewardCode.expiresAt },
     });
 
-    const updatedWallet = this.getPintPointWalletForAccount(account, now);
+    const updatedWallet = (await this.getPintPointWalletForAccount(account, now));
     return {
       accountId: account.publicAccountId,
       code,
@@ -7898,54 +7967,58 @@ export class BusinessService {
       expiresAt: rewardCode.expiresAt,
       validMinutes: FREE_PINT_REWARD_CODE_MINUTES,
       pointsReserved: FREE_PINT_REWARD_POINTS,
+      rewardCodeId,
       wallet: updatedWallet,
       copy: "Show this one-time Free Pint Reward code to staff at an affiliated Pint Path bar. Venue staff must still complete age, ID, and responsible service checks.",
     };
   }
 
   async recordPintPointDrink(account: BusinessAccount, venueId: string, input: PintPointDrinkRecordInput) {
-    this.assertCommercialVenueFeatureOpen();
+    this.requirePilotVenueOrCommercial(venueId);
     this.requirePintPointsRewardsEnabled();
     const assignment = await this.requireAssignedVenue(account, venueId, "counter");
     const venue = await this.getDiscountVenueIdentity(venueId, assignment);
     const profile = await this.venueInventoryRepository.getBarProfile(venueId);
-    if (!profile?.acceptsPintPathCodes) {
+    if (this.isPilotVenue(venueId) && !profile?.active) throw new AppError("This pilot venue is not active right now.", 403);
+    if (!this.isPilotVenue(venueId) && !profile?.acceptsPintPathCodes) {
       throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
     }
     const now = nowIso();
     const idempotencyKey = `manual:${normalizePintPointTransactionReference(input.transactionReference)}`;
-    const existingRecord = this.repository.getPintPointDrinkRecordByIdempotencyKey({ venueId, idempotencyKey });
-    const user = await this.resolvePintPointUser({
+    const existingRecord = (await this.pintPointRepository.getPintPointDrinkRecordByIdempotencyKey({ venueId, idempotencyKey }));
+    const { user, memberPassId } = await this.resolvePintPointUser({
       code: input.code,
       checkoutToken: input.checkoutToken,
       account,
       venueId,
       transactionReference: input.transactionReference,
       now,
-      allowExpiredCheckoutToken: Boolean(existingRecord && input.checkoutToken),
+      allowExpiredCheckoutToken: Boolean(existingRecord),
     });
 
-    if (!isFullAccess(user, this.isAdmin(user))) {
+    if (!this.config.BAR_PILOT_ENABLED && !isFullAccess(user, this.isAdmin(user))) {
       throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
     }
 
+    this.requirePintPointCustomer(user);
     const isAlcoholic = input.beverageCategory === "alcoholic";
     if (existingRecord) {
       const itemMatches = (existingRecord.itemName ?? "") === (input.itemName ?? "");
       const payloadMatches = existingRecord.userId === user.id
+        && (!existingRecord.metadata.memberPassId || existingRecord.metadata.memberPassId === memberPassId)
         && existingRecord.beverageCategory === input.beverageCategory
         && existingRecord.quantity === input.quantity
         && itemMatches;
       if (!payloadMatches) {
         throw new AppError("That receipt reference is already attached to a different purchase.", 409);
       }
-      const wallet = this.getPintPointWalletForAccount(user, now);
+      const wallet = (await this.getPintPointWalletForAccount(user, now));
       const voided = existingRecord.status === "void";
       return {
         record: sanitizeVenuePintPointDrinkRecord(existingRecord),
         accountId: user.publicAccountId,
-        pointsEarned: voided ? 0 : existingRecord.pointsAwarded,
-        wallet,
+        pointsEarned: 0,
+        wallet: this.pintPointCounterWallet(wallet),
         idempotentReplay: true,
         voided,
         copy: voided
@@ -7958,8 +8031,9 @@ export class BusinessService {
       };
     }
     const today = getZonedDayRangeIso(new Date(now), this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
-    const record = this.repository.createPintPointDrinkRecord({
-      id: crypto.randomUUID(),
+    const requestedRecordId = crypto.randomUUID();
+    const record = (await this.pintPointRepository.createPintPointDrinkRecord({
+      id: requestedRecordId,
       userId: user.id,
       venueId,
       venueName: venue.venueName,
@@ -7976,13 +8050,16 @@ export class BusinessService {
       idempotencyKey,
       recordedAt: now,
       metadata: {
+        memberPassId,
         notes: input.notes,
         enteredByRole: account.role,
       },
-    });
-    const pointsEarned = record.pointsAwarded;
+    }));
+    const idempotentReplay = record.id !== requestedRecordId;
+    const pointsEarned = idempotentReplay ? 0 : record.pointsAwarded;
 
-    const wallet = this.getPintPointWalletForAccount(user, now);
+    const wallet = (await this.getPintPointWalletForAccount(user, now));
+    if (!idempotentReplay) {
     await this.recordUserActivity({
       account: user,
       eventType: "pint_point_drink_recorded",
@@ -8009,14 +8086,15 @@ export class BusinessService {
       },
     });
 
+    }
     return {
       record: sanitizeVenuePintPointDrinkRecord(record),
       accountId: user.publicAccountId,
       pointsEarned,
-      wallet,
-      idempotentReplay: false,
+      wallet: wallet ? this.pintPointCounterWallet(wallet) : null,
+      idempotentReplay,
       voided: false,
-      copy: pointsEarned > 0
+      copy: idempotentReplay ? "Already recorded. No duplicate Pint Points were added." : pointsEarned > 0
         ? `Nice — you earned ${pointsEarned} Pint Point${pointsEarned === 1 ? "" : "s"}.`
         : "Recorded. Food and non-alcoholic drinks do not earn Pint Points.",
       progressCopy: `You now have ${wallet.available} / ${FREE_PINT_REWARD_POINTS} Pint Points.`,
@@ -8032,10 +8110,10 @@ export class BusinessService {
     recordId: string,
     input: PintPointDrinkVoidInput,
   ) {
-    this.assertCommercialVenueFeatureOpen();
+    this.requirePilotVenueOrCommercial(venueId);
     this.requirePintPointsRewardsEnabled();
     const assignment = await this.requireAssignedVenue(account, venueId, "counter");
-    const record = this.repository.getPintPointDrinkRecordById(recordId);
+    const record = (await this.pintPointRepository.getPintPointDrinkRecordById(recordId));
     if (!record || record.venueId !== venueId) {
       throw new AppError("Pint Points purchase record not found for this venue.", 404);
     }
@@ -8057,19 +8135,19 @@ export class BusinessService {
     }
 
     const now = nowIso();
-    const result = this.repository.voidPintPointDrinkRecord({
+    const result = (await this.pintPointRepository.voidPintPointDrinkRecord({
       recordId,
       venueId,
       actorUserId: account.id,
       reason: input.reason,
       voidedAt: now,
-    });
+    }));
     if (!result) {
       throw new AppError("Pint Points purchase record not found for this venue.", 404);
     }
 
     const member = await this.accountSessionRepository.getAccountById(result.record.userId);
-    const wallet = member ? this.getPintPointWalletForAccount(member, now) : null;
+    const wallet = member ? (await this.getPintPointWalletForAccount(member, now)) : null;
     if (!result.idempotentReplay) {
       if (member) {
         await this.recordUserActivity({
@@ -8101,7 +8179,7 @@ export class BusinessService {
       record: sanitizeVenuePintPointDrinkRecord(result.record),
       accountId: member?.publicAccountId ?? null,
       pointsReversed: result.record.pointsAwarded,
-      wallet,
+      wallet: wallet ? this.pintPointCounterWallet(wallet) : null,
       idempotentReplay: result.idempotentReplay,
       copy: result.idempotentReplay
         ? "This purchase was already reversed. No further points changed."
@@ -8110,27 +8188,28 @@ export class BusinessService {
   }
 
   async handleFreePintRewardCode(account: BusinessAccount, venueId: string, input: FreePintRewardDecisionInput) {
-    this.assertCommercialVenueFeatureOpen();
+    this.requirePilotVenueOrCommercial(venueId);
     this.requirePintPointsRewardsEnabled();
     const assignment = await this.requireAssignedVenue(account, venueId, "counter");
     const venue = await this.getDiscountVenueIdentity(venueId, assignment);
     const profile = await this.venueInventoryRepository.getBarProfile(venueId);
+    if (this.isPilotVenue(venueId) && !profile?.active) throw new AppError("This pilot venue is not active right now.", 403);
     const tier = profile?.membershipTier ?? "basic";
     const capabilities = getBarTierCapabilities(tier, this.isAdmin(account));
 
-    if (!capabilities.canManageSpecials) {
+    if (!this.isPilotVenue(venueId) && !capabilities.canManageSpecials) {
       throw new AppError("Free Pint Rewards can only be redeemed at affiliated Pro Pint Path venues.", 403);
     }
 
     const now = nowIso();
     const codeHash = hashDiscountCode(input.code);
-    const code = this.repository.getFreePintRewardCodeByCodeHash(codeHash);
+    const code = (await this.pintPointRepository.getFreePintRewardCodeByCodeHash(codeHash));
     if (!code) {
       throw new AppError("Free Pint Reward code not found.", 404);
     }
 
     if (code.status === "active" && code.expiresAt <= now) {
-      this.repository.expireFreePintRewardCodesForUser({ userId: code.userId, now });
+      (await this.pintPointRepository.expireFreePintRewardCodesForUser({ userId: code.userId, now }));
       throw new AppError("Free Pint Reward code has expired. Ask the user to generate a new one.", 410);
     }
 
@@ -8143,13 +8222,13 @@ export class BusinessService {
       throw new AppError("This Pint Path account cannot redeem rewards right now.", 403);
     }
 
-    const wallet = this.repository.getPintPointBalance(user.id);
+    const wallet = (await this.pintPointRepository.getPintPointBalance(user.id));
     if (wallet.balance < FREE_PINT_REWARD_POINTS || wallet.reserved < FREE_PINT_REWARD_POINTS) {
       throw new AppError("This Free Pint Reward no longer has enough reserved Pint Points.", 409);
     }
 
     if (input.action === "reject") {
-      const rejected = this.repository.rejectFreePintRewardCode({
+      const rejected = (await this.pintPointRepository.rejectFreePintRewardCode({
         codeId: code.id,
         venueId,
         actorUserId: account.id,
@@ -8159,19 +8238,19 @@ export class BusinessService {
           venueName: venue.venueName,
           suburb: venue.suburb,
         },
-      });
+      }));
       return {
         status: "rejected",
         code: rejected,
         accountId: user.publicAccountId,
         venueId,
         venueName: venue.venueName,
-        wallet: this.getPintPointWalletForAccount(user, now),
+        wallet: this.pintPointCounterWallet(await this.getPintPointWalletForAccount(user, now)),
         copy: "Free Pint Reward rejected and reserved Pint Points released.",
       };
     }
 
-    const redemption = this.repository.redeemFreePintRewardCode({
+    const redemption = (await this.pintPointRepository.redeemFreePintRewardCode({
       codeId: code.id,
       userId: user.id,
       publicAccountId: user.publicAccountId,
@@ -8183,7 +8262,7 @@ export class BusinessService {
       metadata: {
         instruction: "Serve only if age, ID and responsible service checks are satisfied.",
       },
-    });
+    }));
 
     if (!redemption) {
       throw new AppError("Free Pint Reward could not be redeemed. Refresh and try again.", 409);
@@ -8217,8 +8296,8 @@ export class BusinessService {
       accountId: user.publicAccountId,
       venueId,
       venueName: venue.venueName,
-      wallet: this.getPintPointWalletForAccount(user, now),
-      title: "Valid Pint Path Reward",
+      wallet: this.pintPointCounterWallet(await this.getPintPointWalletForAccount(user, now)),
+      title: "FREE PINT REDEEMED",
       reward: "Free Pint Reward",
       instruction: "Serve only if age, ID and responsible service checks are satisfied.",
       copy: "Free Pint Reward redeemed. No Pint Point is earned for this free pint.",
@@ -8371,10 +8450,10 @@ export class BusinessService {
     const rewardVouchers = commercialLaunchEnabled
       ? this.repository.listAccountRewardVouchers(account.id, 10)
       : [];
-    const pintPointsWallet = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
-      ? this.getPintPointWalletForAccount(account, dashboardNow)
+    const pintPointsWallet = this.pintPointsEnabled()
+      ? (await this.getPintPointWalletForAccount(account, dashboardNow))
       : null;
-    const counterStaffAssignmentRows = commercialLaunchEnabled
+    const counterStaffAssignmentRows = commercialLaunchEnabled || this.config.BAR_PILOT_ENABLED
       ? await this.collectVenueAssignments({
           userId: account.id,
           accessLevel: "counter_staff",
@@ -11724,7 +11803,7 @@ export class BusinessService {
     return venues.map((venue) => ({
       ...venue,
       beerKeys: (beerKeysByVenue.get(venue.id) ?? []).filter(
-        (beerKey) => hasFullAccess || FREE_PREVIEW_BEER_KEYS.has(beerKey),
+        (beerKey) => hasFullAccess || this.isPilotVenue(venue.id) || FREE_PREVIEW_BEER_KEYS.has(beerKey),
       ),
     }));
   }
@@ -13271,7 +13350,7 @@ export class BusinessService {
       };
     }
 
-    const freePreviewRecords = dedupedRecords.map(freePreviewPriceRecord);
+    const freePreviewRecords = dedupedRecords.map(record => this.isPilotVenue(record.venueId) && (record.displayKind == null || record.displayKind === "beer") && !isHappyHourRecord(record) ? {...record, sourceSubmissionId: null, freePreviewIncluded: true as const} : freePreviewPriceRecord(record));
     const visibleCount = freePreviewRecords.filter((record) => "freePreviewIncluded" in record).length;
     const lockedCount = freePreviewRecords.filter((record) => "priceRedacted" in record).length;
     return {
@@ -13599,12 +13678,12 @@ export class BusinessService {
     venueId: string,
     query: VenueReconciliationQuery,
   ) {
-    this.assertCommercialVenueFeatureOpen();
+    this.requirePilotVenueOrCommercial(venueId);
     this.requireVerifiedBarAccount(account);
     const assignment = await this.requireAssignedVenue(account, venueId);
-    const discountTotal = this.repository.countDiscountRedemptionsForVenue(venueId);
-    const pintPointTotal = this.repository.countPintPointDrinkRecordsForVenue(venueId);
-    const discountRedemptions = this.repository
+    const discountTotal = this.config.COMMERCIAL_LAUNCH_ENABLED ? this.repository.countDiscountRedemptionsForVenue(venueId) : 0;
+    const pintPointTotal = (await this.pintPointRepository.countPintPointDrinkRecordsForVenue(venueId));
+    const discountRedemptions = this.config.COMMERCIAL_LAUNCH_ENABLED ? this.repository
       .listDiscountRedemptionsForVenue(venueId, query.limit, query.offset)
       .map((redemption) => ({
         id: redemption.id,
@@ -13616,13 +13695,15 @@ export class BusinessService {
         posReference: typeof redemption.metadata.posReference === "string" ? redemption.metadata.posReference : null,
         terminalId: typeof redemption.metadata.terminalId === "string" ? redemption.metadata.terminalId : null,
         redeemedAt: redemption.redeemedAt,
-      }));
-    const pintPointActivity = this.repository
-      .listPintPointDrinkRecordsForVenue(venueId, query.limit, query.offset)
+      })) : [];
+    const pintPointActivity = (await this.pintPointRepository
+      .listPintPointDrinkRecordsForVenue(venueId, query.limit, query.offset))
       .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
 
     return {
       venueId,
+      freePintRedemptions: {items: this.pintPointRepository instanceof PintPointRepository ? await this.pintPointRepository.listVenueRewardHistory(venueId, query.limit) : []},
+      ledger: {items: this.pintPointRepository instanceof PintPointRepository ? await this.pintPointRepository.listVenueLedgerHistory(venueId, query.limit) : []},
       pagination: {
         limit: query.limit,
         offset: query.offset,
@@ -13931,12 +14012,12 @@ export class BusinessService {
     this.requireVerifiedBarAccount(account);
     const isAdmin = this.isAdmin(account);
     const commercialLaunchEnabled = this.config.COMMERCIAL_LAUNCH_ENABLED;
-    if (commercialLaunchEnabled) {
+    if (commercialLaunchEnabled || this.config.BAR_PILOT_ENABLED) {
       await this.expireVenueCounterStaffInvitations(nowIso());
     }
     const managerAssignments = await this.collectVenueAssignments({
       ...(isAdmin ? {} : { userId: account.id }),
-      ...(!commercialLaunchEnabled ? { accessLevel: "manager" as const } : {}),
+      ...(!commercialLaunchEnabled && !this.config.BAR_PILOT_ENABLED ? { accessLevel: "manager" as const } : {}),
       status: "active",
     });
     let assignments: VenueAccessAssignmentRecord[];
@@ -13975,7 +14056,7 @@ export class BusinessService {
           updatedAt: loadedAt,
         }));
     } else {
-      assignments = managerAssignments;
+      assignments = managerAssignments.filter(item => item.accessLevel === "manager" || commercialLaunchEnabled || this.isPilotVenue(item.venueId));
     }
 
     if (!isAdmin && assignments.length === 0) {
@@ -14067,16 +14148,16 @@ export class BusinessService {
           subscriptionCurrentPeriodEnd: null,
           stripePaidMembershipTier: null,
           tierManualOverride: false,
-          acceptsPintPathCodes: false,
+          acceptsPintPathCodes: this.isPilotVenue(selectedVenueId),
           posLastSuccessAt: null,
           posLastTerminalId: null,
         };
 
     if (accessLevel === "counter_staff") {
-      this.assertCommercialVenueFeatureOpen();
-      const recentActivity = this.config.PINT_POINTS_REWARDS_ENABLED
-        ? this.repository
-            .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
+      this.requirePilotVenueOrCommercial(selectedVenueId);
+      const recentActivity = this.pintPointsEnabled()
+        ? (await this.pintPointRepository
+            .listPintPointDrinkRecordsForVenue(selectedVenueId, 12))
             .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity))
         : [];
       const counterBeers = (await this.venueInventoryRepository
@@ -14116,12 +14197,13 @@ export class BusinessService {
           accessLevel: item.accessLevel,
         })),
         selectedVenue: { venueId: selectedVenueId, venueName, suburb },
+        pilot: { enabled: this.isPilotVenue(selectedVenueId), demoEnabled: Boolean(this.isPilotVenue(selectedVenueId) && this.config.BAR_PILOT_DEMO_ENABLED) },
         profile: {
           barId: profile.barId,
           name: profile.name,
           suburb: profile.suburb,
           membershipTier: profile.membershipTier,
-          acceptsPintPathCodes: profile.acceptsPintPathCodes,
+          acceptsPintPathCodes: this.isPilotVenue(selectedVenueId) || profile.acceptsPintPathCodes,
         },
         tier: null,
         inventory: { beers: counterBeers, happyHours: [], specials: counterSpecials },
@@ -14132,7 +14214,7 @@ export class BusinessService {
         paidVenueIntelligence: null,
         dailySpecialsPlanner: null,
         discounts: null,
-        pintPoints: this.config.PINT_POINTS_REWARDS_ENABLED
+        pintPoints: this.pintPointsEnabled()
           ? {
               today: null,
               month: null,
@@ -14306,26 +14388,26 @@ export class BusinessService {
           recentLimit: 10,
         })
       : null;
-    const pintPointTodayStats = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
-      ? this.repository.getPintPointStatsForVenue({
+    const pintPointTodayStats = (this.isPilotVenue(selectedVenueId) || (commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED))
+      ? (await this.pintPointRepository.getPintPointStatsForVenue({
           venueId: selectedVenueId,
           startIso: todayRange.startIso,
           endIso: todayRange.endIso,
-        })
+        }))
       : null;
-    const pintPointMonthStats = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
-      ? this.repository.getPintPointStatsForVenue({
+    const pintPointMonthStats = (this.isPilotVenue(selectedVenueId) || (commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED))
+      ? (await this.pintPointRepository.getPintPointStatsForVenue({
           venueId: selectedVenueId,
           startIso: analyticsMonthRange.startsAt,
           endIso: analyticsMonthRange.endsAt,
-        })
+        }))
       : null;
-    const recentPintPointActivity = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
-      ? this.repository
-          .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
+    const recentPintPointActivity = (this.isPilotVenue(selectedVenueId) || (commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED))
+      ? (await this.pintPointRepository
+          .listPintPointDrinkRecordsForVenue(selectedVenueId, 12))
           .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity))
       : [];
-    const staffAssignmentRows = commercialLaunchEnabled
+    const staffAssignmentRows = commercialLaunchEnabled || this.isPilotVenue(selectedVenueId)
       ? await this.collectVenueAssignments({
           venueId: selectedVenueId,
           accessLevel: "counter_staff",
@@ -14399,6 +14481,7 @@ export class BusinessService {
         venueName,
         suburb,
       },
+      pilot: { enabled: this.isPilotVenue(selectedVenueId), demoEnabled: Boolean(this.isPilotVenue(selectedVenueId) && this.config.BAR_PILOT_DEMO_ENABLED), redemptionTested: (pintPointMonthStats?.freeRewardsRedeemed ?? 0) > 0 },
       profile: portalProfile,
       tier: {
         ...capabilities,
@@ -14418,7 +14501,7 @@ export class BusinessService {
       paidVenueIntelligence,
       dailySpecialsPlanner,
       discounts: discountSummary,
-      pintPoints: commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
+      pintPoints: (this.isPilotVenue(selectedVenueId) || (commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED))
         ? {
             today: pintPointTodayStats,
             month: pintPointMonthStats,
@@ -14460,7 +14543,7 @@ export class BusinessService {
     venueId: string,
     input: VenueCounterStaffAssignmentInput,
   ) {
-    this.assertCommercialVenueFeatureOpen();
+    this.requirePilotVenueOrCommercial(venueId);
     const managerAssignment = await this.requireAssignedVenue(account, venueId);
     const staffAccount = await this.accountSessionRepository.getAccountByPublicAccountId(input.accountId);
     if (!staffAccount) {
@@ -14529,7 +14612,7 @@ export class BusinessService {
     assignmentId: string,
     input: VenueCounterStaffInvitationResponseInput,
   ) {
-    this.assertCommercialVenueFeatureOpen();
+    this.assertBarPilotFeatureOpen();
     this.requireVerifiedBarAccount(account);
     const respondedAt = nowIso();
     await this.expireVenueCounterStaffInvitations(respondedAt);
@@ -14570,7 +14653,7 @@ export class BusinessService {
     venueId: string,
     input: VenueCounterStaffAssignmentInput,
   ) {
-    this.assertCommercialVenueFeatureOpen();
+    this.requirePilotVenueOrCommercial(venueId);
     await this.requireAssignedVenue(account, venueId);
     const staffAccount = await this.accountSessionRepository.getAccountByPublicAccountId(input.accountId);
     if (!staffAccount) {
@@ -14838,7 +14921,7 @@ export class BusinessService {
     }
     if (
       !this.config.COMMERCIAL_LAUNCH_ENABLED &&
-      (input.membershipTier === "pro" || input.acceptsPintPathCodes === true)
+      (input.membershipTier === "pro" || (input.acceptsPintPathCodes === true && !this.isPilotVenue(venueId)))
     ) {
       this.assertCommercialVenueFeatureOpen();
     }
@@ -14848,9 +14931,9 @@ export class BusinessService {
     const membershipTier = this.config.COMMERCIAL_LAUNCH_ENABLED && this.isAdmin(account)
       ? input.membershipTier ?? existingTier
       : existingTier;
-    const acceptsPintPathCodes = this.config.COMMERCIAL_LAUNCH_ENABLED && this.isAdmin(account)
+    const acceptsPintPathCodes = this.isPilotVenue(venueId) || (this.config.COMMERCIAL_LAUNCH_ENABLED && this.isAdmin(account)
       ? input.acceptsPintPathCodes ?? existing?.acceptsPintPathCodes ?? false
-      : false;
+      : false);
     const flags = tierFlags(membershipTier);
     const now = nowIso();
     let profile;
