@@ -13,7 +13,7 @@ import {
 import {
   parsePermanentStagingAppDeploymentPolicy,
   permanentStagingAppDeploymentExecutorInternals,
-} from "./lib/permanent-staging-app-deployment-executor.js";
+} from "./lib/bar-pilot-staging-app-deployment-executor.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 

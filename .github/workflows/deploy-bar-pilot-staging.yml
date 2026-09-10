@@ -220,7 +220,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./node_modules/.bin/tsx scripts/execute-permanent-staging-app-deployment.ts \
+          ./node_modules/.bin/tsx scripts/execute-bar-pilot-staging-app-deployment.ts \
             --policy ops/railway/bar-pilot-staging-app-deployment-policy.json \
             --candidate-sha "$CANDIDATE_SHA" \
             --evidence-dir "$RUNNER_TEMP/bar-pilot-deployment"

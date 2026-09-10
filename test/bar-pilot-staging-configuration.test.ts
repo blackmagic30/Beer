@@ -133,6 +133,8 @@ describe("bar pilot staging configuration", () => {
     expect(deploy).toContain("PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN");
     expect(deploy).not.toContain("PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN");
     expect(deploy).toContain("bar-pilot-staging-app-deployment-policy.json");
+    expect(deploy).toContain("scripts/execute-bar-pilot-staging-app-deployment.ts");
+    expect(deploy).not.toContain("scripts/execute-permanent-staging-app-deployment.ts");
     expect(workflow).not.toMatch(/railway (restart|redeploy|scale)/);
     expect(workflow).toContain("github:release-candidate:verify");
   });

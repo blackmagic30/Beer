@@ -1,3 +1,6 @@
+// Isolated pilot variant of the existing source-upload executor. The historical
+// production/staging producer remains byte-identical for its attestation pins.
+// This entry point accepts only the exact bar-pilot staging policy.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,6 +31,13 @@ import {
   type RailwayRegionReplicaCount,
 } from "./railway-multi-region-replica-topology.js";
 import { readTrustedRegularFile } from "./trusted-filesystem.js";
+import {
+  BAR_PILOT_STAGING_POLICY_ID,
+  BAR_PILOT_STOPPED_SOURCE_SHA,
+  BAR_PILOT_PACKAGE_LOCK_SHA256,
+  barPilotCurrentDeploymentExact,
+  barPilotStoppedDeploymentExact,
+} from "./bar-pilot-staging-contract.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
   "pintpath-railway-application-deployment-policy/v6" as const;
@@ -313,7 +323,7 @@ const policySchema = z.object({
     railwayConfigPath: z.literal("railway.toml"),
     railwayConfigSha256: z.literal(RAILWAY_CONFIG_SHA256),
     packageLockPath: z.literal("package-lock.json"),
-    packageLockSha256: z.literal(PACKAGE_LOCK_SHA256),
+    packageLockSha256: z.union([z.literal(PACKAGE_LOCK_SHA256), z.literal(BAR_PILOT_PACKAGE_LOCK_SHA256)]),
   }).strict(),
   mutationBoundary: z.object({
     policyPath: z.literal("ops/railway/production-staging-mutation-policy.json"),
@@ -374,6 +384,7 @@ const policySchema = z.object({
       z.tuple([z.literal(1), z.literal(2)]),
     ]),
     allowedConfiguredRegions: z.union([
+      z.tuple([z.literal("us-west2")]),
       z.tuple([z.literal("asia-southeast1-eqsg3a")]),
       z.tuple([
         z.literal("asia-southeast1-eqsg3a"),
@@ -382,6 +393,7 @@ const policySchema = z.object({
     ]),
     solePositiveRegion: z.union([
       z.null(),
+      z.literal("us-west2"),
       z.literal("asia-southeast1-eqsg3a"),
     ]),
     zeroOnlyRegions: z.union([
@@ -540,8 +552,9 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
   let fencedDeploymentContractExact: boolean;
   if (policy.target.name === "permanent-staging") {
     const stagingLock = TARGET_LOCKS["permanent-staging"];
+    const barPilot = policy.policyId === BAR_PILOT_STAGING_POLICY_ID;
     const fenced = !policy.postflightContract.automaticMaintenanceEnabled;
-    policyIdExact = policy.policyId === (
+    policyIdExact = barPilot || policy.policyId === (
       fenced
         ? stagingLock.fencedPolicyId
         : stagingLock.policyId
@@ -549,19 +562,28 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
     automaticMaintenanceStateAllowed = (
       stagingLock.allowedAutomaticMaintenanceStates as readonly boolean[]
     ).includes(policy.postflightContract.automaticMaintenanceEnabled);
-    if (policy.postflightContract.automaticMaintenanceEnabled
-      !== policy.postflightContract.runtimeProbeRequired) return false;
-    expectedReplicaCounts = fenced
+    if (barPilot ? (policy.postflightContract.automaticMaintenanceEnabled
+      || !policy.postflightContract.runtimeProbeRequired)
+      : policy.postflightContract.automaticMaintenanceEnabled
+        !== policy.postflightContract.runtimeProbeRequired) return false;
+    expectedReplicaCounts = fenced && !barPilot
       ? stagingLock.fencedAllowedReplicaCounts
       : stagingLock.allowedReplicaCounts;
     configuredTopologyContractExact = canonicalJson(
       policy.configuredTopologyContract,
     ) === canonicalJson(
-      fenced
+      barPilot
+        ? {
+            ...stagingLock.configuredTopologyContract,
+            allowedConfiguredRegions: ["us-west2"],
+            solePositiveRegion: "us-west2",
+            zeroOnlyRegions: [],
+          }
+        : fenced
         ? stagingLock.fencedConfiguredTopologyContract
         : stagingLock.configuredTopologyContract,
     );
-    fencedDeploymentContractExact = fenced
+    fencedDeploymentContractExact = fenced && !barPilot
       ? policy.fencedDeploymentContract?.configuredTopologySource
           === "environment.config(decryptVariables:false)"
         && policy.fencedDeploymentContract.configuredReplicaCount === 0
@@ -593,6 +615,8 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
       policy.fencedDeploymentContract === undefined;
   }
   return policyIdExact
+    && policy.sourceContract.packageLockSha256 === (policy.policyId === BAR_PILOT_STAGING_POLICY_ID
+      ? BAR_PILOT_PACKAGE_LOCK_SHA256 : PACKAGE_LOCK_SHA256)
     && configuredTopologyContractExact
     && fencedDeploymentContractExact
     && policy.projectId === PROJECT_ID
@@ -649,7 +673,8 @@ export function parsePermanentStagingAppDeploymentPolicy(
   try {
     const raw: unknown = JSON.parse(source);
     const policy = policySchema.parse(raw);
-    if (canonicalJson(policy) !== source || !policyMatchesLock(policy)) return null;
+    if (policy.policyId !== BAR_PILOT_STAGING_POLICY_ID
+      || canonicalJson(policy) !== source || !policyMatchesLock(policy)) return null;
     return Object.freeze(policy);
   } catch {
     return null;
@@ -744,6 +769,7 @@ interface ExecutorDependencies {
     cwd: string,
     candidateSha: string,
     env: Readonly<Record<string, string | undefined>>,
+    expectedPackageLockSha256?: string,
   ) => Promise<SourceAuthority>;
   readonly validateCli: (
     policy: PermanentStagingAppDeploymentPolicy,
@@ -1308,6 +1334,7 @@ async function defaultCreateSourceAuthority(
   cwd: string,
   candidateSha: string,
   env: Readonly<Record<string, string | undefined>>,
+  expectedPackageLockSha256: string = PACKAGE_LOCK_SHA256,
 ): Promise<SourceAuthority> {
   if (
     env.GITHUB_ACTIONS !== "true"
@@ -1336,7 +1363,7 @@ async function defaultCreateSourceAuthority(
     || sha256(fs.readFileSync(path.join(cwd, "railway.toml")))
       !== RAILWAY_CONFIG_SHA256
     || sha256(fs.readFileSync(path.join(cwd, "package-lock.json")))
-      !== PACKAGE_LOCK_SHA256
+      !== expectedPackageLockSha256
   ) throw new Error("source_authority_failed");
 
   const privateRoot = fs.mkdtempSync(
@@ -2635,6 +2662,7 @@ async function pollForCandidate(
   candidateSha: string,
   preservedReplicaCount: number,
   dependencies: ExecutorDependencies,
+  previousDeploymentId: string | null = null,
 ): Promise<ProviderObservation | null> {
   const deadline = dependencies.now().getTime()
     + policy.postflightContract.maximumObservationSeconds * 1000;
@@ -2647,7 +2675,7 @@ async function pollForCandidate(
         policy.target.publicOrigin,
         token,
       );
-      if (deploymentHealthy(
+      if (observation.snapshot.deployment.id !== previousDeploymentId && deploymentHealthy(
         observation,
         policy,
         candidateSha,
@@ -2893,6 +2921,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       dependencies.cwd,
       candidateSha,
       dependencies.env,
+      policy.sourceContract.packageLockSha256,
     );
     checks.sourceAuthorityExact = sourceAuthority.candidateSha === candidateSha
       && SHA1_PATTERN.test(sourceAuthority.treeSha)
@@ -2983,6 +3012,18 @@ export async function runPermanentStagingAppDeploymentExecutor(
       }
     }
     preflightAlreadyCandidate = preflight.snapshot.deployment.commitHash === candidateSha;
+    if (policy.policyId === BAR_PILOT_STAGING_POLICY_ID) {
+      const currentId = dependencies.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID ?? "";
+      const exact = currentId
+        ? barPilotCurrentDeploymentExact(preflight.snapshot, currentId)
+          && deploymentHealthy(preflight, policy, candidateSha, preservedReplicaCount)
+        : barPilotStoppedDeploymentExact(preflight.snapshot)
+          && preflight.snapshot.deployment.commitHash === BAR_PILOT_STOPPED_SOURCE_SHA;
+      if (!exact) throw new Error("target_preflight_failed");
+      // Applying skipDeploys configuration needs a new process even when source
+      // is unchanged. The pilot always uploads the exact archive once.
+      preflightAlreadyCandidate = false;
+    }
     if (preflightAlreadyCandidate && !deploymentHealthy(
       preflight,
       policy,
@@ -3135,6 +3176,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
         candidateSha,
         preservedReplicaCount,
         dependencies,
+        policy.policyId === BAR_PILOT_STAGING_POLICY_ID ? preflight.snapshot.deployment.id : null,
       );
     if (reconciledCandidate) {
       checks.deploymentExact = deploymentHealthy(
