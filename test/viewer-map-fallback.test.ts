@@ -32,7 +32,7 @@ function fixture() {
   const control = new EventTarget();
   const click = vi.fn();
   const noop = () => {};
-  const window = { google: { maps: { Map: maps, LatLngBounds: class {}, marker: { AdvancedMarkerElement: class {} }, event: { clearInstanceListeners: clearMapListeners } } }, gm_authFailure: noop };
+  const window = { google: { maps: { Map: maps, RenderingType: { RASTER: "RASTER" }, LatLngBounds: class {}, marker: { AdvancedMarkerElement: class {} }, event: { clearInstanceListeners: clearMapListeners } } }, gm_authFailure: noop };
   const context = vm.createContext({
     window, google: window.google, console: { info: noop }, AbortController, Promise, Error,
     testControl: control, testClick: click,
