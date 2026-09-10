@@ -292,8 +292,12 @@ async function renderRoute(context, origin, spec, mobile) {
     if (spec.name === "map") {
       const mapFallback = await page.locator("#map").innerText();
       invariant(
-        /Missing Google Maps browser key/.test(mapFallback),
-        `Map fallback did not explain the missing browser key: ${JSON.stringify(mapFallback)}`,
+        /The map is unavailable right now\. Venue list mode is still available below\./.test(mapFallback),
+        `Map fallback did not explain the usable venue-list alternative: ${JSON.stringify(mapFallback)}`,
+      );
+      invariant(
+        !/Missing Google Maps browser key|Google Maps authentication failed|TypeError|ReferenceError|SQL/.test(mapFallback),
+        `Map fallback exposed an internal failure: ${JSON.stringify(mapFallback)}`,
       );
       invariant(
         await page.locator("#venueRail").getAttribute("aria-hidden") === "false",

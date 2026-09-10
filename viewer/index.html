@@ -4162,6 +4162,8 @@
     const mapToastEl = document.getElementById("mapToast");
     let beerChipEls = [];
     let googleMapsAuthFailed = false;
+    let venueListFallbackPromise = null;
+    let stopActiveMap = () => {};
     let activeScope = "all";
     const activeFilterChips = new Set();
     let savedSuburbFilters = [];
@@ -8349,9 +8351,25 @@
       });
     }
 
+    function startVenueListFallback() {
+      if (!venueListFallbackPromise) {
+        venueListFallbackPromise = Promise.resolve().then(() =>
+          renderVenueListFallback("The map is unavailable right now."),
+        ).catch((error) => {
+          fail("Viewer list fallback failed", error);
+          renderMapFailure("The map and venue list could not load. Refresh to try again.");
+        });
+      }
+      return venueListFallbackPromise;
+    }
+
     async function renderVenueListFallback(message) {
+      stopActiveMap();
       googleMapInstance = null;
       focusVenueMarker = () => {};
+      window.__melbBeerMapRefreshVisibleRail = () => {};
+      window.__melbBeerMapAfterLocationChange = () => {};
+      window.__openStoredVenue = () => {};
       searchThisAreaButtonEl.hidden = true;
       renderMapFailure(`${message} Venue list mode is still available below.`);
 
@@ -8916,11 +8934,8 @@
 
     window.gm_authFailure = function gmAuthFailure() {
       googleMapsAuthFailed = true;
-      const message =
-        "Google Maps authentication failed. This usually means the browser API key does not allow this localhost origin, Maps JavaScript API is not enabled for the key's project, or billing is not enabled.";
-
-      fail(message);
-      renderMapFailure(message);
+      fail("Google Maps authentication failed");
+      void startVenueListFallback();
     };
 
     async function loadGoogleMapsScript() {
@@ -9057,7 +9072,7 @@
       map.setMapTypeId(PINT_PATH_CLEAN_MAP_TYPE_ID);
     }
 
-    function installCommandScrollZoomAssist(map, mapElement) {
+    function installCommandScrollZoomAssist(map, mapElement, signal) {
       if (!map || !mapElement || mapElement.dataset.commandScrollZoomAssist === "installed") {
         return;
       }
@@ -9105,7 +9120,7 @@
         setMapZoomStep(map, wheelDelta > 0 ? -1 : 1);
         lastZoomAt = now;
         wheelDelta = 0;
-      }, { passive: false, capture: true });
+      }, { passive: false, capture: true, signal });
     }
 
     async function init() {
@@ -9142,6 +9157,10 @@
             ? await window.google.maps.importLibrary("marker")
             : null;
         const AdvancedMarkerElement = markerLibrary?.AdvancedMarkerElement;
+        if (googleMapsAuthFailed || venueListFallbackPromise) {
+          await startVenueListFallback();
+          return;
+        }
         if (typeof AdvancedMarkerElement !== "function") {
           throw new Error("Google Maps marker library did not expose AdvancedMarkerElement");
         }
@@ -9162,8 +9181,20 @@
           mapOptions.styles = PINT_PATH_BASE_MAP_STYLES;
         }
         const map = new google.maps.Map(mapElement, mapOptions);
+        const mapControls = new AbortController();
+        const bindMapControl = (element, type, listener) => {
+          element.addEventListener(type, listener, { signal: mapControls.signal });
+        };
+        stopActiveMap = () => {
+          mapControls.abort();
+          google.maps.event?.clearInstanceListeners(map);
+        };
+        if (googleMapsAuthFailed || venueListFallbackPromise) {
+          await startVenueListFallback();
+          return;
+        }
         googleMapInstance = map;
-        installCommandScrollZoomAssist(map, mapElement);
+        installCommandScrollZoomAssist(map, mapElement, mapControls.signal);
 
         const markerClustererReady = loadMarkerClustererScript().catch((error) => {
           console.warn("Marker clustering unavailable", error);
@@ -9369,9 +9400,7 @@
         };
 
         function renderMarkers() {
-          if (googleMapsAuthFailed) {
-            throw new Error("Google Maps authentication failed");
-          }
+          if (mapControls.signal.aborted || venueListFallbackPromise) return;
           suppressAreaRefreshPrompt();
           clearMarkers();
 
@@ -9760,13 +9789,14 @@
         };
 
         map.addListener("idle", () => {
+          if (mapControls.signal.aborted) return;
           renderVenueRail(markerRecords, getViewState());
         });
 
         map.addListener("dragstart", showAreaRefreshPrompt);
         map.addListener("zoom_changed", showAreaRefreshPrompt);
 
-        searchThisAreaButtonEl.addEventListener("click", () => {
+        bindMapControl(searchThisAreaButtonEl, "click", () => {
           searchThisAreaButtonEl.hidden = true;
           renderVenueRail(markerRecords, getViewState());
           showToast("Visible venue list refreshed for this area.");
@@ -9776,13 +9806,14 @@
           }));
         });
 
-        useLocationButtonEl.addEventListener("click", async () => {
+        bindMapControl(useLocationButtonEl, "click", async () => {
           if (hasUserLocation()) {
             disableUserLocation("use_location_button_off");
             return;
           }
 
           const granted = await requestUserLocation("use_location_button");
+          if (mapControls.signal.aborted) return;
 
           if (granted) {
             focusMapAroundUser("use_location_button");
@@ -9805,15 +9836,15 @@
           renderMarkers();
         };
 
-        nearMeRadiusSelectEl.addEventListener("input", () => {
+        bindMapControl(nearMeRadiusSelectEl, "input", () => {
           updateNearbyRadiusFromSlider("radius_slider_input");
         });
 
-        nearMeRadiusSelectEl.addEventListener("change", () => {
+        bindMapControl(nearMeRadiusSelectEl, "change", () => {
           updateNearbyRadiusFromSlider("radius_slider", true);
         });
 
-        advancedFiltersToggleEl.addEventListener("click", () => {
+        bindMapControl(advancedFiltersToggleEl, "click", () => {
           if (advancedFiltersToggleEl.hidden || advancedFiltersToggleEl.disabled) {
             return;
           }
@@ -9829,16 +9860,16 @@
           }
         });
 
-        advancedFiltersApplyEl.addEventListener("click", () => {
+        bindMapControl(advancedFiltersApplyEl, "click", () => {
           advancedFiltersPanelEl.hidden = true;
           advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
           syncActiveFilterSummary(getViewState());
         });
 
-        venueSearchEl.addEventListener("input", () => {
+        bindMapControl(venueSearchEl, "input", () => {
           renderMarkers();
         });
-        venueSearchEl.addEventListener("change", () => {
+        bindMapControl(venueSearchEl, "change", () => {
           const query = venueSearchEl.value.trim();
           if (query) {
             const exactSuburb = getExactSuburbSearchLabel(getViewState());
@@ -9855,7 +9886,7 @@
             }
           }
         });
-        beerSearchEl.addEventListener("change", () => {
+        bindMapControl(beerSearchEl, "change", () => {
           const query = beerSearchEl.value.trim();
           if (query === "__upgrade_beer_search__") {
             beerSearchEl.value = "";
@@ -9870,7 +9901,7 @@
           }
           renderMarkers();
         });
-        onTapOnlyEl.addEventListener("change", () => {
+        bindMapControl(onTapOnlyEl, "change", () => {
           void trackBusinessEvent("map_filter_used", getAnalyticsContext({
             filter: "on_tap_only",
             enabled: onTapOnlyEl.checked,
@@ -9878,7 +9909,7 @@
           }));
           renderMarkers();
         });
-        clearFiltersEl.addEventListener("click", () => {
+        bindMapControl(clearFiltersEl, "click", () => {
           venueSearchEl.value = "";
           beerSearchEl.value = "";
           onTapOnlyEl.checked = false;
@@ -9892,7 +9923,7 @@
         });
 
         areaChipEls.forEach((chipEl) => {
-          chipEl.addEventListener("click", () => {
+          bindMapControl(chipEl, "click", () => {
             const area = chipEl.dataset.areaChip || "";
             venueSearchEl.value = area;
             trackSearchAnalytics("suburb_area_selected", area, {
@@ -9907,7 +9938,7 @@
         renderTrackedBeerChips();
 
         scopeChipEls.forEach((chipEl) => {
-          chipEl.addEventListener("click", () => {
+          bindMapControl(chipEl, "click", () => {
             activeScope = chipEl.dataset.scope || "all";
             beerSearchEl.value = "";
             onTapOnlyEl.checked = false;
@@ -9920,7 +9951,7 @@
         });
 
         highValueChipEls.forEach((chipEl) => {
-          chipEl.addEventListener("click", async () => {
+          bindMapControl(chipEl, "click", async () => {
             const filter = chipEl.dataset.filterChip;
             if (!filter || chipEl.hidden || (!HAPPY_HOUR_DISCOVERY_ENABLED && filter.startsWith("happy_hour_"))) {
               return;
@@ -9934,6 +9965,7 @@
             const isEnabling = !activeFilterChips.has(filter);
             if (isEnabling && isNearMeFilter(filter) && !hasUserLocation()) {
               const granted = await requestUserLocation(filter);
+              if (mapControls.signal.aborted) return;
               if (!granted) {
                 return;
               }
@@ -9951,6 +9983,7 @@
 
             if (filter === "my_saved_suburbs" && savedSuburbFilters.length === 0 && window.MelbBeerBusiness.hasAuthenticatedSessionHint()) {
               const account = await window.MelbBeerBusiness.apiFetch("/api/business/account").catch(() => null);
+              if (mapControls.signal.aborted) return;
               savedSuburbFilters = [...new Set([
                 ...(account?.savedItems || []).filter((item) => item.itemType === "suburb").map((item) => item.label),
                 ...(account?.preferences?.preferredSuburbs || []),
@@ -10006,7 +10039,7 @@
         });
 
         beerChipEls.forEach((chipEl) => {
-          chipEl.addEventListener("click", () => {
+          bindMapControl(chipEl, "click", () => {
             const chipBeer = chipEl.dataset.beerChip || "";
             const chipBeerKey = toSearchKey(chipBeer);
             const currentBeerKey = toSearchKey(beerSearchEl.value);
@@ -10034,7 +10067,7 @@
 
         if (hasSavedLocationPreference()) {
           void requestUserLocation("saved_location_preference").then((granted) => {
-            if (granted) {
+            if (granted && !mapControls.signal.aborted) {
               focusMapAroundUser("saved_location_preference");
             }
           });
@@ -10046,12 +10079,7 @@
         } else {
           fail("Viewer failed", error);
         }
-        try {
-          await renderVenueListFallback(message);
-        } catch (fallbackError) {
-          fail("Viewer list fallback failed", fallbackError);
-          renderMapFailure(`${message} Venue list mode could not load.`);
-        }
+        await startVenueListFallback();
       }
     }
 
