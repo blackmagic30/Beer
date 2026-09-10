@@ -1,11 +1,14 @@
 # Pint Path Role and Permission Matrix
 
-This matrix documents the approved Free bar-pilot access rules enforced by the
+This matrix documents the Free baseline and explicitly enrolled bar-pilot rules enforced by the
 Express business API, viewer pages, and canonical production runtime:
 PostgreSQL application repositories with Supabase Auth and private Storage.
 Backend checks are the source of truth; frontend hiding is only a usability
 layer. SQLite development/legacy paths and dormant commercial code are not
 execution authority for this pilot.
+
+The current scope and evidence are in [bar-pilot-ready.md](docs/bar-pilot-ready.md).
+Pilot access uses explicit venue allowlists and does not require a paid plan.
 
 ## Public / Anonymous
 
@@ -16,6 +19,8 @@ Can:
 - Create feedback, venue/beer requests, venue-interest requests, and wrong-price reports.
 - See the fixed free preview through `/api/business/price-records`: eligible
   pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
+- See intended published beers, serving sizes, stock and prices for explicitly
+  enrolled pilot venues, including beers outside that preview.
 
 Cannot:
 - Upload venue data submissions.
@@ -23,7 +28,7 @@ Cannot:
 - View account pages, saved items, private submissions, admin queues, venue portal data, analytics, or monthly reports.
 - See public happy-hour or special rows, filters, badges, or promotional claims
   in this release.
-- Fetch non-preview exact prices without contributor-unlocked/admin access, or
+- Fetch non-preview exact prices outside enrolled pilot venues without contributor-unlocked/admin access, or
   directly read private PostgreSQL, Supabase, or service-role data.
 
 Private data never exposed:
@@ -38,6 +43,9 @@ Can:
 - See their own submissions, verifications, saved items, contribution progress, age-verification status, and activity summary.
 - Use the same fixed free preview as signed-out visitors, without a daily counter.
 - Report wrong prices, send feedback, request venues/beers, and use contributor flows.
+- In the enabled bar pilot, view their drink-point wallet, rotating customer
+  identity, progress to 50 and one-use free-pint reward. Staff record purchases
+  and redeem rewards; customers cannot set either points balance.
 
 Cannot:
 - Verify their own upload.
@@ -95,13 +103,16 @@ Can:
 - See assigned venue listing quality, wrong-price report summaries, venue requests, current venue-supplied records, and update link.
 - Submit community-style updates or restricted changes for admin/data-quality
   review through the portal submission flow.
+- At an explicitly enrolled pilot venue, invite/revoke counter staff, operate
+  Pint Points/redemption, inspect venue history and reverse erroneous awards
+  with an auditable reason. Restricted demo preparation is separately gated.
 
 Cannot:
 - Access unassigned venues by URL/API manipulation.
 - Access admin dashboard or admin APIs.
 - Change their own venue membership tier through profile updates.
 - Publish public happy-hour or special rows, or access dormant Pro specials,
-  analytics, reports, billing, counter-staff, POS, or reward tools.
+  analytics, reports, billing or POS. Staff/reward tools require pilot enrolment.
 - See individual user IDs, anonymous session IDs, exact user location, raw user clickstream, account emails, or raw source-photo evidence in portal insight payloads.
 
 Publishing / validation:
@@ -116,9 +127,9 @@ Publishing / validation:
 ## Venue Tier 2: Pro — Deferred / Dormant
 
 Status for the Free bar pilot: **deferred and unavailable**. Pro enrolment,
-trials, specials, venue analytics/reports, premium display, staff/counter, POS,
-billing, and reward/redemption surfaces must remain absent and their direct
-routes must fail closed. The behavior below is retained only as a description
+trials, specials, venue analytics/reports, premium display, POS and billing
+remain absent and their direct routes fail closed. Pilot staff/points/rewards
+are independent of Pro. The behavior below is retained only as a description
 of dormant implementation for a separately approved future release.
 
 Dormant behavior if separately approved and enabled in a future release:
@@ -133,6 +144,18 @@ Cannot:
 
 Privacy threshold:
 - Suburb demand buckets are suppressed below the configured threshold, with venue-manager views using at least 10 events for sensitive demand lists.
+
+## Enrolled Pilot Counter Staff
+
+Can identify a customer through the current server-validated code, record an
+eligible purchased drink, and validate/redeem the customer's available one-use
+50-point reward at their assigned pilot venue. An identical purchase retry adds
+no point; redemption earns no point. Staff see a minimal wallet summary and
+public customer reference, not other venues' private transaction history.
+
+Cannot edit venue data, assign managers or staff, enter arbitrary balances,
+prepare demo credits, inspect protected manager history, or operate another
+venue. Revocation removes counter authority at the server transaction boundary.
 
 ## Admin / Moderator / Approver
 
@@ -159,7 +182,7 @@ Approval / validation:
 
 Current beta implementation treats data-quality missions/submissions as the challenge/points system.
 
-These are contribution points. They are separate from the deferred drink-earned
+These are contribution points. They are separate from the pilot drink-earned
 Pint Points and 50-point Free Pint Reward implementation.
 
 Can:

@@ -1,5 +1,10 @@
 # Pint Path bar-pilot closeout
 
+> Historical Free-only candidate. The current authorised pilot includes drink
+> Pint Points and one-use rewards; use [bar-pilot-ready.md](bar-pilot-ready.md)
+> and [venue-pilot-runbook.md](venue-pilot-runbook.md) for execution. This prior
+> record remains intact as evidence of the earlier scope.
+
 Checklist frozen: `2026-09-09T08:02:52Z`
 Starting commit: `e3b0eb821d4d474776c966d94c9061375fbbe4af` (`main`, identical to `origin/main`)
 Starting worktree: clean; no tracked or untracked changes reported by Git

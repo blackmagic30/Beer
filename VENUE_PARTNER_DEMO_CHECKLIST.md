@@ -3,7 +3,7 @@
 > [!WARNING]
 > **SUPERSEDED FOR EXECUTION.** Do not use this checklist to run or approve the
 > current bar pilot. Use
-> [`docs/bar-pilot-closeout.md`](docs/bar-pilot-closeout.md) as the execution
+> [`docs/bar-pilot-ready.md`](docs/bar-pilot-ready.md) as the execution
 > authority. The body below is retained unchanged for historical traceability
 > and may describe obsolete scope or workflows.
 
