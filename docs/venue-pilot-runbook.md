@@ -36,8 +36,10 @@ do not mix test credits into real customer balances.
 5. The customer opens the available free-pint reward. Staff checks its code and
    confirms redemption. Show the unmistakable redeemed result and customer
    balance reduced by 50, with no point earned for redemption.
-6. Show History, then retry the same reward: it must fail. Reverse an erroneous
-   paid purchase with a reason, and show both the original record and correction.
+6. Show History, then retry the same reward: it must fail. Record one further
+   test purchase and reverse that purchase with a reason. Show both the original
+   record and correction. This demonstrates a correction without attempting to
+   remove a point already spent on the reward.
 
 These are the meeting steps; preparation/deployment is completed beforehand.
 The connected loop passed 21 real-browser checks against isolated PostgreSQL,
