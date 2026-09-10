@@ -10,6 +10,7 @@ import { VenueAccessRepository } from "../src/db/venue-access.repository.js";
 import { PintPointRepository } from "../src/db/pint-point.repository.js";
 import { PublicPriceRepository } from "../src/db/public-price.repository.js";
 import { PilotLoopbackDatabase } from "./helpers/pilot-postgres-runtime.js";
+import { assertPostgresFixtureDisconnected } from "./helpers/postgres-pool-shutdown.js";
 
 const baseEnvironment = {
   NODE_ENV: "test", PUBLIC_BASE_URL: "http://127.0.0.1:3217",
@@ -67,9 +68,15 @@ describe.skipIf(!configuredAdminUrl)("pilot fixture on restricted canonical Post
     }
   }, 30000);
   afterAll(async () => {
-    await database?.close();
-    if (admin && databaseName) await admin.query(`DROP DATABASE ${databaseName} WITH (FORCE)`);
-    await admin?.end();
+    try {
+      await database?.close();
+      if (admin && databaseName) {
+        await assertPostgresFixtureDisconnected(admin, databaseName);
+        await admin.query(`DROP DATABASE ${databaseName}`);
+      }
+    } finally {
+      await admin?.end();
+    }
   });
   it("preflights without writes, prepares once, and resets without erasing audit history", async () => {
     expect(await preparePilotDemo({ database, environment, emails, mode: "preflight", now }))

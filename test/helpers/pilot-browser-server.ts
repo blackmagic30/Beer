@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { Client } from "pg";
+import { assertPostgresFixtureDisconnected } from "./postgres-pool-shutdown.js";
 
 if (process.env.NODE_ENV !== "test") throw new Error("Pilot browser fixtures require NODE_ENV=test.");
 const adminUrl = new URL(process.env.PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL ?? "");
@@ -125,7 +126,8 @@ async function close() {
   server.close();
   server.closeAllConnections();
   await database.close();
-  await admin.query(`DROP DATABASE ${databaseName} WITH (FORCE)`);
+  await assertPostgresFixtureDisconnected(admin, databaseName);
+  await admin.query(`DROP DATABASE ${databaseName}`);
   await admin.end();
   process.exit(0);
 }

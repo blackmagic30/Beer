@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { env } from "../src/config/env.js";
 import { VenueIdentityRepository } from "../src/db/venue-identity.repository.js";
 import { createPilotTestService, PilotLoopbackDatabase } from "./helpers/pilot-postgres-runtime.js";
+import { assertPostgresFixtureDisconnected } from "./helpers/postgres-pool-shutdown.js";
 
 const configuredAdminUrl = process.env.PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL?.trim();
 
@@ -73,11 +74,17 @@ describe.skipIf(!configuredAdminUrl)("public price feed on the two-connection Po
   }, 30000);
 
   afterAll(async () => {
-    await database?.close();
-    await target?.end();
-    if (admin && databaseName) await admin.query(`DROP DATABASE ${databaseName} WITH (FORCE)`);
-    if (admin && login) await admin.query(`DROP ROLE ${login}`);
-    await admin?.end();
+    try {
+      await database?.close();
+      await target?.end();
+      if (admin && databaseName) {
+        await assertPostgresFixtureDisconnected(admin, databaseName);
+        await admin.query(`DROP DATABASE ${databaseName}`);
+      }
+      if (admin && login) await admin.query(`DROP ROLE ${login}`);
+    } finally {
+      await admin?.end();
+    }
   });
 
   it("resolves a full alias batch through all hops without exhausting the bounded pool", async () => {

@@ -5,6 +5,7 @@ import { Client, Pool, type PoolClient, type QueryResultRow } from "pg";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import { PintPointRepository } from "../src/db/pint-point.repository.js";
 import { sqlDatabaseInternals, type SqlBindings, type SqlDatabase, type SqlStatement, type SqlPoolMetrics } from "../src/db/sql-database.js";
+import { assertPostgresFixtureDisconnected, trackPostgresPoolShutdown } from "./helpers/postgres-pool-shutdown.js";
 const ADMIN_URL_ENV = "PINTPATH_PILOT_POSTGRES_TEST_ADMIN_URL";
 const configuredAdminUrl = process.env[ADMIN_URL_ENV]?.trim() ?? "";
 function validateAdminUrl(value: string): URL {
@@ -63,6 +64,7 @@ function normalizeRow<Row extends QueryResultRow>(row: Row): Row {
 class LoopbackPostgresTestDatabase implements SqlDatabase {
   readonly dialect = "postgres" as const;
   private readonly pool: Pool;
+  private readonly closePool: () => Promise<void>;
   private readonly transactionClient = new AsyncLocalStorage<{ client: PoolClient; nextSavepoint: number }>();
   private closed = false;
   private completedQueries = 0;
@@ -76,6 +78,7 @@ class LoopbackPostgresTestDatabase implements SqlDatabase {
       types: sqlDatabaseInternals.createPostgresTypeOverrides(),
       options: "-c search_path=pintpath_app,pg_catalog -c statement_timeout=30000 -c lock_timeout=10000",
     });
+    this.closePool = trackPostgresPoolShutdown(this.pool);
   }
 
   private async query<Row extends QueryResultRow>(sql: string, bindings: SqlBindings) {
@@ -149,7 +152,7 @@ class LoopbackPostgresTestDatabase implements SqlDatabase {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.pool.end();
+    await this.closePool();
   }
 
   metrics(): SqlPoolMetrics {
@@ -180,7 +183,7 @@ describe.skipIf(!configuredAdminUrl)("canonical PostgreSQL Pint Points pilot", (
     const url = validateAdminUrl(configuredAdminUrl);
     admin = new Client({connectionString: url.toString()});
     await admin.connect();
-    await admin.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+    await admin.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     await admin.query(`DROP ROLE IF EXISTS ${login}`);
     await admin.query(`CREATE DATABASE ${databaseName}`);
     target = new Client({connectionString: withDatabase(url, databaseName)});
@@ -201,12 +204,16 @@ describe.skipIf(!configuredAdminUrl)("canonical PostgreSQL Pint Points pilot", (
       ('other-b','other','venue-b','Other Hotel','manager','active',@now,@now)`).run({now});
   }, 30000);
   afterAll(async () => {
-    await db?.close();
-    await target?.end();
-    if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
-      await admin.query(`DROP ROLE IF EXISTS ${login}`);
-      await admin.end();
+    try {
+      await db?.close();
+      await target?.end();
+      if (admin) {
+        await assertPostgresFixtureDisconnected(admin, databaseName);
+        await admin.query(`DROP DATABASE IF EXISTS ${databaseName}`);
+        await admin.query(`DROP ROLE IF EXISTS ${login}`);
+      }
+    } finally {
+      await admin?.end();
     }
   }, 30000);
 
