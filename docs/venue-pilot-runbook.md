@@ -1,69 +1,57 @@
-# Free venue pilot runbook
+# Bar pilot runbook
 
-Run this independently with three real venues that differ in size, menu format,
-staff turnover, and network quality. A code-only simulation does not count.
-This launch includes assigned venue-Free operations only. Pro, trial, billing,
-reports, rewards, counter staff, redemption, POS, specials, and public
-happy-hour discovery remain disabled.
+The current pilot scope is defined in [the candidate acceptance record](bar-pilot-ready.md).
+It supersedes the earlier Free-only runbook: authorised pilot venues can use
+staff drink Pint Points and the 50-point free-pint reward without Pro or payment.
+Contribution points remain separate. Other commercial features stay disabled.
 
-## Before the pilot
+## Real venue onboarding
 
-1. Record the frozen candidate SHA and open the matching private
-   `venue_pilot_*` gate manifest.
-2. The owner submits a venue claim from `/venue-portal.html` using the email on
-   their verified Pint Path account.
-3. An admin verifies the claimant through an independently sourced venue phone,
-   email, or existing partner contact, then approves the assignment.
-4. Prove the manager sees only the assigned venue. A second manager must be
-   denied that venue, and the pilot manager must be denied every other venue.
-5. Confirm no Pro, trial, checkout, billing, report, reward, counter, redemption,
-   POS, or special/deal control is visible or callable.
+1. The manager signs up, verifies their email and confirms age/terms, then finds
+   their venue at `/venue-portal.html` and submits a claim.
+2. An admin verifies the claimant independently through the venue's existing
+   contact, then approves the manager assignment. A pending claim never grants
+   access. Enrol only the agreed pilot venue in the runtime pilot allowlist.
+3. The manager signs in and follows the dashboard setup list: venue details,
+   ordinary hours, at least three beers, serving sizes, prices, and stock/tap state.
+4. Check the public venue. Routine venue-supplied fields publish automatically;
+   safeguarded edits retain the existing admin review boundary.
+5. In Staff, invite the staff member's verified account. The staff member accepts
+   in their account. Staff can operate the counter; they cannot edit the venue or
+   grant manager privileges. Test revocation before relying on the account.
 
-## Free venue operations
+## Browser and iPhone demonstration
 
-1. Update the venue profile and ordinary opening hours. Confirm the expected
-   public fields publish and safeguard-triggered or restricted changes remain
-   queued for admin review.
-2. Add at least three beer/stock/price rows. Verify create, edit, out-of-stock,
-   and removal behavior on the venue portal and public discovery response.
-3. Submit one separate community contribution with approved private source
-   evidence. Confirm review, evidence linkage, and publication without exposing
-   the evidence object or its path publicly.
-4. Use the retained venue-side happy-hour collection field. Confirm it remains
-   available to the assigned venue and admin while producing no consumer
-   happy-hour record, filter, card, badge, mission, contribution route, SEO
-   claim, promotional copy, or iOS surface.
-5. Interrupt the network during one safe profile or beer update, restore the
-   connection, and retry. Prove the final state is correct and no duplicate row
-   or event is created.
-6. Open support and submit one wrong-price report. Confirm the correct private
-   queue, priority, acknowledgement, and role isolation.
-7. Revoke the manager assignment and prove venue-management access stops while
-   the public venue data and audit history remain intact.
+Use the isolated labelled demo venue/customer to demonstrate test point credits;
+do not mix test credits into real customer balances.
 
-## Immediate stop conditions
+1. On the iPhone, find the venue and show its beers/prices. In the bar browser,
+   change a price/stock field, then refresh the public venue to show publication.
+2. Sign in as the customer, open Pint Points and show the rotating customer code.
+3. Staff identifies that code, selects the eligible purchased beer and confirms
+   one purchase. Show the customer's balance increasing by exactly one.
+4. Use the counter's retry of the same purchase to show it cannot add a second
+   point. For the labelled test customer, the authorised demo manager can prepare
+   49 points or reach 50 using the restricted demo control.
+5. The customer opens the available free-pint reward. Staff checks its code and
+   confirms redemption. Show the unmistakable redeemed result and customer
+   balance reduced by 50, with no point earned for redemption.
+6. Show History, then retry the same reward: it must fail. Reverse an erroneous
+   paid purchase with a reason, and show both the original record and correction.
 
-Stop the pilot and keep its evidence item pending if:
+These are the meeting steps; preparation/deployment is completed beforehand.
+Exact tested labels and fixture commands will be recorded in the candidate
+acceptance record when browser verification completes.
 
-- another venue or another user's private data is visible;
-- a restricted change bypasses the required review path;
-- private evidence, object paths, tokens, or personal data appear publicly;
-- a retry creates duplicate state or loses an acknowledged update;
-- public happy-hour discovery or contribution becomes reachable;
-- Pro, trial, paid, report, reward, counter, redemption, POS, or special/deal
-  behavior becomes reachable;
-- revocation fails to remove venue-management access; or
-- a critical/high security, privacy, data-integrity, or accessibility defect is
-  unresolved.
+## Pass and stop conditions
 
-## Evidence
+The public data, point balance, reward state and history must agree. Stop the
+pilot if a code/reward can be reused incorrectly, a balance goes negative,
+a duplicate purchase earns again, another venue's protected data is accessible,
+a stale edit overwrites newer data, or access persists after revocation.
+Record the candidate SHA, devices, venue, roles, date and observed results.
+Never record credentials, raw codes or private customer data in Git.
 
-For each venue, record the date, frozen SHA, venue, devices/browsers, owner and
-admin roles, every step/result, defects/retests, network interruption result,
-revocation result, and owner approval in its private gate manifest. Redact
-personal data and do not retain private source material in Git.
-
-The venue owner and a different independent verifier must sign the manifest.
-Update the matching `venue_pilot_*` object in `docs/release-evidence.json` only
-after every step and stop condition passes, using the opaque gate reference and
-SHA-256 format in `docs/external-launch-signoffs.md`.
+Owner approval of alcohol promotions and participating venue practice is a
+separate prerequisite for real reward use. This software runbook does not claim
+legal approval.

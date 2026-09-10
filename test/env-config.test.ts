@@ -602,7 +602,7 @@ describe("environment safety defaults", () => {
       STRIPE_PRO_PRICE_ID: "",
     });
 
-    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL supports Free and explicit bar-pilot access only");
   });
 
   it("keeps paid enrollment inert while permanent staging is in identity bootstrap", async () => {
@@ -793,6 +793,56 @@ describe("environment safety defaults", () => {
     );
   });
 
+  it("allows an explicitly enrolled PostgreSQL bar pilot independently of Stripe and paid plans", async () => {
+    stubProductionEnv({
+      BAR_PILOT_ENABLED: "true",
+      BAR_PILOT_VENUE_IDS: "pilot-venue-1",
+      ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "owner-recorded-pilot-approval",
+      STRIPE_SECRET_KEY: "",
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_PRICE_MONTHLY: "",
+      STRIPE_PRICE_YEARLY: "",
+      STRIPE_PRO_PRICE_ID: "",
+    });
+    const { env } = await loadEnv();
+    expect(env.BAR_PILOT_ENABLED).toBe(true);
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(false);
+    expect(env.PINT_POINTS_REWARDS_ENABLED).toBe(false);
+    expect(env.ALCOHOL_GAMIFICATION_ENABLED).toBe(false);
+  });
+
+  it("requires a venue allowlist and real-use approval for pilot rewards", async () => {
+    stubProductionEnv({ BAR_PILOT_ENABLED: "true", BAR_PILOT_VENUE_IDS: "" });
+    await expect(loadEnv()).rejects.toThrow("explicit BAR_PILOT_VENUE_IDS");
+    vi.resetModules();
+    stubProductionEnv({ BAR_PILOT_ENABLED: "true", BAR_PILOT_VENUE_IDS: "pilot-venue-1" });
+    await expect(loadEnv()).rejects.toThrow("ALCOHOL_PROMOTION_APPROVAL_REFERENCE");
+  });
+
+  it("never exposes the demo balance preparation mechanism on production", async () => {
+    stubProductionEnv({
+      BAR_PILOT_ENABLED: "true",
+      BAR_PILOT_VENUE_IDS: "pilot-venue-1",
+      BAR_PILOT_DEMO_ENABLED: "true",
+      BAR_PILOT_DEMO_CUSTOMER_IDS: "pilot-customer-1",
+    });
+    await expect(loadEnv()).rejects.toThrow("isolated permanent staging only");
+  });
+
+  it("permits only allowlisted isolated staging demo preparation without inventing legal approval", async () => {
+    stubStagingCompleteEnv({
+      PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+      RAILWAY_PUBLIC_DOMAIN: "beer-staging.up.railway.app",
+      BAR_PILOT_ENABLED: "true",
+      BAR_PILOT_VENUE_IDS: "pilot-venue-1",
+      BAR_PILOT_DEMO_ENABLED: "true",
+      BAR_PILOT_DEMO_CUSTOMER_IDS: "pilot-customer-1",
+    });
+    const { env } = await loadEnv();
+    expect(env.BAR_PILOT_DEMO_ENABLED).toBe(true);
+    expect(env.ALCOHOL_PROMOTION_APPROVAL_REFERENCE).toBeUndefined();
+  });
+
   it("keeps the venue offer and alcohol-linked launch features disabled by default", async () => {
     stubProductionEnv();
 
@@ -810,7 +860,7 @@ describe("environment safety defaults", () => {
       VENUE_PRO_TRIAL_DAYS: "60",
     });
 
-    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL supports Free and explicit bar-pilot access only");
   });
 
   it("keeps consumer paid enrollment closed in the canonical Postgres runtime", async () => {
@@ -820,7 +870,7 @@ describe("environment safety defaults", () => {
       VENUE_PRO_TRIAL_DAYS: "60",
     });
 
-    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL supports Free and explicit bar-pilot access only");
   });
 
   it("accepts only disabled, 30-day, or 60-day venue trial lengths", async () => {
@@ -866,7 +916,7 @@ describe("environment safety defaults", () => {
       ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "legal-and-app-review-ticket-2026-07-28",
     });
 
-    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL supports Free and explicit bar-pilot access only");
   });
 
   it("rejects invalid report timezones before reports or scheduler timers start", async () => {

@@ -745,6 +745,10 @@ const envSchema = z.object({
   POS_WEBHOOK_SIGNING_SECRET: optionalStringFromEnv,
   FIELD_TEST_MODE: booleanFromEnv.default(false),
   PINT_POINTS_REWARDS_ENABLED: booleanFromEnv.default(false),
+  BAR_PILOT_ENABLED: booleanFromEnv.default(false),
+  BAR_PILOT_VENUE_IDS: optionalStringFromEnv,
+  BAR_PILOT_DEMO_ENABLED: booleanFromEnv.default(false),
+  BAR_PILOT_DEMO_CUSTOMER_IDS: optionalStringFromEnv,
   ALCOHOL_GAMIFICATION_ENABLED: booleanFromEnv.default(false),
   ALCOHOL_PROMOTION_APPROVAL_REFERENCE: optionalStringFromEnv,
   STRIPE_SECRET_KEY: optionalStringFromEnv,
@@ -1076,6 +1080,8 @@ if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
 
   const unsafeAccountDeletionFeatureConfiguration = [
     parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ? "COMMERCIAL_LAUNCH_ENABLED" : null,
+    parsedEnv.data.BAR_PILOT_ENABLED ? "BAR_PILOT_ENABLED" : null,
+    parsedEnv.data.BAR_PILOT_DEMO_ENABLED ? "BAR_PILOT_DEMO_ENABLED" : null,
     parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED ? "CONSUMER_PAID_ENROLLMENT_ENABLED" : null,
     parsedEnv.data.DEMO_BILLING_MODE ? "DEMO_BILLING_MODE" : null,
     parsedEnv.data.PINT_POINTS_REWARDS_ENABLED ? "PINT_POINTS_REWARDS_ENABLED" : null,
@@ -1498,6 +1504,8 @@ if (parsedEnv.data.POSTGRES_RECOVERY_REHEARSAL_MODE) {
     || parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION
     || parsedEnv.data.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION
     || parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED
+    || parsedEnv.data.BAR_PILOT_ENABLED
+    || parsedEnv.data.BAR_PILOT_DEMO_ENABLED
     || parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED
     || parsedEnv.data.PINT_POINTS_REWARDS_ENABLED
     || parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED
@@ -1612,6 +1620,8 @@ if (
     });
     const unsafeBootstrapFeatures = [
       parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ? "COMMERCIAL_LAUNCH_ENABLED" : null,
+      parsedEnv.data.BAR_PILOT_ENABLED ? "BAR_PILOT_ENABLED" : null,
+      parsedEnv.data.BAR_PILOT_DEMO_ENABLED ? "BAR_PILOT_DEMO_ENABLED" : null,
       parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED ? "CONSUMER_PAID_ENROLLMENT_ENABLED" : null,
       parsedEnv.data.DEMO_BILLING_MODE ? "DEMO_BILLING_MODE" : null,
       parsedEnv.data.PINT_POINTS_REWARDS_ENABLED ? "PINT_POINTS_REWARDS_ENABLED" : null,
@@ -1753,6 +1763,24 @@ if (parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED && parsedEnv.data.REPORT_EMA
   throw new Error("REPORT_DELIVERY_SCHEDULE_ENABLED requires REPORT_EMAIL_MODE=resend.");
 }
 
+if (parsedEnv.data.BAR_PILOT_ENABLED && !parsedEnv.data.BAR_PILOT_VENUE_IDS?.split(",").some((id) => id.trim())) {
+  throw new Error("BAR_PILOT_ENABLED requires an explicit BAR_PILOT_VENUE_IDS allowlist.");
+}
+if (parsedEnv.data.BAR_PILOT_DEMO_ENABLED && (
+  !parsedEnv.data.BAR_PILOT_ENABLED ||
+  !parsedEnv.data.BAR_PILOT_DEMO_CUSTOMER_IDS?.split(",").some((id) => id.trim()) ||
+  (parsedEnv.data.NODE_ENV === "production" && (
+    railwayEnvironmentName !== "staging" ||
+    new URL(parsedEnv.data.PUBLIC_BASE_URL).origin !== "https://beer-staging.up.railway.app"
+  ))
+)) {
+  throw new Error("BAR_PILOT_DEMO_ENABLED requires the pilot and a customer allowlist on local test or isolated permanent staging only.");
+}
+if (parsedEnv.data.NODE_ENV === "production" && parsedEnv.data.BAR_PILOT_ENABLED &&
+  !parsedEnv.data.BAR_PILOT_DEMO_ENABLED && !parsedEnv.data.ALCOHOL_PROMOTION_APPROVAL_REFERENCE) {
+  throw new Error("Real bar pilot rewards require ALCOHOL_PROMOTION_APPROVAL_REFERENCE. Isolated demo fixtures are not legal approval.");
+}
+
 if (
   parsedEnv.data.NODE_ENV === "production" &&
   (parsedEnv.data.PINT_POINTS_REWARDS_ENABLED || parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED) &&
@@ -1801,7 +1829,7 @@ if (
   )
 ) {
   throw new Error(
-    "Canonical PostgreSQL currently supports the frozen Free launch only. Keep COMMERCIAL_LAUNCH_ENABLED, CONSUMER_PAID_ENROLLMENT_ENABLED, PINT_POINTS_REWARDS_ENABLED, and ALCOHOL_GAMIFICATION_ENABLED false until their Postgres repositories and concurrency contracts are implemented.",
+    "Canonical PostgreSQL supports Free and explicit bar-pilot access only. Use BAR_PILOT_ENABLED with its venue allowlist; keep broad commercial, paid enrollment, legacy reward, and gamification flags disabled.",
   );
 }
 
@@ -2269,6 +2297,8 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
     ["ALLOW_MENU_DISCOVERY_QUEUE", booleanFromEnv.safeParse(process.env.ALLOW_MENU_DISCOVERY_QUEUE).data],
     ["PINTPATH_REPORT_DELIVER", booleanFromEnv.safeParse(process.env.PINTPATH_REPORT_DELIVER).data],
     ["PINT_POINTS_REWARDS_ENABLED", parsedEnv.data.PINT_POINTS_REWARDS_ENABLED],
+    ["BAR_PILOT_ENABLED", parsedEnv.data.BAR_PILOT_ENABLED],
+    ["BAR_PILOT_DEMO_ENABLED", parsedEnv.data.BAR_PILOT_DEMO_ENABLED],
     ["ALCOHOL_GAMIFICATION_ENABLED", parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED],
     ["COMMERCIAL_LAUNCH_ENABLED", parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED],
     ["CONSUMER_PAID_ENROLLMENT_ENABLED", parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED],
