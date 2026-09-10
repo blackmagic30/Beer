@@ -166,3 +166,38 @@ Once the staging candidate is available, four distinct controlled accounts
 must complete its normal Google sign-in and age/policy flow before the
 restricted administrator/manager/staff/customer fixture can be prepared. The
 current candidate handoff must record any later hosted execution separately.
+
+## Hosted configuration attempts
+
+The merged product candidate `e1073602985d8008eeded54f2462d100fda380cd`
+passed its eight exact-main checks and three required artifact checks before
+the protected staging workflow was dispatched.
+
+- [Run 34429415518](https://github.com/blackmagic30/Beer/actions/runs/34429415518)
+  acknowledged disabled maintenance and its candidate binding. The maintenance
+  URL write lost its acknowledgement, so the workflow stopped before upload.
+  Read-only reconciliation found the single scoped variable with the intended
+  canonical URL shape and input length. Exact equality with the protected
+  secret was not claimed, and the uncertain receipt was preserved.
+- A new bounded declared-state operation,
+  [run 34429818347](https://github.com/blackmagic30/Beer/actions/runs/34429818347),
+  acknowledged the maintenance URL, matching CA material and disabled demo
+  setting. After adding the demo flag, the environment had **101 variables**:
+  one page of 100 with `hasNextPage: true`, followed by one terminal row. The
+  existing verifier rejected that incomplete first page, so upload was again
+  skipped. Both postflight failure flags came from an unavailable parsed
+  snapshot; they were not proof of a deployment change.
+
+Read-only provider reconciliation confirmed the retained staging deployment
+`6300a324-9407-4b1c-b651-749c47e9537f` remained stopped with its single US-West
+replica configuration. Production deployment
+`a171afac-9104-41ca-b0c2-d50bfc47824a` remained running with its single Singapore
+replica configuration. Both staged patches remained empty. No source upload,
+retained-source restart, topology change or production mutation occurred in
+these attempts.
+
+The scoped follow-up reads bounded metadata pages and requires a consistent
+deployment and empty staged patch across every page before using a snapshot.
+Its regression covers the observed 101-variable boundary. A later deployment
+still needs its own successful workflow and runtime evidence; these attempts
+do not establish hosted public or authenticated acceptance.

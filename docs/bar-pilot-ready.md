@@ -9,11 +9,15 @@ or commercial launch. Contribution points remain a separate balance.
 ## Source and preservation
 
 - Started 2026-09-10 at `11249c343b0d81216b103f669fad1bc4258bd6be`.
-- Current main inspected: `e3b0eb821d4d474776c966d94c9061375fbbe4af`.
+- Initial main inspected: `e3b0eb821d4d474776c966d94c9061375fbbe4af`.
 - PR #105 inspected and reused; recent merged #104/#103/#102/#99/#98/#97 concern
   staging containment. Open dependency/native PRs are outside this pilot.
 - Candidate branch: `codex/bar-pilot-ready`, isolated worktree
   `/Users/zac/Desktop/Beer-bar-pilot-ready`.
+- PR #106 merged as `e1073602985d8008eeded54f2462d100fda380cd` after all
+  required checks and the aggregate CodeQL gate passed; PR #105 is superseded
+  and closed. A scoped follow-up, `codex/bar-pilot-staging-pagination`, fixes
+  the observed 101-variable hosted configuration boundary described below.
 - Pre-existing work in `/Users/zac/Desktop/Beer` is preserved: modified closeout,
   reviewed-candidate verifier and workflow tests; untracked stopped-topology
   recovery workflow, scripts, policy, tests, and incident evidence. None of
@@ -55,7 +59,7 @@ retest. A passing area is not re-audited without a later regression.
 | PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | PASS at 390×844 in Chromium; actual iPhone/hosted Google ceremony remains owner verification |
 | PILOT-14 | Connected browser publication/award/reward/redemption/history updates | PASS; 21 checks against real PostgreSQL, zero page exceptions |
 | PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | PASS tooling and local fixture; hosted setup awaits legitimate Google identities |
-| PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | PASS locally; 5,128 aggregate tests plus explicitly enabled PostgreSQL and Supabase runs below; required remote checks on PR #106 |
+| PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | PASS on the product candidate; 5,129 local aggregate tests plus explicitly enabled PostgreSQL and Supabase runs below; required PR #106 and merged-main checks passed |
 | PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | Authenticated acceptance OWNER_ACTION_REQUIRED; provider disabled and zero accounts. Public deployment must have its own successful exact-candidate workflow receipt; not inferred from local tests |
 | PILOT-18 | Real iPhone, real bar/eligible purchase, owner legal and staff approval | OWNER_ACTION_REQUIRED; only after software acceptance |
 | PILOT-19 | Candidate commits, PR, clean worktree, exact test evidence and handoff | Recorded in [PR #106](https://github.com/blackmagic30/Beer/pull/106), this isolated branch and the final handoff; merge/deployment require the protected candidate checks |
@@ -95,7 +99,7 @@ retest. A passing area is not re-audited without a later regression.
   Real browser findings fixed were distinct serving sizes collapsing into one
   row, an anonymous venue-link/cookie-dialog conflict, and low-contrast wallet
   hover/locked controls. No redesign was needed.
-- Final aggregate local suite: **274 files passed**, **5,128 tests passed**;
+- Product candidate aggregate local suite: **274 files passed**, **5,129 tests passed**;
   48 environment/platform-gated files and 142 tests skipped. Those skips are
   not passes: required PostgreSQL and Supabase cases were also run explicitly
   as documented in [the test evidence](bar-pilot-test-evidence.md).
@@ -103,7 +107,7 @@ retest. A passing area is not re-audited without a later regression.
   isolated artifact runtime smoke, secret scan (**1,093 files**), and production/
   restore deployment guard checks passed. The compiled artifact browser passed
   six desktop and two mobile routes with no provider calls. Dependency audit:
-  **zero vulnerabilities**. Aggregate log: `/tmp/pintpath-bar-pilot-final-check.log`.
+  **zero vulnerabilities**. Aggregate log: `/tmp/pintpath-bar-pilot-security-fix-check.log`.
 - Scoped deployment configuration: **93 passed**, five existing Linux-only
   skips; isolated pilot executor/production compatibility: **103 passed**, five
   existing Linux-only skips; dedicated GitHub candidate-policy and historical
@@ -111,6 +115,16 @@ retest. A passing area is not re-audited without a later regression.
   platform-specific checks. The production executor and original release policy
   retain their exact historical bytes; the new pilot executor accepts only its
   explicit staging policy.
+- The merged product candidate passed all eight required main checks and
+  produced the three required deployment artifacts. Main CI passed **5,116
+  tests** with **154 gated skips**, plus the dedicated **13 PostgreSQL pilot
+  tests** and **68 pgTAP checks**. CodeQL passed in all three languages. The
+  two PR tooling findings were fixed, not dismissed.
+- Actual protected staging attempts are recorded in
+  [the hosted evidence boundary](bar-pilot-test-evidence.md#hosted-configuration-attempts).
+  Configuration reached 101 environment variables, exposing the existing
+  verifier's one-page limit. The follow-up adds bounded metadata pagination;
+  it does not relax deployment, staging-patch, or production isolation checks.
 
 The required remote checks and later hosted deployment are live evidence on
 [PR #106](https://github.com/blackmagic30/Beer/pull/106) and the
