@@ -3409,7 +3409,7 @@
                   <strong>${escapeHtml(item.itemName || "Member purchase")}</strong>
                   <div class="muted">${escapeHtml(item.publicAccountId || "Pint Path member")} · ${formatCount(item.quantity || 1)} item${Number(item.quantity) === 1 ? "" : "s"} · ${MelbBeerBusiness.formatDate(item.recordedAt)}</div>
                   <small>${escapeHtml(item.operatorPublicAccountId || item.staffPublicAccountId || "Authorised venue staff")}</small>
-                  ${item.status === "void" ? `<small>Reversed${item.voidReason ? ` · ${escapeHtml(item.voidReason)}` : ""}</small>` : ""}
+                  ${item.status === "void" ? `<small>Reversed${item.voidedByPublicAccountId ? ` by ${escapeHtml(item.voidedByPublicAccountId)}` : ""}${item.voidReason ? ` · ${escapeHtml(item.voidReason)}` : ""}</small>` : ""}
                 </div>
                 <div class="actionRow actionRow--compact">
                   <span class="pill ${item.status === "void" ? "pill--danger" : ""}">${item.status === "void" ? "Voided" : `+${formatCount(item.pointsAwarded || 0)} points`}</span>
@@ -3488,7 +3488,7 @@
                 <div>
                   <strong>${escapeHtml(item.itemName || "Member purchase")}</strong>
                   <div class="muted">${escapeHtml(item.publicAccountId || "Pint Path member")} · ${formatCount(item.quantity || 1)} item${Number(item.quantity) === 1 ? "" : "s"} · ${MelbBeerBusiness.formatDate(item.recordedAt)}</div>
-                  ${item.status === "void" ? `<small>Reversed${item.voidReason ? ` · ${escapeHtml(item.voidReason)}` : ""}</small>` : ""}
+                  ${item.status === "void" ? `<small>Reversed${item.voidedByPublicAccountId ? ` by ${escapeHtml(item.voidedByPublicAccountId)}` : ""}${item.voidReason ? ` · ${escapeHtml(item.voidReason)}` : ""}</small>` : ""}
                 </div>
                 <div class="actionRow actionRow--compact">
                   <span class="pill ${item.status === "void" ? "pill--danger" : ""}">${item.status === "void" ? "Voided" : `+${formatCount(item.pointsAwarded || 0)} point${Number(item.pointsAwarded) === 1 ? "" : "s"}`}</span>
