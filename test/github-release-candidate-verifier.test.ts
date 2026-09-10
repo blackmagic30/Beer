@@ -24,6 +24,10 @@ const POLICY = fs.readFileSync(
   path.resolve(".github/release-required-checks.json"),
   "utf8",
 );
+const BAR_PILOT_POLICY = fs.readFileSync(
+  path.resolve(".github/bar-pilot-release-required-checks.json"),
+  "utf8",
+);
 const temporaryDirectories: string[] = [];
 
 function currentCandidateTimestamp(value: string): string {
@@ -345,7 +349,7 @@ function cleanupSuccessorCloseoutJobs(
 
 function harness(
   options: {
-    phase?: "staging" | "production" | "close" | "activation" | "promotion-recovery" | "open" | "release";
+    phase?: "staging" | "bar-pilot-staging" | "production" | "close" | "activation" | "promotion-recovery" | "open" | "release";
     omitCheck?: string;
     omitArtifact?: string;
     duplicateCheck?: string;
@@ -406,20 +410,21 @@ function harness(
     name: string;
     producerCheck: string;
   };
-  const policy = JSON.parse(POLICY) as {
+  const phase = options.phase ?? "release";
+  const policy = JSON.parse(phase === "bar-pilot-staging" ? BAR_PILOT_POLICY : POLICY) as {
     phaseConsumers: Record<string, { workflowPath: string; event: "workflow_dispatch" }>;
     requiredChecks: Record<string, RequiredCheck[]>;
     requiredArtifacts: Record<string, RequiredArtifact[]>;
   };
-  const phase = options.phase ?? "release";
   const requiredChecks = [...policy.requiredChecks.base];
   const artifactRequirements = [...policy.requiredArtifacts.base];
-  if (phase !== "staging") {
+  if (phase !== "staging" && phase !== "bar-pilot-staging") {
     requiredChecks.push(...policy.requiredChecks.staging);
     artifactRequirements.push(...policy.requiredArtifacts.staging);
   }
   const stageCounts = {
     staging: 0,
+    "bar-pilot-staging": 0,
     production: 0,
     close: 2,
     activation: 3,
@@ -913,9 +918,61 @@ describe("GitHub release-candidate verifier", () => {
     ).toBeNull();
   });
 
+  it("keeps the historical policy unchanged and copies its base requirements into the pilot policy", () => {
+    expect(crypto.createHash("sha256").update(POLICY).digest("hex")).toBe(
+      "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90",
+    );
+    const originalPolicy = parseGithubReleaseChecksPolicy(POLICY);
+    const pilotPolicy = parseGithubReleaseChecksPolicy(BAR_PILOT_POLICY);
+    expect(originalPolicy).not.toBeNull();
+    expect(pilotPolicy).not.toBeNull();
+    expect(originalPolicy.phaseConsumers["bar-pilot-staging"]).toBeUndefined();
+    expect(pilotPolicy.requiredChecks).toEqual(originalPolicy.requiredChecks);
+    expect(pilotPolicy.requiredArtifacts).toEqual(originalPolicy.requiredArtifacts);
+    expect(pilotPolicy.phaseConsumers).toEqual({
+      ...originalPolicy.phaseConsumers,
+      "bar-pilot-staging": {
+        workflowPath: ".github/workflows/deploy-bar-pilot-staging.yml",
+        event: "workflow_dispatch",
+      },
+    });
+  });
+
+  it("rejects bar pilot staging when its selected policy lacks the pilot consumer", async () => {
+    const fixture = harness({ phase: "bar-pilot-staging" });
+    const originalReadFile = fs.readFileSync;
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation((...args) => {
+      if (args[0] === path.resolve(".github/bar-pilot-release-required-checks.json")) return POLICY;
+      return Reflect.apply(originalReadFile, fs, args);
+    });
+    let summary = "";
+    try {
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      expect(code).toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({ ok: false, failureCode: "policy_invalid" });
+      expect(fixture.fetchImpl).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(fixture.directory, "receipt.json"))).toBe(false);
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+
   it("verifies successful same-SHA checks and artifacts for every phase", async () => {
     for (const phase of [
       "staging",
+      "bar-pilot-staging",
       "production",
       "close",
       "activation",
@@ -999,6 +1056,92 @@ describe("GitHub release-candidate verifier", () => {
         expect(request).toContain("check_name=");
         expect(request).not.toContain("filter=latest");
       }
+    }
+  });
+
+  it("binds bar pilot staging to its workflow with exactly the eight base push checks and three artifacts", async () => {
+    const fixture = harness({ phase: "bar-pilot-staging" });
+    const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+      env: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: CANDIDATE,
+        GITHUB_REPOSITORY: "blackmagic30/Beer",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "9999",
+        GITHUB_TOKEN: "g".repeat(32),
+      },
+      fetchImpl: fixture.fetchImpl,
+      writeOutput: () => undefined,
+    });
+    expect(code).toBe(0);
+    const receipt = JSON.parse(
+      fs.readFileSync(path.join(fixture.directory, "receipt.json"), "utf8"),
+    );
+    expect(receipt.consumer).toMatchObject({
+      workflowPath: ".github/workflows/deploy-bar-pilot-staging.yml",
+      event: "workflow_dispatch",
+      runAttempt: 1,
+    });
+    expect(receipt.reviewedPullRequest).toMatchObject({
+      mergeCommitSha: CANDIDATE,
+      reviewedPrHeadSha: REVIEWED_PR_HEAD,
+      treeSha: REVIEWED_TREE,
+      githubMergeExact: true,
+      reviewedTreeExact: true,
+    });
+    expect(receipt.checks.map((check: { name: string }) => check.name)).toEqual([
+      "postgres-tool-runtime-closure-observation",
+      "postgres-migration-integration",
+      "build-test-scan",
+      "supabase-database",
+      "CodeQL JavaScript and TypeScript",
+      "CodeQL Swift",
+      "release-readiness",
+      "ios",
+    ]);
+    expect(receipt.checks.every((check: { event: string }) => check.event === "push")).toBe(true);
+    expect(receipt.artifacts.map((item: { name: string }) => item.name)).toEqual([
+      "pintpath-mission-discovery-scale-evidence",
+      "pintpath-postgres-tool-runtime-closure-v4-observation",
+      "pintpath-automated-readiness-evidence",
+    ]);
+    expect(receipt.productionChain).toEqual([]);
+    const requestedUrls = fixture.fetchImpl.mock.calls.map(([url]) => String(url));
+    expect(requestedUrls.some((url) => url.includes("/actions/workflows/"))).toBe(false);
+  });
+
+  it("denies bar pilot staging from another workflow or without required base and reviewed merge evidence", async () => {
+    const policy = JSON.parse(POLICY) as {
+      requiredChecks: { base: Array<{ name: string }> };
+      requiredArtifacts: { base: Array<{ name: string }> };
+    };
+    for (const fixture of [
+      harness({ phase: "bar-pilot-staging", currentWorkflowPath: ".github/workflows/deploy-permanent-staging.yml" }),
+      harness({ phase: "staging", currentWorkflowPath: ".github/workflows/deploy-bar-pilot-staging.yml" }),
+      harness({ phase: "bar-pilot-staging", currentEvent: "push" }),
+      harness({ phase: "bar-pilot-staging", currentRunAttempt: 2 }),
+      harness({ phase: "bar-pilot-staging", associatedPullCount: 0 }),
+      harness({ phase: "bar-pilot-staging", pullMerged: false }),
+      harness({ phase: "bar-pilot-staging", reviewedTreeSha: "e".repeat(40) }),
+      ...policy.requiredChecks.base.map(({ name }) => harness({ phase: "bar-pilot-staging", omitCheck: name })),
+      ...policy.requiredArtifacts.base.map(({ name }) => harness({ phase: "bar-pilot-staging", omitArtifact: name })),
+    ]) {
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: () => undefined,
+      });
+      expect(code).toBe(1);
+      expect(fs.existsSync(path.join(fixture.directory, "receipt.json"))).toBe(false);
     }
   });
 

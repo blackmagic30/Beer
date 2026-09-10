@@ -1,5 +1,12 @@
 # Venue Partner Demo Checklist
 
+> [!WARNING]
+> **SUPERSEDED FOR EXECUTION.** Do not use this checklist to run or approve the
+> current bar pilot. Use
+> [`docs/bar-pilot-ready.md`](docs/bar-pilot-ready.md) as the execution
+> authority. The body below is retained unchanged for historical traceability
+> and may describe obsolete scope or workflows.
+
 Use this when showing Pint Path to a bar owner, venue manager, or potential affiliate partner.
 
 ## 1. Public Product Story

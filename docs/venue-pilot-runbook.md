@@ -1,69 +1,127 @@
-# Free venue pilot runbook
+# Bar pilot runbook
 
-Run this independently with three real venues that differ in size, menu format,
-staff turnover, and network quality. A code-only simulation does not count.
-This launch includes assigned venue-Free operations only. Pro, trial, billing,
-reports, rewards, counter staff, redemption, POS, specials, and public
-happy-hour discovery remain disabled.
+The current pilot scope is defined in [the candidate acceptance record](bar-pilot-ready.md).
+It supersedes the earlier Free-only runbook: authorised pilot venues can use
+staff drink Pint Points and the 50-point free-pint reward without Pro or payment.
+Contribution points remain separate. Other commercial features stay disabled.
 
-## Before the pilot
+## Real venue onboarding
 
-1. Record the frozen candidate SHA and open the matching private
-   `venue_pilot_*` gate manifest.
-2. The owner submits a venue claim from `/venue-portal.html` using the email on
-   their verified Pint Path account.
-3. An admin verifies the claimant through an independently sourced venue phone,
-   email, or existing partner contact, then approves the assignment.
-4. Prove the manager sees only the assigned venue. A second manager must be
-   denied that venue, and the pilot manager must be denied every other venue.
-5. Confirm no Pro, trial, checkout, billing, report, reward, counter, redemption,
-   POS, or special/deal control is visible or callable.
+1. The manager opens `/account.html`, uses **Continue with Google**, and confirms
+   age/terms, then finds their venue at `/venue-portal.html` and submits a claim.
+2. An admin verifies the claimant independently through the venue's existing
+   contact, then approves the manager assignment. A pending claim never grants
+   access. Enrol only the agreed pilot venue in the runtime pilot allowlist.
+3. The manager signs in and follows the dashboard setup list: venue details,
+   ordinary hours, at least three beers, serving sizes, prices, and stock/tap state.
+4. Check the public venue. Routine venue-supplied fields publish automatically;
+   safeguarded edits retain the existing admin review boundary.
+5. In Staff, invite the staff member's verified account. The staff member accepts
+   in their account. Staff can operate the counter; they cannot edit the venue or
+   grant manager privileges. Test revocation before relying on the account.
 
-## Free venue operations
+## Browser and iPhone demonstration
 
-1. Update the venue profile and ordinary opening hours. Confirm the expected
-   public fields publish and safeguard-triggered or restricted changes remain
-   queued for admin review.
-2. Add at least three beer/stock/price rows. Verify create, edit, out-of-stock,
-   and removal behavior on the venue portal and public discovery response.
-3. Submit one separate community contribution with approved private source
-   evidence. Confirm review, evidence linkage, and publication without exposing
-   the evidence object or its path publicly.
-4. Use the retained venue-side happy-hour collection field. Confirm it remains
-   available to the assigned venue and admin while producing no consumer
-   happy-hour record, filter, card, badge, mission, contribution route, SEO
-   claim, promotional copy, or iOS surface.
-5. Interrupt the network during one safe profile or beer update, restore the
-   connection, and retry. Prove the final state is correct and no duplicate row
-   or event is created.
-6. Open support and submit one wrong-price report. Confirm the correct private
-   queue, priority, acknowledgement, and role isolation.
-7. Revoke the manager assignment and prove venue-management access stops while
-   the public venue data and audit history remain intact.
+Use the isolated labelled demo venue/customer to demonstrate test point credits;
+do not mix test credits into real customer balances.
 
-## Immediate stop conditions
+1. On the iPhone, find the venue and show its beers/prices. In the bar browser,
+   change a price/stock field, then refresh the public venue to show publication.
+2. Sign in as the customer, open Pint Points and show the rotating customer code.
+3. Staff identifies that code, selects the eligible purchased beer and confirms
+   one purchase. Show the customer's balance increasing by exactly one.
+4. Use the counter's retry of the same purchase to show it cannot add a second
+   point. For the labelled test customer, the authorised demo manager can prepare
+   49 points or reach 50 using the restricted demo control.
+5. The customer opens the available free-pint reward. Staff checks its code and
+   confirms redemption. Show the unmistakable redeemed result and customer
+   balance reduced by 50, with no point earned for redemption.
+6. Show History, then retry the same reward: it must fail. Reverse an erroneous
+   paid purchase with a reason, and show both the original record and correction.
 
-Stop the pilot and keep its evidence item pending if:
+These are the meeting steps; preparation/deployment is completed beforehand.
+The connected loop passed 21 real-browser checks against isolated PostgreSQL,
+including the 390×844 customer viewport. This is desktop browser emulation;
+the owner's actual iPhone and hosted Google accounts are separate checks.
 
-- another venue or another user's private data is visible;
-- a restricted change bypasses the required review path;
-- private evidence, object paths, tokens, or personal data appear publicly;
-- a retry creates duplicate state or loses an acknowledged update;
-- public happy-hour discovery or contribution becomes reachable;
-- Pro, trial, paid, report, reward, counter, redemption, POS, or special/deal
-  behavior becomes reachable;
-- revocation fails to remove venue-management access; or
-- a critical/high security, privacy, data-integrity, or accessibility defect is
-  unresolved.
+## Prepare the isolated staging demo before the meeting
 
-## Evidence
+The demo venue is **PintPath Pilot Hotel — DEMO**, in the staging application at
+<https://beer-staging.up.railway.app>. It is deliberately labelled and must not
+be seeded into real production search results.
 
-For each venue, record the date, frozen SHA, venue, devices/browsers, owner and
-admin roles, every step/result, defects/retests, network interruption result,
-revocation result, and owner approval in its private gate manifest. Redact
-personal data and do not retain private source material in Git.
+The protected GitHub workflow **Deploy PintPath bar pilot staging**
+(`deploy-bar-pilot-staging.yml`) accepts only the reviewed, merged, current main
+SHA after its required checks pass. The initial stopped-app recovery uses
+`pilot_enabled=false`, the default demo venue ID, and empty customer/deployment
+inputs. It configures missing verified database transport values without
+restarting retained source, then uploads fresh source once. Production and the
+configured staging region/replica count are unchanged; automatic maintenance
+stays disabled. `/health`, `/startup` and `/ready` must pass for the new deployment.
 
-The venue owner and a different independent verifier must sign the manifest.
-Update the matching `venue_pilot_*` object in `docs/release-evidence.json` only
-after every step and stop condition passes, using the opaque gate reference and
-SHA-256 format in `docs/external-launch-signoffs.md`.
+**Owner prerequisite observed on 2026-09-10:** staging Google authorization
+returns “provider is not enabled”; the available Management API credential
+cannot read Auth configuration. In Supabase project `bbfibbadwjxzrcdncavy`,
+enable Google under **Authentication → Sign In / Providers** with the owner's
+Google web OAuth client. Its Google redirect URI is
+`https://bbfibbadwjxzrcdncavy.supabase.co/auth/v1/callback`. In Supabase URL
+Configuration set the staging Site URL and allow
+`https://beer-staging.up.railway.app/auth/callback`. Keep credentials in provider
+settings. Follow the [official Google setup](https://supabase.com/docs/guides/auth/social-login/auth-google)
+and [redirect guidance](https://supabase.com/docs/guides/auth/redirect-urls).
+Pass condition: **Continue with Google** returns to staging with a signed-in
+account, then age/policy acceptance completes.
+
+1. Four distinct controlled accounts complete the hosted Google sign-in and
+   age/policy flow: existing allowlisted administrator, manager, staff and
+   customer. Staff and customer stay ordinary users. The administrator completes
+   the existing privileged-account requirements; do not bypass Google or MFA.
+2. A deployment operator resolves the existing customer account and dispatches
+   the same workflow with the same current candidate SHA, `pilot_enabled=true`,
+   the explicit venue/customer allowlists, and `expected_current_deployment_id`
+   set to that exact healthy staging deployment. This performs a new source
+   upload so the new process actually receives the changed settings. An enabled
+   demo requires an explicit existing test customer; empty customer IDs are
+   rejected before a write. The operator supplies the existing emails privately as
+   `PINTPATH_PILOT_OPERATOR_EMAIL`, `PINTPATH_PILOT_MANAGER_EMAIL`,
+   `PINTPATH_PILOT_STAFF_EMAIL` and `PINTPATH_PILOT_CUSTOMER_EMAIL`. The runtime
+   demo allowlist must contain that customer's actual account ID and the venue
+   allowlist must contain `pintpath-pilot-demo:venue:v1`.
+3. In the pinned staging application runtime, use the compiled preparation tool:
+
+   ```sh
+   node dist/scripts/pilot-demo.js preflight
+   node dist/scripts/pilot-demo.js setup
+   ```
+
+   It verifies the exact staging origin/environment/database digest and TLS,
+   the existing provider-backed identities, distinct roles and fixture
+   ownership. It creates the labelled profile/hours, three beer/price/stock
+   rows, manager/staff access and 49 test points. A repeat `setup` is a no-op.
+   A successful result reports `ready: true` and the fixed demo venue; no
+   credentials or private account identifiers are printed.
+4. Sign in to the manager/staff browsers and customer iPhone before the meeting.
+   The manager's **Pint Points / redemption** screen identifies the customer's
+   current code. Its restricted demo controls can prepare 49 or 50 points.
+   These adjustments are labelled as demo preparation, never as purchases.
+5. To restore the initial fixture between rehearsals, run
+   `node dist/scripts/pilot-demo.js reset` in the same staging runtime using the
+   same account set. It restores the known profile, three rows, roles and 49
+   points while preserving original ledger entries, corrections and added rows.
+
+Only preparation uses operator tooling. During the meeting all steps use the
+ordinary manager/staff browser and customer phone. Never store account passwords,
+OAuth session files, raw QR codes or provider secrets in Git or demo notes.
+
+## Pass and stop conditions
+
+The public data, point balance, reward state and history must agree. Stop the
+pilot if a code/reward can be reused incorrectly, a balance goes negative,
+a duplicate purchase earns again, another venue's protected data is accessible,
+a stale edit overwrites newer data, or access persists after revocation.
+Record the candidate SHA, devices, venue, roles, date and observed results.
+Never record credentials, raw codes or private customer data in Git.
+
+Owner approval of alcohol promotions and participating venue practice is a
+separate prerequisite for real reward use. This software runbook does not claim
+legal approval.

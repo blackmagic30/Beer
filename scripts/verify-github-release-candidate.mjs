@@ -7,6 +7,10 @@ const POLICY_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../.github/release-required-checks.json",
 );
+const BAR_PILOT_POLICY_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../.github/bar-pilot-release-required-checks.json",
+);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const TREE_SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -20,6 +24,7 @@ const WORKFLOW_PATH_PATTERN =
 const CHECK_EVENTS = new Set(["push", "workflow_dispatch"]);
 const PHASES = Object.freeze([
   "staging",
+  "bar-pilot-staging",
   "production",
   "close",
   "activation",
@@ -37,6 +42,7 @@ const PRODUCTION_STAGES = Object.freeze([
 ]);
 const PHASE_STAGE_COUNTS = Object.freeze({
   staging: 0,
+  "bar-pilot-staging": 0,
   production: 0,
   close: 2,
   activation: 3,
@@ -487,6 +493,9 @@ export function parseGithubReleaseChecksPolicy(source) {
   ) return null;
   try {
     const value = JSON.parse(source);
+    const policyPhases = value.phaseConsumers?.["bar-pilot-staging"] === undefined
+      ? PHASES.filter((phase) => phase !== "bar-pilot-staging")
+      : PHASES;
     if (
       !exactKeys(value, [
         "schemaVersion",
@@ -499,11 +508,11 @@ export function parseGithubReleaseChecksPolicy(source) {
       value.schemaVersion !== "pintpath-github-release-required-checks/v3" ||
       value.repository !== "blackmagic30/Beer" ||
       value.branch !== "main" ||
-      !exactKeys(value.phaseConsumers, PHASES) ||
+      !exactKeys(value.phaseConsumers, policyPhases) ||
       !exactKeys(value.requiredChecks, ["base", "staging", "production"]) ||
       !exactKeys(value.requiredArtifacts, ["base", "staging", "production"])
     ) return null;
-    for (const phase of PHASES) {
+    for (const phase of policyPhases) {
       const consumer = value.phaseConsumers[phase];
       if (
         !exactKeys(consumer, ["workflowPath", "event"]) ||
@@ -592,7 +601,7 @@ function parseArguments(argv) {
 function requirements(policy, phase, candidateSha) {
   const checks = [...policy.requiredChecks.base];
   const artifacts = [...policy.requiredArtifacts.base];
-  if (phase !== "staging") {
+  if (phase !== "staging" && phase !== "bar-pilot-staging") {
     checks.push(...policy.requiredChecks.staging);
     artifacts.push(...policy.requiredArtifacts.staging);
   }
@@ -2294,9 +2303,12 @@ export async function runGithubReleaseCandidateVerification(argv, dependencies =
     ?? ((value) => process.stdout.write(value));
   try {
     const args = parseArguments(argv);
-    const policySource = fs.readFileSync(POLICY_PATH, "utf8");
+    const policySource = fs.readFileSync(
+      args.phase === "bar-pilot-staging" ? BAR_PILOT_POLICY_PATH : POLICY_PATH,
+      "utf8",
+    );
     const policy = parseGithubReleaseChecksPolicy(policySource);
-    if (!policy) throw new Error("policy_invalid");
+    if (!policy || !policy.phaseConsumers[args.phase]) throw new Error("policy_invalid");
     if (
       env.GITHUB_ACTIONS !== "true" ||
       env.GITHUB_REF !== "refs/heads/main" ||

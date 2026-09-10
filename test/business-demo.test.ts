@@ -11130,7 +11130,7 @@ describe("business demo contribution model", () => {
       quantity: 2,
       transactionReference: "receipt-points-1",
       notes: null,
-    })).toEqual(expect.objectContaining({ idempotentReplay: true, pointsEarned: 2 }));
+    })).toEqual(expect.objectContaining({ idempotentReplay: true, pointsEarned: 0 }));
     await expect(service.recordPintPointDrink(assignedManager, "pint-points-venue", {
       checkoutToken: unusedPreview.checkoutToken,
       code: undefined,

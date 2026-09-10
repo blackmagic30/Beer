@@ -121,6 +121,7 @@ jobs:
       PINTPATH_POSTGRES_PRIVATE_STORAGE_RECOVERY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_BILLING_CHECKOUT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_SUPPORT_FEEDBACK_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_PILOT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_VENUE_ACCESS_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_SOURCE_EVIDENCE_OBJECT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_VENUE_MANAGER_INTERNAL_SUBMISSION_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
@@ -250,6 +251,9 @@ jobs:
 
       - name: Run support and wrong-price Postgres contract
         run: npx vitest run test/support-feedback.repository.integration.test.ts
+
+      - name: Run Pint Points pilot PostgreSQL integrity and concurrency contract
+        run: npx vitest run test/pint-point.repository.integration.test.ts
 
       - name: Run venue access Postgres contract
         run: npx vitest run test/venue-access.repository.integration.test.ts

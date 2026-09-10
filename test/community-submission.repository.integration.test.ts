@@ -242,6 +242,13 @@ describe.skipIf(!configuredAdminUrl)("real PG17 community submission repository"
     await admin.end().catch(() => undefined);
   }, 30_000);
 
+  it("loads empty account history and optional filters on PostgreSQL", async () => {
+    expect(await repository.listSubmissions({ userId: "new-pilot-customer", limit: 12, offset: 0 })).toEqual([]);
+    expect(await repository.listSubmissions({ status: "pending", limit: 12 })).toEqual([]);
+    expect(await repository.countSubmissions({ userId: "new-pilot-customer" })).toBe(0);
+    expect(await repository.countSubmissions({})).toBe(0);
+  });
+
   it("proves restricted-role native decoding, advisory idempotency, row fences, privacy, and atomic moderation", async () => {
     if (!database) throw new Error("PostgreSQL test database was not initialized.");
     for (const account of [

@@ -33,7 +33,7 @@
         <button id="adminTab-review" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false">Review</button>
         <button id="adminTab-capture" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false">Data capture</button>
         <button id="adminTab-partners" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false">Partners</button>
-        <button id="adminTab-leaderboard" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false">Prizes</button>
+        <button id="adminTab-leaderboard" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false" data-commercial-admin-surface hidden>Prizes</button>
         <button id="adminTab-analytics" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
       </nav>
       <label class="mobileSectionPicker" for="adminMobileTabSelect">Admin section
@@ -42,7 +42,7 @@
           <option value="review">Review</option>
           <option value="capture">Data capture</option>
           <option value="partners">Partners</option>
-          <option value="leaderboard">Prizes</option>
+          <option value="leaderboard" data-commercial-admin-surface hidden>Prizes</option>
           <option value="analytics">Analytics</option>
         </select>
       </label>
@@ -72,13 +72,13 @@
           <div>
             <div class="eyebrow">Admin command centre</div>
             <h2>Run the next best task first.</h2>
-            <p class="muted">A launch-day view of what needs review, which venues are worth pitching, and what prize work needs attention.</p>
+            <p class="muted">A launch-day view of what needs review, which venues are worth pitching, and what operational work needs attention.</p>
           </div>
           <div class="adminDashboardHero__actions">
             <button class="button button--primary" type="button" data-admin-jump="review" data-admin-jump-target="#pendingSubmissions">Review submissions</button>
             <button class="button" type="button" data-admin-jump="review" data-admin-jump-target="#adminIngestionQueue">Source review</button>
             <button class="button" type="button" data-admin-jump="partners" data-admin-jump-target="#pitchReadinessPanel">Pitch venues</button>
-            <button class="button" type="button" data-admin-jump="leaderboard" data-admin-jump-target="#leaderboardPrizeForm">Prize setup</button>
+            <button class="button" type="button" data-admin-jump="leaderboard" data-admin-jump-target="#leaderboardPrizeForm" data-commercial-admin-surface hidden>Prize setup</button>
           </div>
         </div>
 
@@ -96,7 +96,7 @@
             <div id="adminDashboardPitchList" class="adminDashboardPitchList"></div>
           </div>
 
-          <div class="panel adminDashboardPanel">
+          <div class="panel adminDashboardPanel" data-commercial-admin-surface hidden>
             <div class="sectionHeader">
               <div>
                 <div class="eyebrow">Leaderboard</div>
@@ -268,7 +268,7 @@
           </div>
         </section>
 
-        <section class="panel adminPanelSpan" aria-labelledby="adminReportOpsHeading">
+        <section class="panel adminPanelSpan" aria-labelledby="adminReportOpsHeading" data-commercial-admin-surface hidden>
           <div class="eyebrow">Report operations</div>
           <h2 id="adminReportOpsHeading">Generate and deliver monthly reports</h2>
           <p class="muted">Run a dry preview first. Delivery uses each venue's configured report recipients and the production delivery provider.</p>
@@ -552,7 +552,7 @@
             <label class="field">Access level
               <select id="managerAccessLevel" name="accessLevel">
                 <option value="manager">Venue manager</option>
-                <option value="counter_staff">Counter staff only</option>
+                <option value="counter_staff" data-commercial-admin-surface hidden>Counter staff only</option>
               </select>
             </label>
             <div id="managerAssignPreview" class="notice">Pick a staff account and a venue. Pint Path fills the IDs automatically.</div>
@@ -585,7 +585,7 @@
                 <select name="tierFit">
                   <option value="">Not sure yet</option>
                   <option value="basic">Free/basic</option>
-                  <option value="pro">Pro</option>
+                  <option value="pro" data-commercial-admin-surface hidden>Pro</option>
                 </select>
               </label>
               <label class="field">Last contacted
@@ -619,7 +619,7 @@
         </div>
       </section>
 
-      <section id="adminLeaderboard" class="adminSection" data-admin-tab-panel="leaderboard" role="tabpanel" hidden aria-labelledby="adminTab-leaderboard" tabindex="0">
+      <section id="adminLeaderboard" class="adminSection" data-admin-tab-panel="leaderboard" role="tabpanel" hidden aria-labelledby="adminTab-leaderboard" tabindex="0" data-commercial-admin-surface>
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Contributor prizes</div>
@@ -775,6 +775,23 @@
   </main>
 
   <script>
+    const COMMERCIAL_ADMIN_FEATURES_ENABLED =
+      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.commercialLaunchEnabled === true;
+
+    function syncCommercialAdminSurfaces() {
+      document.querySelectorAll("[data-commercial-admin-surface]").forEach((surface) => {
+        if (COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+          surface.removeAttribute("aria-hidden");
+          surface.inert = false;
+          if (!surface.matches('[data-admin-tab-panel]')) surface.hidden = false;
+          return;
+        }
+        surface.remove();
+      });
+    }
+
+    syncCommercialAdminSurfaces();
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -925,7 +942,8 @@
     let adminStatusRequestId = 0;
     let adminVenuesRequestId = 0;
     let adminDataToolsRequestId = 0;
-    const ADMIN_TAB_KEYS = ["dashboard", "review", "capture", "partners", "leaderboard", "analytics"];
+    const ADMIN_TAB_KEYS = ["dashboard", "review", "capture", "partners", "analytics"];
+    if (COMMERCIAL_ADMIN_FEATURES_ENABLED) ADMIN_TAB_KEYS.splice(4, 0, "leaderboard");
     const ADMIN_TAB_LABELS = {
       dashboard: "Dashboard",
       review: "Review",
@@ -1218,12 +1236,22 @@
     }
 
     function suggestedTierForLead(lead) {
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) return "basic";
       const score = getLeadScore(lead);
       if (score >= 72 || Number(lead.requests || 0) >= 3) return "pro";
       return "basic";
     }
 
     function suggestedPitchForLead(lead) {
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        if (Number(lead.requests || 0) > 0) {
+          return "Users are already asking for this venue. Pitch verified prices and owner-controlled updates.";
+        }
+        if (lead.dataFreshness === "stale_or_missing") {
+          return "High intent but weak data. Pitch a quick setup call to make their listing accurate before competitors look better.";
+        }
+        return "Healthy discovery signal. Pitch the Free venue dashboard and owner-controlled listing updates.";
+      }
       if (Number(lead.requests || 0) > 0) {
         return "Users are already asking for this venue. Pitch verified prices, Pint Path specials, and owner-controlled updates.";
       }
@@ -1234,6 +1262,9 @@
     }
 
     function suggestedNextActionForLead(lead) {
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        return "Invite manager to claim venue dashboard";
+      }
       const tier = suggestedTierForLead(lead);
       return tier === "pro"
         ? "Offer Pro demo and Pint Path special setup"
@@ -1294,8 +1325,14 @@
       if (item.status === "partner") return 100;
       if (item.status === "interested") return 82;
       if (item.status === "contacted") return 64;
-      if (item.tierFit === "pro") return 72;
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED && item.tierFit === "pro") return 72;
       return 48;
+    }
+
+    function availableOutreachTierFit(value) {
+      if (value === "basic") return "basic";
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED && value === "pro") return "pro";
+      return "";
     }
 
     function outreachFollowUpState(item) {
@@ -1314,12 +1351,13 @@
     }
 
     function outreachDatasetAttributes(item) {
+      const tierFit = availableOutreachTierFit(item.tierFit);
       return [
         `data-venue-id="${escapeHtml(item.venueId || "")}"`,
         `data-venue-name="${escapeHtml(item.venueName || "")}"`,
         `data-suburb="${escapeHtml(item.suburb || "")}"`,
         `data-status="${escapeHtml(item.status || "lead")}"`,
-        `data-tier-fit="${escapeHtml(item.tierFit || "")}"`,
+        `data-tier-fit="${escapeHtml(tierFit)}"`,
         `data-next-action="${escapeHtml(item.nextAction || "")}"`,
         `data-last-contacted-at="${escapeHtml(item.lastContactedAt || "")}"`,
         `data-contact-name="${escapeHtml(item.contactName || "")}"`,
@@ -1329,12 +1367,16 @@
     }
 
     function stageDefaultNextAction(status, item = {}) {
-      const tierPrefix = item.tierFit === "pro" ? "Pro" : "manager";
+      const tierPrefix = COMMERCIAL_ADMIN_FEATURES_ENABLED && item.tierFit === "pro"
+        ? "Pro"
+        : "manager";
       const defaults = {
         lead: "Qualify demand, check listing freshness, and choose the pitch angle",
         contacted: "Follow up with the owner or manager in 3 days",
         interested: `Book ${tierPrefix} setup and confirm who needs access`,
-        partner: "Assign manager access and schedule the first monthly report review",
+        partner: COMMERCIAL_ADMIN_FEATURES_ENABLED
+          ? "Assign manager access and schedule the first monthly report review"
+          : "Assign manager access and schedule the first venue-data review",
         not_interested: "Park respectfully; revisit only after a fresh user demand signal",
         closed: "Closed. Keep the notes for future context",
       };
@@ -1358,6 +1400,7 @@
         const lead = leadByVenue.get(item.venueId);
         return {
           ...item,
+          tierFit: availableOutreachTierFit(item.tierFit),
           isLeadSignal: false,
           leadScore: lead ? getLeadScore(lead) : fallbackOutreachScore(item),
           venueClicks: lead?.venueClicks || 0,
@@ -1495,7 +1538,7 @@
       outreachForm.elements.venueName.value = item.venueName || "";
       outreachForm.elements.suburb.value = item.suburb || "";
       outreachForm.elements.status.value = item.status || "lead";
-      outreachForm.elements.tierFit.value = item.tierFit || "";
+      outreachForm.elements.tierFit.value = availableOutreachTierFit(item.tierFit);
       outreachForm.elements.lastContactedAt.value = item.lastContactedAt
         ? String(item.lastContactedAt).slice(0, 10)
         : "";
@@ -1515,7 +1558,7 @@
         venueName: item.venueName,
         suburb: item.suburb || null,
         status: nextStatus,
-        tierFit: item.tierFit || null,
+        tierFit: availableOutreachTierFit(item.tierFit) || null,
         nextAction: nextActionForStageTransition(item, nextStatus),
         lastContactedAt: touchDate ? todayDateInputValue() : item.lastContactedAt || null,
         contactName: item.contactName || null,
@@ -1862,9 +1905,6 @@
         ? data.venuePartners.outreach.filter((item) => !["closed", "not_interested"].includes(String(item.status || "lead"))).length
         : 0;
       const openOutreach = Number(data.venuePartners?.totals?.openOutreach ?? pageOpenOutreach);
-      const prizesDisabled = data.leaderboardPrizes?.disabled === true
-        || data.leaderboardPrizes?.leaderboard?.disabled === true;
-      const campaign = data.leaderboardPrizes?.campaign || data.leaderboardPrizes?.leaderboard?.campaign || {};
       const totalTrust = counts.wrongPriceReports + counts.contactMessages + counts.venueRequests;
       const items = [
         {
@@ -1899,15 +1939,20 @@
           selector: "#pitchReadinessPanel",
           tone: leadCount ? "premium" : "info",
         },
-        {
+      ];
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        const prizesDisabled = data.leaderboardPrizes?.disabled === true
+          || data.leaderboardPrizes?.leaderboard?.disabled === true;
+        const campaign = data.leaderboardPrizes?.campaign || data.leaderboardPrizes?.leaderboard?.campaign || {};
+        items.push({
           label: "Prizes",
           value: prizesDisabled ? "paused" : campaign.status || "active",
           copy: prizesDisabled ? "launch flag disabled" : campaign.monthKey || "current month",
           target: "leaderboard",
           selector: "#leaderboardPrizeForm",
           tone: prizesDisabled || campaign.status !== "finalized" ? "info" : "success",
-        },
-      ];
+        });
+      }
 
       rail.innerHTML = items.map(adminFocusItemHtml).join("");
       wireAdminJumpActions(rail);
@@ -2098,7 +2143,7 @@
       wireAdminJumpActions(adminDashboardNeeds);
 
       renderDashboardPitchList(data.leads, data.venuePartners);
-      renderDashboardPrizeSummary(data.leaderboardPrizes);
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED) renderDashboardPrizeSummary(data.leaderboardPrizes);
       wireAdminJumpActions(adminDashboard);
     }
 
@@ -2401,7 +2446,7 @@
       outreachForm.elements.venueName.value = lead.venueName || "";
       outreachForm.elements.suburb.value = lead.suburb || "";
       outreachForm.elements.status.value = "lead";
-      outreachForm.elements.tierFit.value = lead.tierFit || "";
+      outreachForm.elements.tierFit.value = availableOutreachTierFit(lead.tierFit);
       outreachForm.elements.lastContactedAt.value = "";
       outreachForm.elements.nextAction.value = lead.nextAction || "";
       outreachForm.elements.contactName.value = "";
@@ -5139,7 +5184,7 @@
               </div>
               <div class="adminReviewCard__badges">
                 <span class="pill">${escapeHtml(String(item.status || "lead").replace("_", " "))}</span>
-                ${item.tierFit ? `<span class="pill pill--premium">${escapeHtml(String(item.tierFit).toUpperCase())}</span>` : ""}
+                ${availableOutreachTierFit(item.tierFit) ? `<span class="pill pill--premium">${escapeHtml(availableOutreachTierFit(item.tierFit).toUpperCase())}</span>` : ""}
               </div>
             </div>
             <div class="adminCrmLead__meta">
@@ -5350,6 +5395,7 @@
       const formElement = event.currentTarget;
       const form = new FormData(formElement);
       const body = Object.fromEntries(form.entries());
+      if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) body.accessLevel = "manager";
       try {
         if (!body.userId) {
           throw new Error("Choose a staff account from the search results.");
@@ -5520,7 +5566,9 @@
       const requestedVenuePartnerOffset = venuePartnerOffset;
       const requestedBeerCatalogOffset = adminBeerCatalogOffset;
       const venuePartnerPanelRequestId = ++venuePartnerRequestId;
-      const leaderboardPanelRequestId = ++leaderboardPrizesRequestId;
+      const leaderboardPanelRequestId = COMMERCIAL_ADMIN_FEATURES_ENABLED
+        ? ++leaderboardPrizesRequestId
+        : null;
       const beerCatalogPanelRequestId = hasActiveBeerCatalogMergeDraft()
         ? null
         : ++adminBeerCatalogReviewRequestId;
@@ -5532,7 +5580,9 @@
         ["leads", "Partner leads", "/api/business/admin/partner-leads"],
         ["queues", "Review queues", `/api/business/admin/queues?limit=${ADMIN_REVIEW_QUEUE_PAGE_SIZE}&offset=${adminReviewQueueOffset}`],
         ["venuePartners", "Venue partners", `/api/business/admin/venue-partners?limit=${VENUE_PARTNER_PAGE_SIZE}&offset=${requestedVenuePartnerOffset}`],
-        ["leaderboardPrizes", "Leaderboard prizes", "/api/business/admin/leaderboard-prizes"],
+        ...(COMMERCIAL_ADMIN_FEATURES_ENABLED
+          ? [["leaderboardPrizes", "Leaderboard prizes", "/api/business/admin/leaderboard-prizes"]]
+          : []),
         ["beerCatalog", "Beer catalogue", `/api/business/admin/beer-catalog?pendingLimit=${ADMIN_BEER_CATALOG_PAGE_SIZE}&pendingOffset=${requestedBeerCatalogOffset}&activeLimit=100&activeOffset=0`],
         ["operationalHealth", "Operational health", "/api/business/admin/operational-health"],
       ];
@@ -5544,7 +5594,7 @@
         const current = key === "venuePartners"
           ? venuePartnerPanelRequestId === venuePartnerRequestId && requestedVenuePartnerOffset === venuePartnerOffset
           : key === "leaderboardPrizes"
-            ? leaderboardPanelRequestId === leaderboardPrizesRequestId
+            ? leaderboardPanelRequestId !== null && leaderboardPanelRequestId === leaderboardPrizesRequestId
             : key === "beerCatalog"
               ? beerCatalogPanelRequestId !== null
                 && beerCatalogPanelRequestId === adminBeerCatalogReviewRequestId
@@ -5576,10 +5626,14 @@
       if (panelData.queues) renderQueues(queues);
       if (panelData.venuePartners) renderVenuePartners(venuePartners);
       if (panelData.leads && panelData.venuePartners) renderPitchReadiness(leads, venuePartners);
-      if (panelData.leaderboardPrizes) renderAdminLeaderboardPrizes(leaderboardPrizes);
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED && panelData.leaderboardPrizes) {
+        renderAdminLeaderboardPrizes(leaderboardPrizes);
+      }
       if (panelData.beerCatalog) renderPendingBeerCatalog(beerCatalog);
       const dashboardVenuePartners = panelData.venuePartners || latestAdminDashboardPayload?.venuePartners || {};
-      const dashboardLeaderboardPrizes = panelData.leaderboardPrizes || latestAdminDashboardPayload?.leaderboardPrizes || {};
+      const dashboardLeaderboardPrizes = COMMERCIAL_ADMIN_FEATURES_ENABLED
+        ? panelData.leaderboardPrizes || latestAdminDashboardPayload?.leaderboardPrizes || {}
+        : {};
       renderAdminDashboard({
         todayKpis,
         leads,
@@ -5788,22 +5842,24 @@
       });
       managerAccessLevel?.addEventListener("change", syncManagerAssignPreview);
       outreachForm.addEventListener("submit", handleOutreach);
-      leaderboardPrizeForm.addEventListener("submit", handleLeaderboardPrizeSave);
-      finalizeLeaderboardPrizeButton.addEventListener("click", handleLeaderboardPrizeFinalize);
-      adminLeaderboardVouchers.addEventListener("click", (event) => {
-        const copyButton = event.target.closest("[data-copy-voucher-reference]");
-        if (copyButton) {
-          void copyTextToClipboard(copyButton.dataset.copyVoucherReference)
-            .then(() => {
-              copyButton.textContent = "Copied";
-              MelbBeerBusiness.setStatus(statusEl, "Voucher claim reference copied.");
-            })
-            .catch((error) => MelbBeerBusiness.setStatus(statusEl, error.message || "Could not copy the claim reference.", true));
-          return;
-        }
-        const button = event.target.closest("[data-transition-reward-voucher]");
-        if (button) handleRewardVoucherTransitionRequest(button);
-      });
+      if (COMMERCIAL_ADMIN_FEATURES_ENABLED) {
+        leaderboardPrizeForm.addEventListener("submit", handleLeaderboardPrizeSave);
+        finalizeLeaderboardPrizeButton.addEventListener("click", handleLeaderboardPrizeFinalize);
+        adminLeaderboardVouchers.addEventListener("click", (event) => {
+          const copyButton = event.target.closest("[data-copy-voucher-reference]");
+          if (copyButton) {
+            void copyTextToClipboard(copyButton.dataset.copyVoucherReference)
+              .then(() => {
+                copyButton.textContent = "Copied";
+                MelbBeerBusiness.setStatus(statusEl, "Voucher claim reference copied.");
+              })
+              .catch((error) => MelbBeerBusiness.setStatus(statusEl, error.message || "Could not copy the claim reference.", true));
+            return;
+          }
+          const button = event.target.closest("[data-transition-reward-voucher]");
+          if (button) handleRewardVoucherTransitionRequest(button);
+        });
+      }
       refreshAdminDataTools.addEventListener("click", loadAdminDataTools);
       adminVenueSearch.addEventListener("input", renderAdminVenueOptions);
       adminVenueSelect.addEventListener("change", () => {

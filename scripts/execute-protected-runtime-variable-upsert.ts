@@ -10,6 +10,12 @@ import {
 } from "./lib/trusted-filesystem.js";
 
 import { runRailwayMutationBoundaryCheck } from "./check-railway-mutation-boundary.js";
+import {
+  BAR_PILOT_STAGING_VARIABLES,
+  barPilotStoppedDeploymentExact,
+  barPilotCurrentDeploymentExact,
+  barPilotVariableValueExact,
+} from "./lib/bar-pilot-staging-contract.js";
 
 export const PROTECTED_RUNTIME_VARIABLE_SCHEMA =
   "pintpath-protected-runtime-variable-upsert/v1" as const;
@@ -68,10 +74,11 @@ const ALLOWED_VARIABLES = Object.freeze([
   "ACCOUNT_DELETION_NOTICE_FROM",
   "ACCOUNT_DELETION_NOTICE_KEYRING_JSON",
   "ACCOUNT_DELETION_NOTICE_REPLY_TO",
+  ...BAR_PILOT_STAGING_VARIABLES,
 ] as const);
 const POLICY_PATH = "ops/railway/protected-runtime-variable-policy.json";
 const POLICY_SHA256 =
-  "207f9c7667ef01818eac27b08e2e90166b29a18f94a3e06795a97728d8c89ae8";
+  "2d06378d1ce5d821edfeb418e8938adf2d4d35fd1d3747ec00ff73277947ae9a";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
@@ -223,6 +230,8 @@ function targetVariableExact(
   if (target === "permanent-staging-postgres") {
     return variableName === STAGING_POSTGRES_RUNTIME_VARIABLE;
   }
+  if ((BAR_PILOT_STAGING_VARIABLES as readonly string[]).includes(variableName)
+    && target !== "permanent-staging") return false;
   return ALLOWED_VARIABLES.includes(variableName as ApplicationVariable);
 }
 
@@ -670,6 +679,16 @@ export async function runProtectedRuntimeVariableUpsert(
     checks.targetPreflightExact =
       before !== null &&
       targetBeforeExact(before, args.variableName, target.serviceId);
+    if (before && dependencies.env.PINTPATH_BAR_PILOT_STAGING_CONFIGURATION === "true") {
+      const deployments = JSON.parse(before.deploymentCanonical) as Record<string, unknown>;
+      const expectedId = dependencies.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID ?? "";
+      const deploymentExact = (value: unknown) => expectedId
+        ? barPilotCurrentDeploymentExact(value, expectedId) : barPilotStoppedDeploymentExact(value);
+      checks.targetPreflightExact = checks.targetPreflightExact
+        && args.target === "permanent-staging"
+        && deploymentExact(deployments.targetServiceInstance)
+        && deploymentExact(deployments.applicationServiceInstance);
+    }
     if (!before || !checks.targetPreflightExact)
       throw new Error("target_invalid");
     const fixedStagingPostgresRepair =
@@ -686,6 +705,7 @@ export async function runProtectedRuntimeVariableUpsert(
     if (
       decoded.length < 1 ||
       decoded.length > 65536 ||
+      !barPilotVariableValueExact(args.variableName, decoded, args.candidateSha) ||
       (fixedStagingPostgresRepair && decoded !== STAGING_POSTGRES_RUNTIME_URL) ||
       (multilinePem
         ? canonicalPem !== canonicalPem.trim()

@@ -80,6 +80,31 @@ describe("public UI hardening", () => {
     expect(pricing).not.toMatch(/checkout|premium|\bPro\b/i);
   });
 
+  it("keeps prize administration out of the Free release workbench", () => {
+    const admin = readViewer("admin.html");
+
+    expect(admin).toContain("const COMMERCIAL_ADMIN_FEATURES_ENABLED =");
+    expect(admin).toContain('document.querySelectorAll("[data-commercial-admin-surface]")');
+    expect(admin).toContain("surface.remove();");
+    expect(admin).toContain('data-admin-tab-target="leaderboard"');
+    expect(admin).toContain('data-commercial-admin-surface hidden>Prizes</button>');
+    expect(admin).toContain('<div id="adminDashboardPitchList" class="adminDashboardPitchList"></div>');
+    expect(admin).toMatch(/<div class="panel adminDashboardPanel">\s*<div class="sectionHeader">\s*<div>\s*<div class="eyebrow">Pitch next<\/div>/);
+    expect(admin).toMatch(/<div class="panel adminDashboardPanel" data-commercial-admin-surface hidden>\s*<div class="sectionHeader">\s*<div>\s*<div class="eyebrow">Leaderboard<\/div>\s*<h2>Upcoming prizes<\/h2>/);
+    expect(admin).toContain('aria-labelledby="adminReportOpsHeading" data-commercial-admin-surface hidden>');
+    expect(admin).toContain('<option value="counter_staff" data-commercial-admin-surface hidden>Counter staff only</option>');
+    expect(admin).toContain('<option value="pro" data-commercial-admin-surface hidden>Pro</option>');
+    expect(admin).toContain('if (!COMMERCIAL_ADMIN_FEATURES_ENABLED) body.accessLevel = "manager";');
+    expect(admin).toContain('return "Healthy discovery signal. Pitch the Free venue dashboard and owner-controlled listing updates.";');
+    expect(admin).toContain('if (COMMERCIAL_ADMIN_FEATURES_ENABLED && item.tierFit === "pro") return 72;');
+    expect(admin).toContain('availableOutreachTierFit(item.tierFit)');
+    expect(admin).toContain('"Assign manager access and schedule the first venue-data review"');
+    expect(admin).toContain("if (COMMERCIAL_ADMIN_FEATURES_ENABLED) ADMIN_TAB_KEYS.splice(4, 0, \"leaderboard\")");
+    expect(admin).toContain('...(COMMERCIAL_ADMIN_FEATURES_ENABLED\n          ? [["leaderboardPrizes", "Leaderboard prizes", "/api/business/admin/leaderboard-prizes"]]');
+    expect(admin).toContain("if (COMMERCIAL_ADMIN_FEATURES_ENABLED) renderDashboardPrizeSummary");
+    expect(admin).not.toContain("what prize work needs attention");
+  });
+
   it("renders the 404 navigation without a CSP-blocked inline script", () => {
     const notFound = readViewer("404.html");
     const notFoundScript = readViewer("404.js");

@@ -1,0 +1,237 @@
+name: Deploy PintPath bar pilot staging
+run-name: Bar pilot staging | ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main
+        required: true
+        type: string
+      pilot_enabled:
+        description: Enable only after legitimate pilot accounts and venue are prepared
+        required: true
+        type: boolean
+        default: false
+      venue_ids:
+        description: Explicit comma-separated pilot venue IDs (maximum 20)
+        required: true
+        type: string
+        default: pintpath-pilot-demo:venue:v1
+      demo_customer_ids:
+        description: Existing authorised test customer IDs; empty keeps demo preparation disabled
+        required: false
+        type: string
+      expected_current_deployment_id:
+        description: Empty for known stopped-source recovery; later use the exact healthy deployment of this same candidate
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    name: Configure the exact staging candidate without starting retained source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: permanent-staging-provider-mutation
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact current main and a first attempt
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$RUN_ATTEMPT" = 1
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Require current main checks and artifacts
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/github-candidate-evidence"
+          npm run --silent github:release-candidate:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" --phase bar-pilot-staging \
+            --output "$RUNNER_TEMP/github-candidate-evidence/required-checks.json"
+
+      - name: Apply bounded staging configuration with no deployment
+        env:
+          PINTPATH_BAR_PILOT_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_BAR_PILOT_ENABLED: ${{ inputs.pilot_enabled && 'true' || 'false' }}
+          PINTPATH_BAR_PILOT_VENUE_IDS: ${{ inputs.venue_ids }}
+          PINTPATH_BAR_PILOT_DEMO_CUSTOMER_IDS: ${{ inputs.demo_customer_ids }}
+          PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: ${{ inputs.expected_current_deployment_id }}
+          PINTPATH_BAR_PILOT_CONFIGURATION_EVIDENCE: ${{ runner.temp }}/bar-pilot-configuration
+          PINTPATH_STAGING_DATABASE_MAINTENANCE_URL: ${{ secrets.PINTPATH_STAGING_DATABASE_MAINTENANCE_URL }}
+          PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_PEM: ${{ secrets.PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_PEM }}
+          PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: ${{ secrets.PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_DER_SHA256 }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+        run: ./node_modules/.bin/tsx scripts/configure-bar-pilot-staging.ts
+
+      - name: Retain configuration receipts without protected values
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-bar-pilot-configuration-${{ inputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/github-candidate-evidence/required-checks.json
+            ${{ runner.temp }}/bar-pilot-configuration/
+          if-no-files-found: warn
+          retention-days: 30
+
+  deploy:
+    name: Upload fresh bar pilot source and reconcile all runtime routes
+    needs: configure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: permanent-staging-deployment
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact current main and a first attempt
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$RUN_ATTEMPT" = 1
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Require current main checks and artifacts
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/github-candidate-evidence"
+          npm run --silent github:release-candidate:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" --phase bar-pilot-staging \
+            --output "$RUNNER_TEMP/github-candidate-evidence/required-checks.json"
+
+      - name: Install the exact reviewed Railway CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="$RUNNER_TEMP/pintpath-railway-cli"
+          cli_archive="$cli_root/railway-5.32.0-x86_64-linux.tar.gz"
+          mkdir -m 700 "$cli_root"
+          curl --fail --silent --show-error --location \
+            'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' \
+            --output "$cli_archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$cli_archive" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$cli_archive" --directory "$cli_root" \
+            --no-same-owner --no-same-permissions
+          cli_path="$cli_root/railway"
+          test -f "$cli_path"
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$cli_path" \
+            | sha256sum --check --strict
+          chmod 500 "$cli_path"
+          test "$("$cli_path" --version)" = 'railway 5.32.0'
+          chmod 400 "$cli_archive"
+          {
+            echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path"
+            echo "PINTPATH_RAILWAY_CLI_ARCHIVE=$cli_archive"
+          } >> "$GITHUB_ENV"
+
+      - name: Reassert exact current main immediately before upload
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          install -d -m 700 "$RUNNER_TEMP/bar-pilot-deployment"
+
+      - name: Upload exactly once and perform read-only reconciliation
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID: ${{ inputs.expected_current_deployment_id }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_WRITE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx scripts/execute-bar-pilot-staging-app-deployment.ts \
+            --policy ops/railway/bar-pilot-staging-app-deployment-policy.json \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --evidence-dir "$RUNNER_TEMP/bar-pilot-deployment"
+
+      - name: Retain source and runtime reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-bar-pilot-deployment-${{ inputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/github-candidate-evidence/required-checks.json
+            ${{ runner.temp }}/bar-pilot-deployment/
+          if-no-files-found: warn
+          retention-days: 30

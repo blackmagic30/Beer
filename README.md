@@ -1,6 +1,6 @@
 # pint-path
 
-`pint-path` is a production-minded Node.js + TypeScript app for Melbourne beer-price discovery. The current full-scale public launch scope is the Free web experience, contributor account flow, Free venue portal, admin review workflow, server-gated price/submission APIs, and an iOS app. Pricing, paid enrolment, trials, Pro, rewards, counter/redemption/POS, public happy-hour discovery, report delivery, and Android are deferred.
+`pint-path` is a Node.js + TypeScript app for Melbourne beer-price discovery. The current candidate targets the first 2–5 bars: venue management and public discovery, plus drink Pint Points and a 50-point one-use free-pint reward for explicitly enrolled pilot venues. See the [finite pilot acceptance record](docs/bar-pilot-ready.md) and [bar demo runbook](docs/venue-pilot-runbook.md) for tested status and preparation. Paid enrolment, trials, Pro, POS, public happy-hour discovery, report delivery, Android and the full public launch remain deferred.
 
 ## Production architecture status
 
@@ -35,7 +35,7 @@ Use two different pre-production systems: permanent integrated staging for routi
   - `partial`
   - `needs_review`
   - `failed`
-- Retains dormant business-model code for later evaluation, but the current release exposes no paid, trial, Pro, reward, redemption, counter, POS, public happy-hour, or report-delivery mode.
+- Explicit pilot allowlists enable staff purchases, drink Pint Points, one-use rewards and auditable corrections independently of payments. Broad commercial/reward/gamification flags stay disabled.
 
 ## Main Routes
 
@@ -164,7 +164,10 @@ Venue partner demo layer:
   premium display, and growth tools. No price or offer is approved for this
   release; do not configure or advertise a live Pro amount until the future
   commercial contract is reviewed and tested.
-- Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
+- Venue manager data updates are scoped to assigned venues. Routine profile,
+  ordinary-hours, and verified beer/stock/tap/price writes persist directly;
+  safeguard-triggered or restricted changes and community submissions still go
+  through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
 
@@ -894,6 +897,11 @@ npm run check
 
 ### Venue updates do not appear on the map
 
-- Manager and user-submitted changes are pending by default.
-- Approve the pending submission or venue-manager change in admin before expecting public map updates.
-- Confirm approved rows publish into `venue_price_records`; the public map should not read pending or raw source tables directly.
+- Routine assigned-manager profile, ordinary-hours, and verified
+  beer/stock/tap/price writes appear directly after a successful save. Refresh
+  the portal first if a stale version returns `409`.
+- Community submissions and safeguard-triggered or restricted manager changes
+  remain pending; approve those in admin before expecting public map updates.
+- Confirm approved community rows and current eligible venue-supplied rows read
+  from `venue_price_records`; the public map must not read pending or raw source
+  tables directly.

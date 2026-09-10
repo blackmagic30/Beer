@@ -130,8 +130,8 @@ describe("GitHub operational environment policy", () => {
   it("registers every literal and bounded dynamic workflow environment", () => {
     const result = loadAndValidateOperationalEnvironmentManifest({ root });
 
-    expect(result.workflowFileCount).toBe(35);
-    expect(result.environmentReferenceCount).toBe(55);
+    expect(result.workflowFileCount).toBe(36);
+    expect(result.environmentReferenceCount).toBe(57);
     expect(result.workflowEnvironmentNames).toHaveLength(27);
     expect(result.manifestEnvironmentNames).toHaveLength(29);
     expect(result.dynamicBindingCount).toBe(4);

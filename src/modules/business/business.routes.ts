@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import { z } from "zod";
 
 import { env } from "../../config/env.js";
 import { AppError } from "../../lib/errors.js";
@@ -115,6 +116,21 @@ const deferredCommercialVenueRoutePatterns = [
   /^\/venue-portal\/[^/]+\/(?:reports(?:\/|$)|report-delivery\/?$|reconciliation\/?$)/,
   /^\/venue-portal\/[^/]+\/(?:specials|member-preview|discount-redemptions|pint-point-drinks|counter-staff|free-pint-rewards|pos-integration|billing)(?:\/|$)/,
 ];
+
+const pilotRoutePatterns = [
+  /^\/account\/(?:pint-point-pass|free-pint-reward-code)\/?$/,
+  /^\/account\/counter-staff-invitations\/[^/]+\/respond\/?$/,
+  /^\/venue-portal\/[^/]+\/(?:member-preview|pint-point-drinks|counter-staff|free-pint-rewards|reconciliation|pilot-demo-threshold)(?:\/|$)/,
+];
+
+export function isBarPilotRoute(pathname: string): boolean {
+  return pilotRoutePatterns.some((pattern) => pattern.test(pathname.toLowerCase()));
+}
+
+const pilotDemoThresholdSchema = z.object({
+  customerAccountId: z.string().trim().min(1).max(200),
+  target: z.union([z.literal(49), z.literal(50)]),
+}).strict();
 
 const BROWSER_EMAIL_REAUTHENTICATION_COOKIE_NAME = "pint_path_email_reauth";
 const BROWSER_EMAIL_REAUTHENTICATION_COOKIE_PATH = "/api/business/auth/supabase-session";
@@ -339,12 +355,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.use((req, _res, next) => {
-    if (!isDeferredCommercialVenueRoute(req.path)) {
+    if (!isDeferredCommercialVenueRoute(req.path) && !isBarPilotRoute(req.path)) {
       next();
       return;
     }
     try {
-      businessService.assertCommercialVenueFeatureOpen();
+      if (isBarPilotRoute(req.path)) businessService.assertBarPilotFeatureOpen();
+      else businessService.assertCommercialVenueFeatureOpen();
       next();
     } catch (error) {
       next(error);
@@ -594,6 +611,11 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     } catch (error) {
       next(error);
     }
+  });
+
+  router.post("/account/pint-point-pass", writeLimiter, async (req, res) => {
+    const account = await requireAccount(req, businessService);
+    res.json(success(await businessService.createPintPointPass(account, getAuthorization(req))));
   });
 
   router.post("/account/free-pint-reward-code", writeLimiter, async (req, res, next) => {
@@ -1228,6 +1250,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const body = parseWithSchema(venueCounterStaffAssignmentSchema, req.body, "Invalid counter-staff revoke payload");
     const venueId = String(req.params.venueId ?? "");
     res.json(success(await businessService.revokeVenueCounterStaff(account, venueId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/pilot-demo-threshold", venueCounterLimiter, async (req, res) => {
+    const account = await requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    const body = parseWithSchema(pilotDemoThresholdSchema, req.body, "Choose a demo customer and preparation step.");
+    res.json(success(await businessService.preparePilotDemoThreshold(account, venueId, body)));
   });
 
   router.post("/venue-portal/:venueId/free-pint-rewards", venueCounterLimiter, async (req, res) => {

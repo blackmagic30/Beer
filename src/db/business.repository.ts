@@ -622,9 +622,11 @@ export interface VenuePintPointActivity {
   pointsAwarded: number;
   source: string;
   recordedByUserId: string | null;
+  operatorPublicAccountId?: string | null;
   status: PintPointDrinkRecordStatus;
   voidedAt: string | null;
   voidedByUserId: string | null;
+  voidedByPublicAccountId?: string | null;
   voidReason: string | null;
   recordedAt: string;
 }
