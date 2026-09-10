@@ -470,3 +470,37 @@ describe("protected runtime-variable upsert", () => {
     });
   });
 });
+
+describe("pilot configuration preserves the exact predecessor", () => {
+  it.each([true, false])("requires the retained deployment to remain stopped: %s", async (stopped) => {
+    const deploymentId = "6300a324-9407-4b1c-b651-749c47e9537f";
+    const makeMetadata = async (hasVariable: boolean) => {
+      const value = await metadata(hasVariable).json();
+      for (const name of ["targetServiceInstance", "applicationServiceInstance"]) {
+        value.data[name].latestDeployment = { id: deploymentId, status: "SUCCESS", deploymentStopped: stopped };
+        value.data[name].activeDeployments = [{ id: deploymentId, status: "SUCCESS", deploymentStopped: stopped }];
+      }
+      return json(value);
+    };
+    const fetchImpl = vi.fn().mockResolvedValueOnce(scope()).mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(await makeMetadata(false))
+      .mockResolvedValueOnce(json({ data: { variableCollectionUpsert: true } }))
+      .mockResolvedValueOnce(await makeMetadata(true));
+    const result = await runProtectedRuntimeVariableUpsert({
+      argv: ["--target", "permanent-staging", "--variable", "DATABASE_MAINTENANCE_URL",
+        "--value-file", "/private/value", "--evidence-dir", "/private/evidence", "--candidate-sha", CANDIDATE],
+      env: { GITHUB_REF: "refs/heads/main", GITHUB_SHA: CANDIDATE, GITHUB_RUN_ATTEMPT: "1",
+        PINTPATH_BAR_PILOT_STAGING_CONFIGURATION: "true",
+        PINTPATH_RUNTIME_VARIABLE_CONFIRMATION: "UPSERT_DATABASE_MAINTENANCE_URL_IN_PERMANENT_STAGING",
+        PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: "runtime-metadata-token-long-enough",
+        PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: "runtime-write-token-long-enough" },
+      cwd: process.cwd(), fetchImpl, boundaryCheck: vi.fn().mockResolvedValue(0),
+      readValue: () => Buffer.from("postgresql://private-maintenance"),
+      writeDurable: (_dir, _leaf, source) => sha256(source), writeOutput: vi.fn(),
+    });
+    expect(result).toBe(stopped ? 0 : 1);
+    const mutations = fetchImpl.mock.calls.filter(([, init]) => String(init.body).includes("variableCollectionUpsert"));
+    expect(mutations).toHaveLength(stopped ? 1 : 0);
+    if (stopped) expect(JSON.parse(mutations[0]![1].body).variables.skipDeploys).toBe(true);
+  });
+});

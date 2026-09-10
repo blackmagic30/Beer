@@ -24,6 +24,8 @@ import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
 import type { ProductionDeploymentWorkerFencePrerequisiteVerification } from
   "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
+import { BAR_PILOT_STOPPED_DEPLOYMENT_ID, BAR_PILOT_STOPPED_SOURCE_SHA } from
+  "../scripts/lib/bar-pilot-staging-contract.js";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const DEPLOYMENT_BEFORE = "11111111-1111-4111-8111-111111111111";
@@ -100,10 +102,10 @@ function providerObservation(
 ) {
   const configuredRegions = configuredRegionsOverride ?? [
       {
-        region: "asia-southeast1-eqsg3a",
+        region: exactPolicy.configuredTopologyContract.solePositiveRegion ?? "asia-southeast1-eqsg3a",
         numReplicas: configuredReplicaCount,
       },
-      ...(exactPolicy.target.name === "permanent-staging"
+      ...(exactPolicy.target.name === "permanent-staging" && exactPolicy.configuredTopologyContract.solePositiveRegion !== "us-west2"
         ? [{ region: "europe-west4-drams3a", numReplicas: 0 }]
         : []),
     ];
@@ -2359,5 +2361,86 @@ describe("Railway application deployment executor", () => {
     ]) expect(source).not.toContain(forbidden);
     expect(permanentStagingAppDeploymentExecutorInternals.TARGET_LOCKS.production
       .githubEnvironment).toBe("production-deployment");
+  });
+});
+
+describe("bar pilot fresh-source staging deployment", () => {
+  const policyPath = "ops/railway/bar-pilot-staging-app-deployment-policy.json";
+  function pilotPolicy() {
+    const parsed = parsePermanentStagingAppDeploymentPolicy(fs.readFileSync(policyPath, "utf8"));
+    if (!parsed) throw new Error("pilot policy invalid");
+    return parsed;
+  }
+  function pilotFixture(options: { current?: boolean; oldCandidateVisibleDuringPoll?: boolean; wrongSource?: boolean; runningOld?: boolean; drift?: boolean; uncertain?: boolean } = {}) {
+    const exactPolicy = pilotPolicy();
+    const fixture = harness(exactPolicy, { acknowledgementTimedOut: options.uncertain });
+    const beforeId = options.current ? DEPLOYMENT_BEFORE : BAR_PILOT_STOPPED_DEPLOYMENT_ID;
+    let calls = 0;
+    fixture.overrides.queryTarget.mockImplementation(async () => {
+      const before = calls++ < (options.oldCandidateVisibleDuringPoll ? 3 : 2);
+      const value = providerObservation(exactPolicy,
+        before ? (options.wrongSource ? "d".repeat(40) : options.current ? CANDIDATE_SHA : BAR_PILOT_STOPPED_SOURCE_SHA) : CANDIDATE_SHA,
+        before ? beforeId : DEPLOYMENT_AFTER,
+        before ? SNAPSHOT_BEFORE : SNAPSHOT_AFTER, "SUCCESS", null);
+      if (before && !options.current && !options.runningOld) {
+        value.snapshot.latestDeployment.deploymentStopped = true;
+        value.snapshot.activeDeployments[0]!.deploymentStopped = true;
+      }
+      if (options.drift && calls === 2) value.collateralSha256 = "f".repeat(64);
+      return value;
+    });
+    if (options.current) fixture.overrides.env.PINTPATH_BAR_PILOT_CURRENT_DEPLOYMENT_ID = beforeId;
+    return { ...fixture, args: ["--policy", policyPath, "--candidate-sha", CANDIDATE_SHA, "--evidence-dir", fixture.evidenceDir] };
+  }
+  it("only permits US1 with workers disabled and the current reviewed lockfile", () => {
+    const exact = pilotPolicy();
+    expect(exact.configuredTopologyContract.solePositiveRegion).toBe("us-west2");
+    expect(exact.postflightContract.automaticMaintenanceEnabled).toBe(false);
+    expect(exact.postflightContract.runtimeProbeRequired).toBe(true);
+    expect(exact.sourceContract.packageLockSha256).toBe(crypto.createHash("sha256").update(fs.readFileSync("package-lock.json")).digest("hex"));
+    for (const edit of [
+      (p: typeof exact) => { p.postflightContract.automaticMaintenanceEnabled = true; },
+      (p: typeof exact) => { p.configuredTopologyContract.solePositiveRegion = "asia-southeast1-eqsg3a"; },
+      (p: typeof exact) => { p.target.name = "production"; },
+      (p: typeof exact) => { p.sourceContract.packageLockSha256 = "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b"; },
+    ]) {
+      const changed = structuredClone(exact); edit(changed);
+      expect(parsePermanentStagingAppDeploymentPolicy(JSON.stringify(changed))).toBeNull();
+    }
+    const legacy = structuredClone(policy("permanent-staging"));
+    legacy.configuredTopologyContract = exact.configuredTopologyContract;
+    expect(parsePermanentStagingAppDeploymentPolicy(JSON.stringify(legacy))).toBeNull();
+  });
+  it("uploads fresh source once from the exact stopped predecessor without restarting it", async () => {
+    const fixture = pilotFixture();
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.runCommand.mock.calls[0]![1][0]).toBe("up");
+    expect(fixture.overrides.probeRuntime).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.createSourceAuthority.mock.calls[0]![3]).toBe(pilotPolicy().sourceContract.packageLockSha256);
+  });
+  it("allows a same-candidate configuration refresh only by another fresh upload", async () => {
+    const fixture = pilotFixture({ current: true });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(4);
+  });
+  it("waits for a new deployment identity when the old same-SHA process remains healthy", async () => {
+    const fixture = pilotFixture({ current: true, oldCandidateVisibleDuringPoll: true });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(5);
+    expect(fixture.overrides.probeRuntime.mock.calls[0]![4]).toBe(DEPLOYMENT_AFTER);
+  });
+  it.each([{ runningOld: true }, { wrongSource: true }, { current: true, wrongSource: true }, { drift: true }])(
+    "blocks changed predecessor/source/collateral before upload: %j", async (options) => {
+      const fixture = pilotFixture(options);
+      expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+      expect(fixture.runCommand).not.toHaveBeenCalled();
+    });
+  it("only reconciles an uncertain upload and never retries", async () => {
+    const fixture = pilotFixture({ uncertain: true });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
   });
 });
