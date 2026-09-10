@@ -336,6 +336,94 @@ describe.skipIf(!configuredAdminUrl)("canonical PostgreSQL Pint Points pilot", (
     const activity = (await repo.listPintPointDrinkRecordsForVenue("venue-a",100)).find(row => row.id === purchaseRecord.id);
     expect(activity).toMatchObject({ operatorPublicAccountId: "PP-STAFF", voidedByPublicAccountId: "PP-MANAGER" });
   });
+  it.each([
+    ["microseconds", "2026-09-10T01:00:00.123456Z", "2026-09-10T01:00:00.123Z"],
+    ["whole seconds", "2026-09-10T01:00:00Z", "2026-09-10T01:00:00.000Z"],
+    ["offset", "2026-09-10T11:00:00.123456+10:00", "2026-09-10T01:00:00.123Z"],
+  ])("completes Google signup consent and returning HTTP sessions with provider confirmation %s on PostgreSQL", async (_shape, confirmation, canonical) => {
+    const [{ env }, { createPilotTestService }, { createBusinessRouter }, { errorHandler }, { default: express },
+      { CURRENT_LEGAL_POLICY_VERSION }, { AccountSessionRepository }] = await Promise.all([
+      import("../src/config/env.js"), import("./helpers/pilot-postgres-runtime.js"),
+      import("../src/modules/business/business.routes.js"), import("../src/middleware/error-handler.js"),
+      import("express"), import("../src/config/legal.js"), import("../src/db/account-session.repository.js"),
+    ]);
+    const id = crypto.randomUUID();
+    const providerUser = { id, email: `${id}@example.test`, email_confirmed_at: confirmation,
+      app_metadata: { provider: "google" }, user_metadata: { full_name: "Pilot Google Customer" } };
+    const service = createPilotTestService(db, { ...env, NODE_ENV: "production",
+      SUPABASE_URL: undefined, SUPABASE_ANON_KEY: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined,
+      REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true, COMMERCIAL_LAUNCH_ENABLED: false,
+      BAR_PILOT_ENABLED: true, BAR_PILOT_VENUE_IDS: "venue-a", PINT_POINTS_REWARDS_ENABLED: false,
+      ALCOHOL_GAMIFICATION_ENABLED: false,
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: { getUser: async () => ({ data: { user: providerUser }, error: null }) },
+    };
+    const issuedAt = Math.floor(Date.now() / 1000) - 30;
+    const accessToken = [Buffer.from('{"alg":"HS256"}').toString("base64url"),
+      Buffer.from(JSON.stringify({ sub: id, iat: issuedAt, session_id: `google-${id}`,
+        amr: [{ method: "oauth", timestamp: issuedAt }] })).toString("base64url"), "test-signature"].join(".");
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+    const server = app.listen(0, "127.0.0.1");
+    await new Promise<void>(resolve => server.once("listening", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("HTTP fixture failed");
+    const base = `http://127.0.0.1:${address.port}/api/business`;
+    const accounts = new AccountSessionRepository(db);
+    async function exchange(acceptance = false, cookie?: string) {
+      return fetch(`${base}/auth/supabase-session`, { method: "POST",
+        headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+        body: JSON.stringify({ accessToken, credentialCeremony: "browser_memory_v1", ...(acceptance ? {
+          ageConfirmed: true, termsAccepted: true, privacyAccepted: true,
+          termsVersion: CURRENT_LEGAL_POLICY_VERSION, privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+          consentSource: "web_oauth",
+        } : {}) }),
+      });
+    }
+    const cookieOf = (response: Response) => response.headers.getSetCookie()
+      .find(value => value.startsWith("pint_path_session="))?.split(";", 1)[0];
+    try {
+      const consent = await exchange();
+      expect(consent.status).toBe(403);
+      expect((await consent.json()).error.message).toContain("Accept the current Terms and Privacy Policy");
+      expect(await accounts.getAccountById(id)).toBeNull();
+      const first = await exchange(true);
+      expect(first.status).toBe(200);
+      const firstBody = await first.json();
+      expect(firstBody.data).not.toHaveProperty("token");
+      expect(firstBody.data.account).toMatchObject({ id, role: "user", subscriptionStatus: "free" });
+      expect(first.headers.getSetCookie().join(";")).toContain("HttpOnly");
+      const firstCookie = cookieOf(first);
+      expect(firstCookie).toBeTypeOf("string");
+      expect(await accounts.getAccountById(id)).toMatchObject({ emailVerifiedAt: canonical,
+        termsVersion: CURRENT_LEGAL_POLICY_VERSION, privacyVersion: CURRENT_LEGAL_POLICY_VERSION });
+      const returning = await exchange(false, firstCookie);
+      expect(returning.status).toBe(200);
+      const nextCookie = cookieOf(returning);
+      expect(nextCookie).toBeTypeOf("string");
+      expect(nextCookie).not.toBe(firstCookie);
+      expect(await accounts.getAccountById(id)).toMatchObject({ emailVerifiedAt: canonical });
+      expect(await accounts.countUserSessions(id, new Date().toISOString())).toBe(1);
+      const session = await fetch(`${base}/auth/session`, { headers: { cookie: nextCookie! } });
+      expect((await session.json()).data).toMatchObject({ authenticated: true, account: { id } });
+      const beforeInvalid = await accounts.getAccountById(id);
+      providerUser.email_confirmed_at = "2026-02-30T01:00:00Z";
+      const invalid = await exchange(false, nextCookie);
+      expect(invalid.status).toBe(403);
+      expect((await invalid.json()).error.message).toBe("Verify your email with the sign-in provider before continuing.");
+      expect(invalid.headers.getSetCookie()).toEqual([]);
+      expect(await accounts.getAccountById(id)).toEqual(beforeInvalid);
+      expect(await accounts.countUserSessions(id, new Date().toISOString())).toBe(1);
+      const stillValid = await fetch(`${base}/auth/session`, { headers: { cookie: nextCookie! } });
+      expect((await stillValid.json()).data.authenticated).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it("executes the HTTP purchase-to-reward loop for an ordinary free pilot customer with commercial flags off", async () => {
     const user = await customer();
     const { CURRENT_LEGAL_POLICY_VERSION } = await import("../src/config/legal.js");

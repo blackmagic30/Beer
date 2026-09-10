@@ -5,6 +5,7 @@ import path from "node:path";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import * as QRCode from "qrcode";
+import { z } from "zod";
 
 import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../config/business-rules.js";
 import { CURRENT_LEGAL_POLICY_VERSION } from "../../config/legal.js";
@@ -1705,10 +1706,18 @@ function requireFreshSupabaseCredentialCeremony(
   return credentialTimeSeconds;
 }
 
+const SUPABASE_CONFIRMATION_TIMESTAMP = z.string().datetime({ offset: true });
+
 function getSupabaseEmailVerifiedAt(user: unknown): string | null {
   const record = user as Record<string, unknown>;
   const value = record.email_confirmed_at ?? record.confirmed_at;
-  return typeof value === "string" && value ? value : null;
+  const parsed = SUPABASE_CONFIRMATION_TIMESTAMP.safeParse(value);
+  if (!parsed.success) return null;
+  const timestamp = Date.parse(parsed.data);
+  if (!Number.isFinite(timestamp)) return null;
+  // Verified provider timestamps may include submillisecond precision or an
+  // offset. Normalize at this boundary; account persistence stays canonical.
+  return new Date(timestamp).toISOString();
 }
 
 function getSupabaseMfaClaims(
