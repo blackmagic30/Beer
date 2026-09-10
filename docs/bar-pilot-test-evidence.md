@@ -396,3 +396,28 @@ rerun after the build completed because its first local invocation overlapped
 artifact creation; that ordering failure was not an application regression.
 Logs use `/tmp/pintpath-bar-pilot-hosted-fix-*.log`. These checks still do not
 substitute for the follow-up's new protected deployment and public smoke.
+
+PR #110 passed its required checks and merged as
+`64677e28d1b8740634a2d9c684fa69a57757e333`. Its first main CI run,
+`34448952280`, was **not a pass**: all 13 Pint Points assertions passed, but
+Vitest reported an unhandled PostgreSQL `57P01` connection termination during
+test-database teardown. The dependent build/test job correctly stopped, and
+the new feed test was not reached in that run. The staging replacement was
+not dispatched. A focused test-lifecycle correction must preserve the
+assertions and complete fresh required checks before deployment; rerunning
+until a green result is not evidence that cleanup is correct.
+
+The cleanup correction waits for every connected test client's public `end`
+event after `pool.end()`, checks that the fixture database has zero remaining
+connections, and uses an ordinary database drop. It does not swallow database
+errors, change production pools, or update dependencies. The related five-file
+run passed **31/31 tests**: points 13, price feed 2, fixture setup/reset 11,
+browser destination 3, and deterministic delayed-close/error-propagation 2.
+No unhandled errors occurred. Lint, typecheck and formatting passed. Starting
+the real PostgreSQL browser fixture and sending SIGTERM also exited 0,
+removed its database without force, and removed its temporary credentials
+file. The task-owned PostgreSQL instance was stopped afterwards. Evidence:
+`/tmp/pintpath-pg-pool-cleanup-related.log`,
+`/tmp/pintpath-pg-pool-cleanup-lint.log`, and
+`/tmp/pintpath-pg-cleanup-browser-result.json`. Fresh PR/main checks and the
+hosted replacement remain required; these local results do not imply either.
