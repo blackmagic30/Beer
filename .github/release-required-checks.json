@@ -7,6 +7,10 @@
       "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
       "event": "workflow_dispatch"
     },
+    "bar-pilot-staging": {
+      "workflowPath": ".github/workflows/deploy-bar-pilot-staging.yml",
+      "event": "workflow_dispatch"
+    },
     "production": {
       "workflowPath": ".github/workflows/deploy-production.yml",
       "event": "workflow_dispatch"

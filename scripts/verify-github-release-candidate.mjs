@@ -20,6 +20,7 @@ const WORKFLOW_PATH_PATTERN =
 const CHECK_EVENTS = new Set(["push", "workflow_dispatch"]);
 const PHASES = Object.freeze([
   "staging",
+  "bar-pilot-staging",
   "production",
   "close",
   "activation",
@@ -37,6 +38,7 @@ const PRODUCTION_STAGES = Object.freeze([
 ]);
 const PHASE_STAGE_COUNTS = Object.freeze({
   staging: 0,
+  "bar-pilot-staging": 0,
   production: 0,
   close: 2,
   activation: 3,
@@ -592,7 +594,7 @@ function parseArguments(argv) {
 function requirements(policy, phase, candidateSha) {
   const checks = [...policy.requiredChecks.base];
   const artifacts = [...policy.requiredArtifacts.base];
-  if (phase !== "staging") {
+  if (phase !== "staging" && phase !== "bar-pilot-staging") {
     checks.push(...policy.requiredChecks.staging);
     artifacts.push(...policy.requiredArtifacts.staging);
   }
