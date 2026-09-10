@@ -87,6 +87,8 @@ const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_BYTES = 1024 * 1024;
+const MAX_METADATA_PAGES = 20;
+const MAX_METADATA_ROWS = 2_000;
 
 export const PROTECTED_RUNTIME_VARIABLE_MUTATION = `mutation PintPathProtectedRuntimeVariable(
   $projectId: String!
@@ -102,10 +104,11 @@ export const PROTECTED_RUNTIME_VARIABLE_METADATA = `query PintPathProtectedRunti
   $environmentId: String!
   $serviceId: String!
   $applicationServiceId: String!
+  $variablesAfter: String
 ) {
   environment(id:$environmentId,projectId:$projectId) {
     id
-    variables(first:100) {
+    variables(first:100,after:$variablesAfter) {
       edges { node { id name environmentId serviceId isSealed references } }
       pageInfo { hasNextPage endCursor }
     }
@@ -385,11 +388,11 @@ function serviceInstanceExact(
     Array.isArray(value.activeDeployments);
 }
 
-function snapshot(
+function snapshotPage(
   value: unknown,
   environmentId: string,
   serviceId = APPLICATION_SERVICE_ID,
-): Snapshot | null {
+): { snapshot: Snapshot; hasNextPage: boolean; endCursor: string | null } | null {
   if (
     !keys(value, ["data"]) ||
     !keys(value.data, [
@@ -411,7 +414,15 @@ function snapshot(
     !Array.isArray(environment.variables.edges) ||
     environment.variables.edges.length > 100 ||
     !keys(environment.variables.pageInfo, ["hasNextPage", "endCursor"]) ||
-    environment.variables.pageInfo.hasNextPage !== false ||
+    typeof environment.variables.pageInfo.hasNextPage !== "boolean" ||
+    !(environment.variables.pageInfo.endCursor === null ||
+      (typeof environment.variables.pageInfo.endCursor === "string" &&
+        environment.variables.pageInfo.endCursor.length > 0 &&
+        environment.variables.pageInfo.endCursor.length <= 512 &&
+        !/[\u0000-\u001f\u007f]/.test(environment.variables.pageInfo.endCursor))) ||
+    (environment.variables.pageInfo.hasNextPage &&
+      (environment.variables.pageInfo.endCursor === null ||
+        environment.variables.edges.length === 0)) ||
     !keys(staged, ["environmentId", "patch"]) ||
     staged.environmentId !== environmentId ||
     !record(staged.patch) ||
@@ -441,19 +452,84 @@ function snapshot(
     ),
   );
   if (
+    new Set(rows.map((item) => item.id)).size !== rows.length ||
     new Set(rows.map((item) => `${item.serviceId}:${item.name}`)).size !==
     rows.length
   )
     return null;
   return {
-    environmentId,
-    rows,
-    patchEmpty: true,
-    deploymentCanonical: canonical({
-      targetServiceInstance,
-      applicationServiceInstance,
-    }),
+    snapshot: {
+      environmentId,
+      rows,
+      patchEmpty: true,
+      deploymentCanonical: canonical({
+        targetServiceInstance,
+        applicationServiceInstance,
+      }),
+    },
+    hasNextPage: environment.variables.pageInfo.hasNextPage,
+    endCursor: environment.variables.pageInfo.endCursor as string | null,
   };
+}
+
+function snapshot(
+  value: unknown,
+  environmentId: string,
+  serviceId = APPLICATION_SERVICE_ID,
+): Snapshot | null {
+  const page = snapshotPage(value, environmentId, serviceId);
+  return page && !page.hasNextPage ? page.snapshot : null;
+}
+
+async function readSnapshot(
+  fetchImpl: typeof fetch,
+  token: string,
+  environmentId: string,
+  serviceId: string,
+): Promise<Snapshot | null> {
+  let variablesAfter: string | null = null;
+  let first: Snapshot | null = null;
+  const rows: Row[] = [];
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  const cursors = new Set<string>();
+  for (let pageNumber = 0; pageNumber < MAX_METADATA_PAGES; pageNumber += 1) {
+    const page = snapshotPage(await call(
+      fetchImpl,
+      token,
+      PROTECTED_RUNTIME_VARIABLE_METADATA,
+      {
+        projectId: PROJECT_ID,
+        environmentId,
+        serviceId,
+        applicationServiceId: APPLICATION_SERVICE_ID,
+        variablesAfter,
+      },
+    ), environmentId, serviceId);
+    if (!page ||
+      (pageNumber > 0 && page.snapshot.rows.length === 0) ||
+      (first && first.deploymentCanonical !== page.snapshot.deploymentCanonical) ||
+      rows.length + page.snapshot.rows.length > MAX_METADATA_ROWS ||
+      (page.endCursor !== null && cursors.has(page.endCursor))) return null;
+    first ??= page.snapshot;
+    for (const item of page.snapshot.rows) {
+      const name = `${item.serviceId}:${item.name}`;
+      if (ids.has(item.id) || names.has(name)) return null;
+      ids.add(item.id);
+      names.add(name);
+      rows.push(item);
+    }
+    if (!page.hasNextPage) {
+      rows.sort((left, right) => `${left.serviceId}:${left.name}`.localeCompare(
+        `${right.serviceId}:${right.name}`,
+      ));
+      return { ...first, rows };
+    }
+    if (page.endCursor === null) return null;
+    cursors.add(page.endCursor);
+    variablesAfter = page.endCursor;
+  }
+  return null;
 }
 
 function isFixedStagingPostgresRepair(
@@ -661,18 +737,9 @@ export async function runProtectedRuntimeVariableUpsert(
     checks.boundaryPreflightExact = (await dependencies.boundaryCheck()) === 0;
     if (!checks.tokenScopesExact || !checks.boundaryPreflightExact)
       throw new Error("preflight_invalid");
-    before = snapshot(
-      await call(
-        dependencies.fetchImpl,
-        metadataToken,
-        PROTECTED_RUNTIME_VARIABLE_METADATA,
-        {
-          projectId: PROJECT_ID,
-          environmentId: target.environmentId,
-          serviceId: target.serviceId,
-          applicationServiceId: APPLICATION_SERVICE_ID,
-        },
-      ),
+    before = await readSnapshot(
+      dependencies.fetchImpl,
+      metadataToken,
       target.environmentId,
       target.serviceId,
     );
@@ -771,18 +838,9 @@ export async function runProtectedRuntimeVariableUpsert(
     checks.postflightAttempted = true;
     let after: Snapshot | null = null;
     try {
-      after = snapshot(
-        await call(
-          dependencies.fetchImpl,
-          metadataToken,
-          PROTECTED_RUNTIME_VARIABLE_METADATA,
-          {
-            projectId: PROJECT_ID,
-            environmentId: target.environmentId,
-            serviceId: target.serviceId,
-            applicationServiceId: APPLICATION_SERVICE_ID,
-          },
-        ),
+      after = await readSnapshot(
+        dependencies.fetchImpl,
+        metadataToken,
         target.environmentId,
         target.serviceId,
       );
@@ -831,18 +889,9 @@ export async function runProtectedRuntimeVariableUpsert(
       checks.postflightAttempted = true;
       let after: Snapshot | null = null;
       try {
-        after = snapshot(
-          await call(
-            dependencies.fetchImpl,
-            metadataToken,
-            PROTECTED_RUNTIME_VARIABLE_METADATA,
-            {
-              projectId: PROJECT_ID,
-              environmentId: activeTarget.environmentId,
-              serviceId: activeTarget.serviceId,
-              applicationServiceId: APPLICATION_SERVICE_ID,
-            },
-          ),
+        after = await readSnapshot(
+          dependencies.fetchImpl,
+          metadataToken,
           activeTarget.environmentId,
           activeTarget.serviceId,
         );

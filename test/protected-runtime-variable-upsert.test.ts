@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  PROTECTED_RUNTIME_VARIABLE_METADATA,
   protectedRuntimeVariableInternals,
   runProtectedRuntimeVariableUpsert,
 } from "../scripts/execute-protected-runtime-variable-upsert.js";
@@ -82,6 +83,63 @@ function metadata(hasVariable: boolean): Response {
   });
 }
 
+function metadataRow(index: number, name = `EXISTING_VARIABLE_${index}`) {
+  return {
+    node: {
+      id: `variable-${index}`,
+      name,
+      environmentId: ENVIRONMENT,
+      serviceId: SERVICE,
+      isSealed: true,
+      references: [] as string[],
+    },
+  };
+}
+
+function metadataPage(
+  edges: ReturnType<typeof metadataRow>[],
+  hasNextPage = false,
+  endCursor: string | null = null,
+) {
+  return {
+    data: {
+      environment: {
+        id: ENVIRONMENT,
+        variables: { edges, pageInfo: { hasNextPage, endCursor } },
+      },
+      staged: { environmentId: ENVIRONMENT, patch: {} as Record<string, unknown> },
+      targetServiceInstance: applicationServiceInstance(),
+      applicationServiceInstance: applicationServiceInstance(),
+    },
+  };
+}
+
+async function runPagedUpsert(fetchImpl: ReturnType<typeof vi.fn>) {
+  const output: string[] = [];
+  const evidence: string[] = [];
+  const held = Buffer.from("postgresql://test-only-private-value");
+  const readValue = vi.fn(() => held);
+  const result = await runProtectedRuntimeVariableUpsert({
+    argv: ["--target", "permanent-staging", "--variable", "DATABASE_MAINTENANCE_URL",
+      "--value-file", "/private/value", "--evidence-dir", "/private/evidence", "--candidate-sha", CANDIDATE],
+    env: {
+      GITHUB_REF: "refs/heads/main", GITHUB_SHA: CANDIDATE, GITHUB_RUN_ATTEMPT: "1",
+      PINTPATH_RUNTIME_VARIABLE_CONFIRMATION: "UPSERT_DATABASE_MAINTENANCE_URL_IN_PERMANENT_STAGING",
+      PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: "runtime-metadata-token-long-enough",
+      PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: "runtime-write-token-long-enough",
+    },
+    cwd: process.cwd(), fetchImpl, boundaryCheck: vi.fn().mockResolvedValue(0), readValue,
+    writeDurable: (_directory, _leaf, source) => { evidence.push(source); return sha256(source); },
+    writeOutput: (source) => output.push(source),
+  });
+  const requests = fetchImpl.mock.calls.map(([, init]) => JSON.parse(String(init.body)));
+  return {
+    result, held, readValue, evidence, receipt: JSON.parse(output[0]!),
+    mutations: requests.filter((request) => request.query.includes("variableCollectionUpsert")),
+    metadataRequests: requests.filter((request) => request.query === PROTECTED_RUNTIME_VARIABLE_METADATA),
+  };
+}
+
 function postgresRuntimeMetadata(
   applicationInstance = applicationServiceInstance(),
 ): Response {
@@ -115,6 +173,99 @@ function postgresRuntimeMetadata(
 }
 
 describe("protected runtime-variable upsert", () => {
+  it.each([100, 101])("reads all metadata before and after one upsert with %i existing environment variables", async (count) => {
+    const rows = Array.from({ length: count }, (_, index) => metadataRow(index));
+    const added = metadataRow(count, "DATABASE_MAINTENANCE_URL");
+    const fetchImpl = vi.fn().mockResolvedValueOnce(scope()).mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(json(metadataPage(rows.slice(0, 100), count > 100, count > 100 ? "before-100" : null)));
+    if (count > 100) fetchImpl.mockResolvedValueOnce(json(metadataPage(rows.slice(100))));
+    fetchImpl.mockResolvedValueOnce(json({ data: { variableCollectionUpsert: true } }))
+      .mockResolvedValueOnce(json(metadataPage(rows.slice(0, 100), true, "after-100")))
+      .mockResolvedValueOnce(json(metadataPage([...rows.slice(100), added])));
+    const run = await runPagedUpsert(fetchImpl);
+    expect(run.result).toBe(0);
+    expect(run.mutations).toHaveLength(1);
+    expect(run.mutations[0].variables.skipDeploys).toBe(true);
+    expect(run.metadataRequests.map((request) => request.variables.variablesAfter)).toEqual(
+      count === 100 ? [null, null, "after-100"] : [null, "before-100", null, "after-100"],
+    );
+    expect(run.receipt).toMatchObject({
+      outcome: "updated", attempts: 1,
+      checks: { targetPreflightExact: true, targetPostflightExact: true, deploymentUnchanged: true },
+    });
+    expect(run.held.every((byte) => byte === 0)).toBe(true);
+    expect(run.evidence.join("\n")).not.toContain("postgresql://test-only-private-value");
+    expect(PROTECTED_RUNTIME_VARIABLE_METADATA).toContain("variables(first:100,after:$variablesAfter)");
+    expect(PROTECTED_RUNTIME_VARIABLE_METADATA).not.toMatch(/\bvalue\b/);
+    expect(PROTECTED_RUNTIME_VARIABLE_METADATA).toContain("decryptVariables:false");
+  });
+
+  it.each([
+    "wrong environment", "wrong staged environment", "staged patch", "changed target deployment",
+    "changed application deployment", "duplicate id", "duplicate scoped name", "repeated cursor",
+    "repeated terminal cursor", "empty continuation", "missing continuation", "malformed page",
+  ])("does not write when metadata continuation has %s", async (failure) => {
+    const first = metadataPage(Array.from({ length: 100 }, (_, index) => metadataRow(index)), true, "page-100");
+    const next = metadataPage([metadataRow(100)]);
+    if (failure === "wrong environment") next.data.environment.id = "other-environment";
+    if (failure === "wrong staged environment") next.data.staged.environmentId = "other-environment";
+    if (failure === "staged patch") next.data.staged.patch.changed = true;
+    if (failure === "changed target deployment") next.data.targetServiceInstance.latestDeployment.id = "new-deployment";
+    if (failure === "changed application deployment") next.data.applicationServiceInstance.activeDeployments = [];
+    if (failure === "duplicate id") next.data.environment.variables.edges[0]!.node.id = "variable-0";
+    if (failure === "duplicate scoped name") next.data.environment.variables.edges[0]!.node.name = "EXISTING_VARIABLE_0";
+    if (failure === "repeated cursor" || failure === "repeated terminal cursor") {
+      next.data.environment.variables.pageInfo = { hasNextPage: failure === "repeated cursor", endCursor: "page-100" };
+    }
+    if (failure === "empty continuation") next.data.environment.variables.edges = [];
+    const fetchImpl = vi.fn().mockResolvedValueOnce(scope()).mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(json(first));
+    if (failure === "missing continuation") fetchImpl.mockRejectedValueOnce(new Error("provider-unavailable"));
+    else fetchImpl.mockResolvedValueOnce(json(failure === "malformed page" ? { data: {} } : next));
+    const run = await runPagedUpsert(fetchImpl);
+    expect(run.result).toBe(1);
+    expect(run.mutations).toHaveLength(0);
+    expect(run.readValue).not.toHaveBeenCalled();
+    expect(run.receipt).toMatchObject({ outcome: "failed_before_attempt", attempts: 0 });
+  });
+
+  it.each(["missing cursor", "oversized page", "page limit"])("bounds metadata pagination and rejects %s", async (failure) => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(scope()).mockResolvedValueOnce(scope());
+    const pages = failure === "page limit" ? 20 : 1;
+    for (let page = 0; page < pages; page += 1) {
+      fetchImpl.mockResolvedValueOnce(json(metadataPage(
+        Array.from({ length: failure === "oversized page" ? 101 : 100 }, (_, index) => metadataRow(page * 100 + index)),
+        true, failure === "missing cursor" ? null : `page-${page + 1}`,
+      )));
+    }
+    const run = await runPagedUpsert(fetchImpl);
+    expect(run.result).toBe(1);
+    expect(run.metadataRequests).toHaveLength(pages);
+    expect(run.mutations).toHaveLength(0);
+    expect(run.readValue).not.toHaveBeenCalled();
+  });
+
+  it.each(["unavailable", "inconsistent deployment", "duplicate metadata"])("records uncertain postflight without retrying the write when continuation is %s", async (failure) => {
+    const rows = Array.from({ length: 100 }, (_, index) => metadataRow(index));
+    const next = metadataPage([metadataRow(100, "DATABASE_MAINTENANCE_URL")]);
+    if (failure === "inconsistent deployment") next.data.targetServiceInstance.latestDeployment.id = "changed-deployment";
+    if (failure === "duplicate metadata") next.data.environment.variables.edges[0]!.node.id = "variable-0";
+    const fetchImpl = vi.fn().mockResolvedValueOnce(scope()).mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(json(metadataPage(rows)))
+      .mockResolvedValueOnce(json({ data: { variableCollectionUpsert: true } }))
+      .mockResolvedValueOnce(json(metadataPage(rows, true, "after-100")));
+    if (failure === "unavailable") fetchImpl.mockRejectedValueOnce(new Error("provider-unavailable"));
+    else fetchImpl.mockResolvedValueOnce(json(next));
+    const run = await runPagedUpsert(fetchImpl);
+    expect(run.result).toBe(1);
+    expect(run.mutations).toHaveLength(1);
+    expect(run.receipt).toMatchObject({
+      outcome: "mutation_uncertain", attempts: 1,
+      checks: { acknowledgementExact: true, postflightAttempted: true, targetPostflightExact: false },
+    });
+    expect(run.held.every((byte) => byte === 0)).toBe(true);
+  });
+
   it("allows the fixed source URL only on the permanent-staging PostgreSQL service", () => {
     expect(
       protectedRuntimeVariableInternals.targetVariableExact(
