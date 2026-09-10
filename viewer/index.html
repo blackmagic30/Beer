@@ -3652,6 +3652,7 @@
       }
 
       .overlayTab {
+        min-height: 44px;
         padding: 7px 9px;
         font-size: 11px;
       }
@@ -4142,6 +4143,7 @@
     const venueRailSortCheapestEl = document.getElementById("venueRailSortCheapest");
     const venueRailSortNearestEl = document.getElementById("venueRailSortNearest");
     const venueRailBodyEl = document.getElementById("venueRailBody");
+    const mapOverlayTabsEl = document.getElementById("mapOverlayTabs");
     const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-panel]"));
     const closeVenueRailEl = document.getElementById("closeVenueRail");
     const closeMapLegendEl = document.getElementById("closeMapLegend");
@@ -5178,6 +5180,7 @@
     }
 
     function syncOverlayPanels() {
+      mapOverlayTabsEl.hidden = !MAP_OVERLAYS_ENABLED;
       if (!MAP_OVERLAYS_ENABLED) {
         venueRailEl.classList.add("is-hidden-panel");
         mapLegendEl.classList.add("is-hidden-panel");
