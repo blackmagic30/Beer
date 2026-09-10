@@ -638,6 +638,31 @@ describe("bar pilot fresh-source staging deployment", () => {
     expect(parsePermanentStagingAppDeploymentPolicy(policySource("production"))).toBeNull();
     expect(parsePermanentStagingAppDeploymentPolicy(policySource("permanent-staging"))).toBeNull();
   });
+  it("rejects an archive pathname replaced after its no-follow descriptor opens", () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pilot-archive-race-")));
+    temporaryRoots.push(root);
+    const archive = path.join(root, "candidate.tar");
+    const bytes = "reviewed candidate archive";
+    fs.writeFileSync(archive, bytes, { mode: 0o600 });
+    expect(permanentStagingAppDeploymentExecutorInternals.readSourceArchiveSha256(archive))
+      .toBe(crypto.createHash("sha256").update(bytes).digest("hex"));
+    const originalOpen = fs.openSync.bind(fs);
+    let swapped = false;
+    vi.spyOn(fs, "openSync").mockImplementation(((filename, flags, mode) => {
+      const descriptor = originalOpen(filename, flags, mode);
+      if (!swapped && filename === archive && typeof flags === "number"
+        && (flags & fs.constants.O_NOFOLLOW) !== 0) {
+        swapped = true;
+        fs.renameSync(archive, path.join(root, "held.tar"));
+        // Identical bytes must not conceal that the pathname names a new inode.
+        fs.writeFileSync(archive, bytes, { mode: 0o600 });
+      }
+      return descriptor;
+    }) as typeof fs.openSync);
+    expect(() => permanentStagingAppDeploymentExecutorInternals.readSourceArchiveSha256(archive))
+      .toThrow("trusted_file_invalid");
+    expect(swapped).toBe(true);
+  });
   it("uploads fresh source once from the exact stopped predecessor without restarting it", async () => {
     const fixture = pilotFixture();
     expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);

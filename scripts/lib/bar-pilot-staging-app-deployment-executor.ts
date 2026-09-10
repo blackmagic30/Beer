@@ -1330,6 +1330,20 @@ function snapshotManifestSha256(
   }
 }
 
+function readSourceArchiveSha256(filename: string): string {
+  const bytes = readTrustedRegularFile(filename, {
+    minBytes: 1,
+    maxBytes: 1024 * 1024 * 1024,
+    requireExactMode: 0o600,
+    requireOwner: true,
+  });
+  try {
+    return sha256(bytes);
+  } finally {
+    bytes.fill(0);
+  }
+}
+
 async function defaultCreateSourceAuthority(
   cwd: string,
   candidateSha: string,
@@ -1382,7 +1396,7 @@ async function defaultCreateSourceAuthority(
     );
     fs.chmodSync(archivePath, 0o600);
     await checkedCommand("tar", ["-xf", archivePath, "-C", snapshotPath], cwd);
-    const archiveSha256 = sha256(fs.readFileSync(archivePath));
+    const archiveSha256 = readSourceArchiveSha256(archivePath);
     const manifestSha256 = snapshotManifestSha256(snapshotPath);
     heldSnapshotRoot = holdSnapshotRootDirectory(snapshotPath);
     const snapshotRoot = heldSnapshotRoot;
@@ -1390,20 +1404,15 @@ async function defaultCreateSourceAuthority(
       try {
         snapshotRoot.assertExact();
         const root = fs.lstatSync(privateRoot);
-        const archive = fs.lstatSync(archivePath);
         const snapshot = fs.lstatSync(snapshotPath);
         if (
           !root.isDirectory()
           || root.isSymbolicLink()
           || (root.mode & 0o777) !== 0o700
-          || !archive.isFile()
-          || archive.isSymbolicLink()
-          || archive.nlink !== 1
-          || (archive.mode & 0o777) !== 0o600
           || !snapshot.isDirectory()
           || snapshot.isSymbolicLink()
           || (snapshot.mode & 0o777) !== 0o700
-          || sha256(fs.readFileSync(archivePath)) !== archiveSha256
+          || readSourceArchiveSha256(archivePath) !== archiveSha256
           || snapshotManifestSha256(
             snapshotPath,
             snapshotRoot.authorityPath,
@@ -3450,6 +3459,7 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   parseCollateralSnapshot,
   parseProviderSnapshotWithConfiguredTopology,
   queryCollateralSnapshot,
+  readSourceArchiveSha256,
   parseDiscoveryDeploymentId,
   policyMatchesLock,
   providerDeploymentUnchanged,
