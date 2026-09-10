@@ -1503,6 +1503,73 @@ describe("Supabase account and verification foundation", () => {
       .rejects.toThrow("sign-in provider session was revoked");
   });
 
+  it.each([
+    ["microseconds", "2026-05-04T07:59:00.123456Z", "2026-05-04T07:59:00.123Z"],
+    ["nanoseconds", "2026-05-04T07:59:00.123456789Z", "2026-05-04T07:59:00.123Z"],
+    ["whole seconds", "2026-05-04T07:59:00Z", "2026-05-04T07:59:00.000Z"],
+    ["UTC offset", "2026-05-04T17:59:00.123456+10:00", "2026-05-04T07:59:00.123Z"],
+  ])("normalizes verified Supabase confirmation %s for first and returning Google sign-in", async (_shape, confirmation, canonical) => {
+    const { repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "google-confirmation-user",
+      email: "google-confirmation@example.test",
+      email_confirmed_at: confirmation,
+      app_metadata: { provider: "google" },
+      user_metadata: {},
+    };
+    const service = createBusinessService(repository, { NODE_ENV: "production", COMMERCIAL_LAUNCH_ENABLED: false });
+    const getUser = vi.fn(async () => ({ data: { user: providerUser }, error: null }));
+    (service as unknown as { supabase: unknown }).supabase = { auth: { getUser } };
+    const accessToken = testSupabaseAccessToken({
+      sub: providerUser.id, iat: nowSeconds - 30, session_id: "google-confirmation-session",
+      amr: [{ method: "oauth", timestamp: nowSeconds - 30 }],
+    });
+    const input = { accessToken, credentialCeremony: "browser_memory_v1" as const };
+    await expect(service.loginWithSupabaseAccessToken(input)).rejects.toMatchObject({
+      statusCode: 403, message: expect.stringContaining("Accept the current Terms and Privacy Policy"),
+    });
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)).toBeNull();
+    const first = await service.loginWithSupabaseAccessToken({ ...input,
+      ageConfirmed: true, termsAccepted: true, privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION, privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)).toMatchObject({
+      emailVerifiedAt: canonical, ageConfirmedAt: NOW, termsAcceptedAt: NOW, privacyAcceptedAt: NOW,
+      role: "user", subscriptionStatus: "free",
+    });
+    const returning = await service.loginWithSupabaseAccessToken(input, undefined, `Bearer ${first.token}`);
+    expect(returning.account.id).toBe(first.account.id);
+    expect(returning.token).not.toBe(first.token);
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)?.emailVerifiedAt).toBe(canonical);
+    expect(getUser).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    "not-a-timestamp", "2026-02-30T07:59:00Z", "2026-05-04", "2026-05-04T07:59:00",
+    "2026-05-04T24:00:00Z", "2026-05-04T07:59:00+25:00", "2026-05-04T07:59:00Z extra", "",
+  ])("does not treat invalid provider confirmation %j as a verified email", async (confirmation) => {
+    const { repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "invalid-google-confirmation", email: "admin@example.com", email_confirmed_at: confirmation,
+      confirmed_at: NOW, app_metadata: { provider: "google" }, user_metadata: { email_verified: true },
+    };
+    const service = createBusinessService(repository, { NODE_ENV: "production", COMMERCIAL_LAUNCH_ENABLED: false });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: { getUser: async () => ({ data: { user: providerUser }, error: null }) },
+    };
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: testSupabaseAccessToken({ sub: providerUser.id, iat: nowSeconds - 30,
+        session_id: "invalid-confirmation-session", amr: [{ method: "oauth", timestamp: nowSeconds - 30 }] }),
+      credentialCeremony: "browser_memory_v1", ageConfirmed: true, termsAccepted: true, privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION, privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+    })).rejects.toMatchObject({ statusCode: 403, message: "Verify your email with the sign-in provider before continuing." });
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)).toBeNull();
+    expect(repository.getAccountByEmail(providerUser.email)).toBeNull();
+  });
+
   it("keeps ordinary browser exchanges bound to a live account while preserving logged-out recovery", async () => {
     const { database, repository } = createRepository();
     const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
