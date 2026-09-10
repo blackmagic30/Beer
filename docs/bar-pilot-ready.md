@@ -55,10 +55,10 @@ retest. A passing area is not re-audited without a later regression.
 | PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | PASS at 390×844 in Chromium; actual iPhone/hosted Google ceremony remains owner verification |
 | PILOT-14 | Connected browser publication/award/reward/redemption/history updates | PASS; 21 checks against real PostgreSQL, zero page exceptions |
 | PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | PASS tooling and local fixture; hosted setup awaits legitimate Google identities |
-| PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | IN PROGRESS |
-| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | IN PROGRESS deployment; authenticated hosted loop awaits owner Google-provider setup and sign-in (staging Auth has zero users, identities and sessions) |
+| PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | PASS locally; 5,128 aggregate tests plus explicitly enabled PostgreSQL and Supabase runs below; required remote checks on PR #106 |
+| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | Authenticated acceptance OWNER_ACTION_REQUIRED; provider disabled and zero accounts. Public deployment must have its own successful exact-candidate workflow receipt; not inferred from local tests |
 | PILOT-18 | Real iPhone, real bar/eligible purchase, owner legal and staff approval | OWNER_ACTION_REQUIRED; only after software acceptance |
-| PILOT-19 | Candidate commits, PR, clean worktree, exact test evidence and handoff | IN PROGRESS |
+| PILOT-19 | Candidate commits, PR, clean worktree, exact test evidence and handoff | Recorded in [PR #106](https://github.com/blackmagic30/Beer/pull/106), this isolated branch and the final handoff; merge/deployment require the protected candidate checks |
 
 ## Evidence recorded during implementation
 
@@ -95,6 +95,29 @@ retest. A passing area is not re-audited without a later regression.
   Real browser findings fixed were distinct serving sizes collapsing into one
   row, an anonymous venue-link/cookie-dialog conflict, and low-contrast wallet
   hover/locked controls. No redesign was needed.
+- Final aggregate local suite: **274 files passed**, **5,128 tests passed**;
+  48 environment/platform-gated files and 142 tests skipped. Those skips are
+  not passes: required PostgreSQL and Supabase cases were also run explicitly
+  as documented in [the test evidence](bar-pilot-test-evidence.md).
+- Typecheck, JavaScript lint, format, production build (12 required artifacts),
+  isolated artifact runtime smoke, secret scan (**1,093 files**), and production/
+  restore deployment guard checks passed. The compiled artifact browser passed
+  six desktop and two mobile routes with no provider calls. Dependency audit:
+  **zero vulnerabilities**. Aggregate log: `/tmp/pintpath-bar-pilot-final-check.log`.
+- Scoped deployment configuration: **93 passed**, five existing Linux-only
+  skips; isolated pilot executor/production compatibility: **103 passed**, five
+  existing Linux-only skips; dedicated GitHub candidate-policy and historical
+  compatibility checks: **141 passed**. Remote Linux CI runs the relevant
+  platform-specific checks. The production executor and original release policy
+  retain their exact historical bytes; the new pilot executor accepts only its
+  explicit staging policy.
+
+The required remote checks and later hosted deployment are live evidence on
+[PR #106](https://github.com/blackmagic30/Beer/pull/106) and the
+[protected staging workflow](https://github.com/blackmagic30/Beer/actions/workflows/deploy-bar-pilot-staging.yml).
+Do not treat creation of a workflow or a local test result as a hosted pass.
+Authenticated hosted acceptance remains open until the owner prerequisites in
+[the runbook](venue-pilot-runbook.md) are completed.
 
 ## Runtime and owner boundaries
 
