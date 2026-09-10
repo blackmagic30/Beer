@@ -50,11 +50,26 @@ The demo venue is **PintPath Pilot Hotel — DEMO**, in the staging application 
 <https://beer-staging.up.railway.app>. It is deliberately labelled and must not
 be seeded into real production search results.
 
+The protected GitHub workflow **Deploy PintPath bar pilot staging**
+(`deploy-bar-pilot-staging.yml`) accepts only the reviewed, merged, current main
+SHA after its required checks pass. The initial stopped-app recovery uses
+`pilot_enabled=false`, the default demo venue ID, and empty customer/deployment
+inputs. It configures missing verified database transport values without
+restarting retained source, then uploads fresh source once. Production and the
+configured staging region/replica count are unchanged; automatic maintenance
+stays disabled. `/health`, `/startup` and `/ready` must pass for the new deployment.
+
 1. Four distinct controlled accounts complete the hosted Google sign-in and
    age/policy flow: existing allowlisted administrator, manager, staff and
    customer. Staff and customer stay ordinary users. The administrator completes
    the existing privileged-account requirements; do not bypass Google or MFA.
-2. A deployment operator supplies the existing emails privately as
+2. A deployment operator resolves the existing customer account and dispatches
+   the same workflow with the same current candidate SHA, `pilot_enabled=true`,
+   the explicit venue/customer allowlists, and `expected_current_deployment_id`
+   set to that exact healthy staging deployment. This performs a new source
+   upload so the new process actually receives the changed settings. An enabled
+   demo requires an explicit existing test customer; empty customer IDs are
+   rejected before a write. The operator supplies the existing emails privately as
    `PINTPATH_PILOT_OPERATOR_EMAIL`, `PINTPATH_PILOT_MANAGER_EMAIL`,
    `PINTPATH_PILOT_STAFF_EMAIL` and `PINTPATH_PILOT_CUSTOMER_EMAIL`. The runtime
    demo allowlist must contain that customer's actual account ID and the venue
