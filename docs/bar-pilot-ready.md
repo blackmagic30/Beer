@@ -56,7 +56,7 @@ retest. A passing area is not re-audited without a later regression.
 | PILOT-14 | Connected browser publication/award/reward/redemption/history updates | PASS; 21 checks against real PostgreSQL, zero page exceptions |
 | PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | PASS tooling and local fixture; hosted setup awaits legitimate Google identities |
 | PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | IN PROGRESS |
-| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | IN PROGRESS deployment; authenticated hosted loop awaits owner sign-in (staging Auth has zero users, identities and sessions) |
+| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | IN PROGRESS deployment; authenticated hosted loop awaits owner Google-provider setup and sign-in (staging Auth has zero users, identities and sessions) |
 | PILOT-18 | Real iPhone, real bar/eligible purchase, owner legal and staff approval | OWNER_ACTION_REQUIRED; only after software acceptance |
 | PILOT-19 | Candidate commits, PR, clean worktree, exact test evidence and handoff | IN PROGRESS |
 
@@ -81,6 +81,11 @@ retest. A passing area is not re-audited without a later regression.
 - Read-only staging Supabase inspection found zero users, identities and sessions.
   Hosted Google identities were not fabricated, and no hosted sign-in or connected
   acceptance is claimed from local password-based fixtures.
+- The public staging Google authorization entry returned HTTP **400** with
+  `validation_failed`: **provider is not enabled**. The Management API Auth
+  configuration read returned **403** with the available credential. Owner
+  provider configuration is therefore required before the four Google sign-ins;
+  a callback/complete OAuth session has not been verified.
 - Connected paired-browser acceptance: **21 passed**, zero page exceptions;
   mobile viewport **390×844**, touch enabled, scale factor 3. Evidence is in
   `/tmp/pintpath-pilot-browser-evidence/results.json` and the adjacent

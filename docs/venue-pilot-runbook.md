@@ -59,6 +59,19 @@ restarting retained source, then uploads fresh source once. Production and the
 configured staging region/replica count are unchanged; automatic maintenance
 stays disabled. `/health`, `/startup` and `/ready` must pass for the new deployment.
 
+**Owner prerequisite observed on 2026-09-10:** staging Google authorization
+returns “provider is not enabled”; the available Management API credential
+cannot read Auth configuration. In Supabase project `bbfibbadwjxzrcdncavy`,
+enable Google under **Authentication → Sign In / Providers** with the owner's
+Google web OAuth client. Its Google redirect URI is
+`https://bbfibbadwjxzrcdncavy.supabase.co/auth/v1/callback`. In Supabase URL
+Configuration set the staging Site URL and allow
+`https://beer-staging.up.railway.app/auth/callback`. Keep credentials in provider
+settings. Follow the [official Google setup](https://supabase.com/docs/guides/auth/social-login/auth-google)
+and [redirect guidance](https://supabase.com/docs/guides/auth/redirect-urls).
+Pass condition: **Continue with Google** returns to staging with a signed-in
+account, then age/policy acceptance completes.
+
 1. Four distinct controlled accounts complete the hosted Google sign-in and
    age/policy flow: existing allowlisted administrator, manager, staff and
    customer. Staff and customer stay ordinary users. The administrator completes
