@@ -2,14 +2,18 @@
 // Uses a disposable loopback fixture by default. Permanent staging requires exact opt-in.
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { chromium } from "playwright-core";
 import { validatePilotBrowserTarget } from "./lib/bar-pilot-browser-target.mjs";
 
 const fixturePath = process.env.PINTPATH_PILOT_BROWSER_FIXTURE_PATH || "/tmp/pintpath-bar-pilot-browser-fixture.json";
 const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 const { origin, hosted } = validatePilotBrowserTarget(fixture, process.env.PINTPATH_PILOT_BROWSER_ALLOW_STAGING === "true");
-const output = process.env.PINTPATH_PILOT_BROWSER_OUTPUT || "/tmp/pintpath-pilot-browser-evidence";
-fs.mkdirSync(output, { recursive: true, mode: 0o700 });
+// The optional output path is a prefix, not a reusable directory: every run
+// receives an atomically created private sibling and preserves earlier evidence.
+const outputPrefix = process.env.PINTPATH_PILOT_BROWSER_OUTPUT || path.join(os.tmpdir(), "pintpath-pilot-browser-evidence");
+if (!path.isAbsolute(outputPrefix)) throw new Error("Pilot browser evidence requires an absolute output prefix.");
+const output = fs.mkdtempSync(`${outputPrefix}-`);
 const browser = await chromium.launch({ headless: true, executablePath: process.env.PINTPATH_BROWSER_EXECUTABLE_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
 const evidence = [];
 const pageErrors = [];
@@ -180,6 +184,6 @@ try {
   await textIncludes(manager, "#reconciliationHistory", "Reversed");
   pass("audited reversal corrects the balance and retains original history");
   invariant(pageErrors.length === 0, `Browser exceptions: ${JSON.stringify(pageErrors)}`);
-  fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({ runtime: hosted ? "permanent hosted staging" : "disposable loopback PostgreSQL 17", viewport: "390x844", evidence, pageErrors }, null, 2));
+  fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({ runtime: hosted ? "permanent hosted staging" : "disposable loopback PostgreSQL 17", viewport: "390x844", evidence, pageErrors }, null, 2), { flag: "wx", mode: 0o600 });
   console.log(`Completed ${evidence.length} browser checks. Evidence: ${output}`);
 } finally { await browser.close(); }
