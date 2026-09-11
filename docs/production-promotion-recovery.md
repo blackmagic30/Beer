@@ -1,13 +1,11 @@
 # Protected production promotion and recovery authority
 
-Status: **workflow core exists; authoritative exact-run eligibility,
-controller evidence, and live authority are absent; launch remains hard
-NO-GO.** The current data-bearing jobs still use static base labels. This
-change did not call Railway, Supabase, AWS, GitHub provider APIs, or run a
-production recovery. Do not claim success until a separately reviewed
-exact-run successor exists and an owner-authorized, candidate-bound live run
-produces authentic provider receipts and the later protected attestation
-passes.
+Status: **exact-run controller and workflow eligibility are implemented;
+live host preparation, credentials, and authentic recovery evidence are still
+required. Production promotion remains NO-GO until the candidate-bound live
+rehearsal and protected attestation pass.** Unit tests do not stand in for
+provider receipts. This successor preserves the existing recovery, network
+separation, cleanup policies, and 18-leaf activation artifact contract.
 
 The controlling policy is
 `ops/railway/production-promotion-recovery-policy.json`, schema
@@ -54,7 +52,8 @@ The activation workflow does not perform or retry the promotion. It has exactly
 four jobs:
 
 1. `production-capture` runs on
-   `[self-hosted, linux, x64, pintpath-production-backup]`. This must be a JIT,
+   `[self-hosted, linux, x64, pintpath-production-backup]` plus its exact
+   run/attempt/role label. This must be a JIT,
    ephemeral, one-job runner inside the production private network. It creates
    the schema-v3 logical backup, observes PITR inside this job, and binds that
    observation to the final active deployment from the authenticated scale
@@ -66,7 +65,8 @@ four jobs:
    proves the operational logical copy retrievable. The obsolete separate
    post-promotion PITR workflow is not part of this chain.
 2. `disposable-recover` runs on
-   `[self-hosted, linux, x64, pintpath-disposable-recovery]`. It must be a
+   `[self-hosted, linux, x64, pintpath-disposable-recovery]` plus its exact
+   run/attempt/role label. It must be a
    separate JIT, ephemeral, one-job runner attached only to the exact
    disposable Railway/Supabase/Redis private network. It independently reads
    the logical WORM object versions and the private recovery-bundle WORM object
@@ -115,21 +115,22 @@ Distinct cryptographic signer/reviewer identities, Ed25519 verification, exact
 target inventories, the singleton arm, and signed change references remain
 mandatory.
 
-The checked-in activation workflow currently selects only static production
-and disposable base labels. It does not implement an authoritative exact-run
-hold and cannot exclude a standing matching runner. This is a hard NO-GO: do
-not dispatch until a separately reviewed successor supplies matching workflow
-labels, a controller, negative/positive tests, private-network hosts, and
-authentic exact-run evidence. Do not use human Environment approval as a
-workaround. Once that successor exists, preserve this order:
+The activation workflow requires each base network-role label **and** the
+exact `pintpath-recovery-<run-id>-1-<job-role>` label. A standing runner that has
+only a base label cannot accept these jobs. The controller below checks the
+actual queued job and current main before creating an offline JIT registration.
+The root-installed registration receipt is verified against the assigned
+GitHub job before either data-bearing job receives its first data secret.
+Keep zero required reviewers/timers and protected `main` only; human Environment
+approval is not this eligibility control.
 
 1. Provision and independently inventory the exact disposable Railway project,
    its sole environment, the disposable Supabase project, and all expected
    target hashes. Prepare both JIT runners but do not expose production
    credentials to the disposable network.
 2. Dispatch activation with confirmation
-   `ACTIVATE_PRODUCTION_PROMOTION_RECOVERY` only through that exact-run
-   successor and record its assigned `GITHUB_RUN_ID`.
+   `ACTIVATE_PRODUCTION_PROMOTION_RECOVERY` through the exact-run
+   workflow and record its assigned `GITHUB_RUN_ID`.
 3. Create and sign the emergency-cleanup arm for that exact run ID, candidate,
    Railway project/environment/workspace inventories, Supabase target, and the
    two pinned cleanup-policy hashes. Install its secret bytes/key in both the
@@ -250,6 +251,83 @@ ambiguity, or unproved absence is a failed activation even if no disposable
 resource is later found. The state remains OPEN until both exact current-run
 absence terminals exist; otherwise renew its authorities as needed and
 reconcile provider-global Railway state manually.
+
+## Exact-run JIT controller
+
+Use `scripts/control-production-recovery-jit-runner.ts prepare` from a trusted
+controller with the reviewed candidate checkout, Node 22, and a private `0700`
+persistent journal directory. The controller must have repository Actions,
+Contents, Environment variables/secrets metadata read access and runner
+Administration write access. Its `GH_TOKEN` stays on the controller; the data
+runners receive only the workflow's normal Actions-read token. Do not grant
+runner administration or cleanup read/delete credentials to either data job.
+
+Supply the already reviewed canonical signed documents as private `0600`
+files in one private directory: `arm.json`, `arm-public.pem`, `railway.json`,
+`railway-public.pem`, `supabase.json`, and `supabase-public.pem`. These are the
+same documents and public keys installed in the activation/cleanup environments;
+no new signing format or approval replaces the existing ceremony.
+
+```sh
+node --import tsx scripts/control-production-recovery-jit-runner.ts prepare \
+  --candidate-sha "$CANDIDATE_SHA" --run-id "$ACTIVATION_RUN_ID" \
+  --role production-capture --runner-group-id "$REVIEWED_RUNNER_GROUP_ID" \
+  --authority-directory "$PRIVATE_AUTHORITY_DIRECTORY" \
+  --journal-directory "$PRIVATE_CONTROLLER_JOURNAL"
+```
+
+The command verifies exact main, workflow/run/attempt, queued job labels,
+absence of an existing matching runner, the current OPEN compare-and-swap
+state, all three existing signatures, and the installed authority pins and
+cleanup secret names. It repeats those observations immediately before its
+single registration request. Sealed secret values are not exposed by GitHub;
+the existing data/cleanup executors still validate the actual credentials when
+used. Metadata presence alone is not evidence that a restore or cleanup passed.
+
+Registration produces three private journal files prefixed with the exact
+runner name: `-intent.json`, `-jit-config`, and `-receipt.json`. It never starts a
+listener. A trusted host administrator installs that receipt as root-owned
+`0644` `/etc/pintpath/production-recovery-jit-receipt.json` under a root-owned,
+non-writable `/etc/pintpath` directory on the correct newly prepared host.
+Install and verify the existing root-owned ephemeral runner policy, tmpfs,
+no-swap and private-network egress policy before starting the non-root GitHub
+runner with `run.sh --jitconfig` and the private config bytes. Use the reviewed
+runner binary/group and an otherwise empty host. Neither the JIT config nor
+controller token belongs in GitHub artifacts or logs.
+
+Only after production capture succeeds, repeat preparation for
+`--role disposable-recover` using its separate clean host/network. The
+controller refuses to register recovery before the exact capture job succeeds.
+The job-side verifier binds the root-installed receipt to the actual
+GitHub-assigned job ID, runner ID, name, group, role and labels, and rechecks
+the OPEN arm before data access. It emits a secret-free receipt hash and
+job/runner IDs into the workflow log. Preserve both private controller receipts
+alongside the authentic activation evidence.
+
+A failed or uncertain registration is never retried automatically. Preserve
+the stable run/role intent and independently reconcile the registered runner
+inventory; never choose a new journal directory to bypass the intent. A JIT
+runner executes at most one job. Destroy its host and raw working storage after
+termination, including on failure/cancellation, and prove both host and runner
+registration absent. Workflow `always()` cleanup and the external emergency
+watchdog remain mandatory; a successful host cleanup is not a substitute for
+Railway/Supabase deletion receipts.
+
+GitHub's official [JIT registration API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository),
+[workflow job API](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt),
+and [JIT security guidance](https://docs.github.com/en/actions/reference/security/secure-use#using-just-in-time-runners)
+define these registration, assignment and single-job guarantees.
+
+The 2026-09-11 bounded access check found repository admin access and zero
+registered runners. The observed production services were Beer, Redis and
+Postgres-Production; no recovery host was present in that inventory. The
+recovery environments had no credentials and no authentic candidate rehearsal.
+This proves missing setup, not that provisioning is necessarily owner-only:
+confirm available private-host provisioning authority before classifying that
+work as external. Existing GitHub admin access may automate registration once
+the hosts, signed authorities, data credentials and upstream promotion gates
+are ready. No registration, host provisioning or recovery was executed by this
+software change.
 
 ## Exact activation inventory
 

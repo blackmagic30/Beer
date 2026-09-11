@@ -191,15 +191,14 @@ there against disposable Postgres, Redis, Supabase Auth, and private Storage.
 No raw recovery byte crosses a GitHub artifact. Require exactly 18 evidence
 leaves and exactly 20 final activation files.
 
-The current activation workflow selects only the two static base labels. It
-does not implement an authoritative exact-run hold, and it cannot exclude a
-standing runner with either base label from claiming a job. This is an
-explicit hard NO-GO: do not dispatch activation until a separately reviewed
-successor updates the workflow, controller, tests, and evidence contract to
-enforce exact-run eligibility. A human GitHub Environment approval is not a
-workaround. The future exact-run control must still bind the singleton
-emergency arm plus both independently verified teardown authorities in the
-non-interactive cleanup environment and publish the arm through the protected
+The activation workflow combines each private-network role with an exact-run
+label. The controller verifies the actual queued GitHub job, signed cleanup
+arm and both teardown authorities before offline registration; a root-installed
+receipt verifies the assigned job/runner before data access. Code and contract
+tests do not provide real private-network hosts, credential authority or a
+candidate-bound recovery rehearsal. Live activation remains NO-GO until those
+and the upstream promotion gates pass. A human GitHub Environment approval is
+not a replacement. Publish the verified singleton arm through the protected
 manager's dedicated-ref compare-and-swap. An OPEN state mechanically rejects a
 second run; same-target linked renewal prevents expiry from stranding cleanup.
 Both provider cleanup steps remain independent. Supabase

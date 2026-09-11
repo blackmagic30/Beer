@@ -97,14 +97,13 @@ scale artifacts rather than added as substitutable route/recovery stages. The co
 promotion-recovery policy is schema v2 with SHA-256
 `57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
 
-Activation is one four-job workflow. The current workflow selects only static
-base labels: `production-capture` uses `pintpath-production-backup`, and
-`disposable-recover` uses `pintpath-disposable-recovery`. Those labels express the intended
-private-network roles, but do not implement an authoritative exact-run JIT hold
-or exclude a standing base-label runner. Activation is therefore a hard NO-GO
-until a separately reviewed successor updates the workflow, controller, tests,
-and evidence contract to enforce exact-run eligibility. If that control is
-completed, production capture performs PITR observation bound through the scale receipt from the source-upload
+Activation is one four-job workflow. The two private-network base labels are
+combined with exact run/attempt/role labels. The reviewed JIT controller verifies
+an actual queued job, the current OPEN cleanup arm and signed cleanup authorities
+before one offline registration. A root-installed receipt binds the actual
+assigned GitHub job/runner before data access. Follow the concrete controller
+procedure in `docs/production-promotion-recovery.md`; the remaining live host,
+credential and candidate rehearsal gates still apply. Production capture performs PITR observation bound through the scale receipt from the source-upload
 deployment to the distinct final active deployment, logical/private capture,
 operational-copy proof, and
 separate logical/private WORM sealing. Disposable recovery separately reads
@@ -121,14 +120,13 @@ with `activation-receipt.json` and `tested-commit-sha.txt`, the final activation
 artifact contains exactly 20 files.
 
 Teardown authorities must bind the exact activation `GITHUB_RUN_ID` and attempt
-`1`. The current static-label workflow must not be dispatched: there is no
-authoritative repository implementation that holds its jobs for an exact run
-or proves a standing base-label runner ineligible. Zero required reviewers,
-zero wait timers, and protected `main` only remain the GitHub Environment
-policy; a human approval pause must not substitute for the missing exact-run
-control. Live activation remains hard NO-GO until that controller, matching
-workflow labels, negative/positive tests, private-network hosts, and authentic
-evidence are separately reviewed and present.
+`1`. Keep zero required reviewers, zero wait timers and protected `main` only;
+a human approval pause is not an exact-run eligibility control. The controller
+and workflow now enforce the run-specific hold, but code/tests do not satisfy
+the private-network host, actual credential or authentic rehearsal requirements.
+Live activation remains NO-GO until those prerequisites and the upstream
+promotion gates pass. Preserve the controller journal and never automatically
+retry an uncertain registration.
 Supabase cleanup must be `orderly` and bind the exact
 Storage purge-receipt SHA-256 for green; emergency cleanup can establish
 absence after failure but never green. Standard cancel is permitted.
@@ -2179,14 +2177,12 @@ In the protected production operator environment:
    approval bound to the apply receipt; run reviewer-only
    `db:postgres:reviewed-price:authorize-quarantine`, then operator-only
    `db:postgres:reviewed-price:quarantine`.
-8. While public ingress is still closed, stop: the checked-in activation
-   workflow uses static base labels and has no authoritative exact-run
-   controller or evidence that excludes a standing matching runner. Do not
-   dispatch it. Live activation is a hard NO-GO until a separately reviewed
-   successor supplies the matching workflow labels, controller, tests,
-   private-network hosts, and exact-run evidence. Keep zero required reviewers,
-   zero wait timers, and protected `main` only; do not add human GitHub
-   Environment approval as a workaround. The eventual successor must create
+8. While public ingress is still closed, use the exact-run JIT controller
+   procedure in `docs/production-promotion-recovery.md`. Live activation remains
+   NO-GO until the separate private-network hosts, credentials and upstream
+   promotion prerequisites are ready. Keep zero required reviewers, zero wait
+   timers and protected `main` only. Do not substitute a human Environment
+   approval or static base-label runner. Create
    and independently verify the signed singleton emergency arm plus both
    per-run teardown authorities, install their pins and distinct read/delete
    tokens, and run the protected arm manager's `initial` compare-and-swap into

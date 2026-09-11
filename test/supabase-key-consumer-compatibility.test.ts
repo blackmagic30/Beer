@@ -336,6 +336,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/attest-production-promotion-recovery.ts",
       "scripts/backup-data-offsite.ts",
       "scripts/check-production-deploy-guard.mjs",
+      "scripts/control-production-recovery-jit-runner.ts",
       "scripts/create-production-promotion-recovery-activation-receipt.mjs",
       "scripts/download-offsite-backup.ts",
       "scripts/execute-protected-disposable-supabase-project-teardown.ts",

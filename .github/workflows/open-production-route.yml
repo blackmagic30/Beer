@@ -85,6 +85,7 @@ jobs:
           npm run --silent github:release-candidate:verify -- \
             --candidate-sha "$CANDIDATE_SHA" \
             --phase open \
+            --scope bar-pilot \
             --output "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json"
 
       - name: Materialize the exact digest-bound close and promotion-recovery receipts
@@ -94,6 +95,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          npm run --silent github:production-promotion-recovery:materialize -- \
+            --authority "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --stage deploy \
+            --output "$RUNNER_TEMP/pintpath-production-route-open-authority/deployment-receipt.json"
           npm run --silent github:production-promotion-recovery:materialize -- \
             --authority "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json" \
             --candidate-sha "$CANDIDATE_SHA" \
@@ -134,6 +140,7 @@ jobs:
             --operation open \
             --candidate-sha '${{ inputs.candidate_sha }}' \
             --github-authority "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json" \
+            --deployment-receipt "$RUNNER_TEMP/pintpath-production-route-open-authority/deployment-receipt.json" \
             --close-receipt "$RUNNER_TEMP/pintpath-production-route-open-authority/close-receipt.json" \
             --promotion-recovery-receipt "$RUNNER_TEMP/pintpath-production-route-open-authority/production-promotion-recovery-receipt.json" \
             --evidence-dir "$RUNNER_TEMP/pintpath-production-route-open-evidence"

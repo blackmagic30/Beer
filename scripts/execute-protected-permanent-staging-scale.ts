@@ -1,3 +1,6 @@
+import { productionArchiveRuntime, productionProviderSourceExact } from "./lib/production-source-archive-authority.js";
+import type { ProtectedSourceArchiveIdentity } from "../src/lib/protected-source-archive.js";
+import { parseProductionArchiveDeploymentProviderSnapshotResponse } from "../src/lib/railway-application-deployment-attestation.js";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -173,6 +176,7 @@ type RuntimeMaintenanceExpectation =
       readonly enabled: boolean;
       readonly candidateBound: boolean;
       readonly legacyIdentityOnly?: false;
+      readonly sourceArchive?: ProtectedSourceArchiveIdentity;
     }
   | { readonly legacyIdentityOnly: true };
 
@@ -182,7 +186,9 @@ interface ScaleTarget {
 }
 
 interface ProtectedScaleSnapshot
-  extends RailwayApplicationDeploymentAttestationProviderSnapshot {
+  extends Omit<RailwayApplicationDeploymentAttestationProviderSnapshot, "deployment"> {
+  readonly deployment: Omit<RailwayApplicationDeploymentAttestationProviderSnapshot["deployment"], "commitHash"> & { readonly commitHash: string | null };
+  readonly sourceArchiveAuthority?: ProtectedSourceArchiveIdentity;
   readonly configuredReplicas: number;
   readonly configuredRegions: readonly RailwayRegionReplicaCount[];
   readonly serviceSource: {
@@ -814,6 +820,7 @@ async function querySnapshot(
   fetchImpl: typeof fetch,
   token: string,
   target: ScaleTarget = STAGING_TARGET,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): Promise<ProtectedScaleSnapshot> {
   const deploymentId = parseDiscovery(await graphql(
     fetchImpl,
@@ -874,9 +881,9 @@ async function querySnapshot(
       deployment: response.data.deployment,
     },
   });
-  const snapshot = parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
-    source,
-  );
+  const snapshot = sourceArchive
+    ? parseProductionArchiveDeploymentProviderSnapshotResponse(source, sourceArchive)
+    : parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(source);
   if (!snapshot) throw new Error("provider_snapshot_invalid");
   const collateralConfig = environmentConfigCollateral(
     response.data.environment.config,
@@ -884,6 +891,7 @@ async function querySnapshot(
   if (collateralConfig === null) throw new Error("provider_snapshot_invalid");
   return Object.freeze({
     ...snapshot,
+    ...(sourceArchive ? { sourceArchiveAuthority: sourceArchive } : {}),
     configuredReplicas: topology.configuredTotal,
     configuredRegions: topology.regions,
     serviceSource: Object.freeze({
@@ -917,13 +925,12 @@ async function probeRuntime(
       if (!legacyRuntimeIdentityExact(route, source, candidateSha)) return false;
       continue;
     }
-    const runtime = parseRailwayApplicationDeploymentAttestationRuntimeResponse(
-      route,
-      source,
-    );
+    const runtime = expectation.sourceArchive
+      ? productionArchiveRuntime(route, source, candidateSha, expectation.sourceArchive)
+      : parseRailwayApplicationDeploymentAttestationRuntimeResponse(route, source);
     if (
       !runtime
-      || runtime.deployment.commitSha !== candidateSha
+      || (!expectation.sourceArchive && runtime.deployment.commitSha !== candidateSha)
       || runtime.deployment.projectIdSha256
         !== railwayDeploymentIdentityIdSha256("project", PROJECT_ID)
       || runtime.deployment.environmentIdSha256
@@ -1038,7 +1045,7 @@ function snapshotExact(
     && snapshot.deployment.projectId === PROJECT_ID
     && snapshot.deployment.environmentId === target.environmentId
     && snapshot.deployment.serviceId === SERVICE_ID
-    && snapshot.deployment.commitHash === candidateSha
+    && productionProviderSourceExact(snapshot.deployment.commitHash, candidateSha, snapshot.sourceArchiveAuthority)
     && snapshot.deployment.patchId === null
     && snapshot.activeDeployments.length === 1
     && snapshot.activeDeployments[0]?.id === snapshot.latestDeployment.id
@@ -1145,7 +1152,7 @@ function topologyEvidenceExact(
   if (!receiptExact) return false;
   if (before === null || after === null || !snapshotExact(
     after,
-    after.deployment.commitHash,
+    after.sourceArchiveAuthority?.candidateSha ?? after.deployment.commitHash ?? "",
     desiredReplicas,
     target,
   )) return false;
@@ -1162,7 +1169,7 @@ function topologyEvidenceExact(
       === authoritativeSnapshotIdentity(immediatelyBeforeWrite)
     && snapshotExact(
       immediatelyBeforeWrite,
-      before.deployment.commitHash,
+      before.sourceArchiveAuthority?.candidateSha ?? before.deployment.commitHash ?? "",
       before.configuredReplicas as ReplicaCount,
       target,
       placement,
@@ -1206,11 +1213,12 @@ async function reconcile(
   candidateSha: string,
   replicas: ReplicaCount,
   target: ScaleTarget = STAGING_TARGET,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): Promise<ProtectedScaleSnapshot | null> {
   const deadline = dependencies.now() + RECONCILIATION_TIMEOUT_MS;
   do {
     try {
-      const snapshot = await querySnapshot(dependencies.fetchImpl, token, target);
+      const snapshot = await querySnapshot(dependencies.fetchImpl, token, target, sourceArchive);
       if (snapshotExact(snapshot, candidateSha, replicas, target)) return snapshot;
     } catch {
       // Read-only reconciliation continues until its fixed deadline.
@@ -1716,6 +1724,7 @@ export async function runProtectedPermanentStagingScale(
   let completedAt = startedAt;
   const args = parseArguments(dependencies.argv);
   const checks = emptyChecks();
+  let sourceArchive: ProtectedSourceArchiveIdentity | undefined;
   const direction = args?.direction ?? null;
   const candidateSha = args?.candidateSha ?? null;
   const githubRunId = RUN_ID_PATTERN.test(dependencies.env.GITHUB_RUN_ID ?? "")
@@ -1799,6 +1808,7 @@ export async function runProtectedPermanentStagingScale(
               now: new Date(dependencies.now()),
             },
           );
+        sourceArchive = productionActivationVerification.activationPrerequisites.rolePrerequisites.productionDeployment.sourceArchive;
         productionActivationPrerequisite = {
           runId: productionActivationVerification.activation.runId,
           verificationSha256: sha256(verificationSource),
@@ -1890,7 +1900,7 @@ export async function runProtectedPermanentStagingScale(
       !checks.boundaryPreflightExact) {
       throw new Error("preflight_invalid");
     }
-    before = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
+    before = await querySnapshot(dependencies.fetchImpl, metadataToken, target, sourceArchive);
     deploymentIdSha256 = railwayDeploymentIdentityIdSha256(
       "deployment",
       before.deployment.id,
@@ -1939,13 +1949,13 @@ export async function runProtectedPermanentStagingScale(
           target,
           args.expectedDeploymentSha,
           before.deployment.id,
-          { enabled: true, candidateBound: true },
+          { enabled: true, candidateBound: true, ...(sourceArchive ? { sourceArchive } : {}) },
         );
     if (!checks.runtimePreflightExact) throw new Error("runtime_fence_invalid");
     if ((direction === "converge-one" && beforeReplicas === 1)
       || (direction === "converge-production-two" && beforeReplicas === 2)) {
       checks.postflightAttempted = true;
-      after = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
+      after = await querySnapshot(dependencies.fetchImpl, metadataToken, target, sourceArchive);
       checks.targetPostflightExact = authoritativeSnapshotIdentity(before)
           === authoritativeSnapshotIdentity(after)
         && snapshotExact(
@@ -1959,10 +1969,9 @@ export async function runProtectedPermanentStagingScale(
           target,
           args.expectedDeploymentSha,
           after.deployment.id,
-          { enabled: true, candidateBound: true },
+          { enabled: true, candidateBound: true, ...(sourceArchive ? { sourceArchive } : {}) },
         );
-      checks.candidateUnchanged = after.deployment.commitHash
-        === args.expectedDeploymentSha;
+      checks.candidateUnchanged = productionProviderSourceExact(after.deployment.commitHash, args.expectedDeploymentSha, sourceArchive);
       checks.deploymentUnchanged = deploymentIdentity(before)
         === deploymentIdentity(after);
       checks.providerConfigurationCollateralUnchanged =
@@ -2038,6 +2047,7 @@ export async function runProtectedPermanentStagingScale(
           dependencies.fetchImpl,
           metadataToken,
           target,
+          sourceArchive,
         );
       } catch {
         immediatelyBeforeWrite = null;
@@ -2088,7 +2098,7 @@ export async function runProtectedPermanentStagingScale(
                 target,
                 args.expectedDeploymentSha,
                 immediatelyBeforeWrite!.deployment.id,
-                { enabled: true, candidateBound: true },
+                { enabled: true, candidateBound: true, ...(sourceArchive ? { sourceArchive } : {}) },
               );
       } catch {
         runtimePrewriteExact = false;
@@ -2135,7 +2145,7 @@ export async function runProtectedPermanentStagingScale(
                 target,
                 args.expectedDeploymentSha,
                 immediatelyBeforeWrite!.deployment.id,
-                { enabled: true, candidateBound: true },
+                { enabled: true, candidateBound: true, ...(sourceArchive ? { sourceArchive } : {}) },
               );
       } catch {
         runtimePrewriteExact = false;
@@ -2161,6 +2171,7 @@ export async function runProtectedPermanentStagingScale(
         dependencies.fetchImpl,
         metadataToken,
         target,
+        sourceArchive,
       );
       checks.targetPreflightExact = checks.targetPreflightExact &&
         authoritativeSnapshotIdentity(finalPrewrite) ===
@@ -2207,6 +2218,7 @@ export async function runProtectedPermanentStagingScale(
         args.expectedDeploymentSha,
         desiredReplicas!,
         target,
+        sourceArchive,
       );
       checks.targetPostflightExact = after !== null;
       try {
@@ -2240,10 +2252,10 @@ export async function runProtectedPermanentStagingScale(
             after.deployment.id,
             direction === "bootstrap-staging-one"
               ? { enabled: false, candidateBound: true }
-              : { enabled: true, candidateBound: true },
+              : { enabled: true, candidateBound: true, ...(sourceArchive ? { sourceArchive } : {}) },
           )
       );
-      checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
+      checks.candidateUnchanged = after !== null && productionProviderSourceExact(after.deployment.commitHash, args.expectedDeploymentSha, sourceArchive);
       checks.deploymentUnchanged = after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
       checks.providerConfigurationCollateralUnchanged = after !== null &&
@@ -2288,6 +2300,7 @@ export async function runProtectedPermanentStagingScale(
         args.expectedDeploymentSha,
         desiredReplicas,
         target,
+        sourceArchive,
       );
       checks.targetPostflightExact = after !== null;
       try {
@@ -2321,10 +2334,10 @@ export async function runProtectedPermanentStagingScale(
             after.deployment.id,
             direction === "bootstrap-staging-one"
               ? { enabled: false, candidateBound: true }
-              : { enabled: true, candidateBound: true },
+              : { enabled: true, candidateBound: true, ...(sourceArchive ? { sourceArchive } : {}) },
           )
       );
-      checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
+      checks.candidateUnchanged = after !== null && productionProviderSourceExact(after.deployment.commitHash, args.expectedDeploymentSha, sourceArchive);
       checks.deploymentUnchanged = before !== null && after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
       checks.providerConfigurationCollateralUnchanged =
@@ -2537,6 +2550,7 @@ export const protectedPermanentStagingScaleInternals = {
   parseScope,
   mutationAttemptEvidenceExact,
   patchHistoryEvidenceExact,
+  probeRuntime,
   probeRuntimeAbsent,
   readPatchHistory,
   scalePatchRegions,

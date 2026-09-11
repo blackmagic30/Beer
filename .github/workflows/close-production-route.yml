@@ -85,6 +85,7 @@ jobs:
           npm run --silent github:release-candidate:verify -- \
             --candidate-sha "$CANDIDATE_SHA" \
             --phase close \
+            --scope bar-pilot \
             --output "$RUNNER_TEMP/pintpath-production-route-close-authority/github-authority.json"
 
       - name: Materialize exact digest-bound deployment and scale receipts

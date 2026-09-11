@@ -81,23 +81,13 @@
     ],
     "staging": [
       {
-        "name": "Deploy permanent staging",
-        "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+        "name": "Configure the exact staging candidate without starting retained source",
+        "workflowPath": ".github/workflows/deploy-bar-pilot-staging.yml",
         "event": "workflow_dispatch"
       },
       {
-        "name": "Apply and prove permanent-staging venue directory",
-        "workflowPath": ".github/workflows/permanent-staging-venue-directory.yml",
-        "event": "workflow_dispatch"
-      },
-      {
-        "name": "Scale 1→2, prove, and converge 2→1",
-        "workflowPath": ".github/workflows/permanent-staging-scale-evidence.yml",
-        "event": "workflow_dispatch"
-      },
-      {
-        "name": "iOS protected production configuration archive",
-        "workflowPath": ".github/workflows/native-apps.yml",
+        "name": "Upload fresh bar pilot source and reconcile all runtime routes",
+        "workflowPath": ".github/workflows/deploy-bar-pilot-staging.yml",
         "event": "workflow_dispatch"
       }
     ],
@@ -157,16 +147,12 @@
     ],
     "staging": [
       {
-        "name": "pintpath-permanent-staging-deployment-{candidateSha}",
-        "producerCheck": "Deploy permanent staging"
+        "name": "pintpath-bar-pilot-configuration-{candidateSha}",
+        "producerCheck": "Configure the exact staging candidate without starting retained source"
       },
       {
-        "name": "pintpath-permanent-staging-venue-directory-{candidateSha}",
-        "producerCheck": "Apply and prove permanent-staging venue directory"
-      },
-      {
-        "name": "pintpath-permanent-staging-scale-evidence-{candidateSha}",
-        "producerCheck": "Scale 1→2, prove, and converge 2→1"
+        "name": "pintpath-bar-pilot-deployment-{candidateSha}",
+        "producerCheck": "Upload fresh bar pilot source and reconcile all runtime routes"
       }
     ],
     "production": [

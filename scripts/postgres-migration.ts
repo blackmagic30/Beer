@@ -12,6 +12,7 @@ import {
   PostgresMigrationSourceError,
   createPostgresMigrationPlan,
   createPostgresMigrationSnapshot,
+  normalizeLegacyPostgresMigrationSource,
 } from "../src/db/postgres-migration-source.js";
 import { exportPostgresMigrationLedgerAuthority } from "../src/db/postgres-migration-ledger.js";
 import { serializeCanonicalPostgresMigrationJson, sha256PostgresMigrationBytes } from "../src/db/postgres-migration-schema.js";
@@ -55,6 +56,10 @@ const PLAN_ARGUMENTS = new Set([
   "--output-plan",
   "--snapshot-manifest",
   "--snapshot-manifest-sha256",
+]);
+
+const NORMALIZE_ARGUMENTS = new Set([
+  "--candidate-sha", "--operator-id", "--output-dir", "--source-sqlite", "--source-sha256",
 ]);
 
 const LEDGER_EXPORT_ARGUMENTS = new Set([
@@ -628,6 +633,17 @@ export async function runPostgresMigrationSourceCli(
       tombstoneCount: result.manifest.checkpoint.tombstoneCount,
     };
   }
+  if (subcommand === "normalize-source") {
+    assertOperatorMutationAllowed("Postgres migration isolated source normalization");
+    const args = parseStrictArguments(rawArguments, { allowed: NORMALIZE_ARGUMENTS, required: NORMALIZE_ARGUMENTS });
+    const result = await normalizeLegacyPostgresMigrationSource({
+      sourceSqlite: exactAbsolutePath(args.get("--source-sqlite")!),
+      expectedSourceSha256: args.get("--source-sha256")!,
+      outputDirectory: exactAbsolutePath(args.get("--output-dir")!),
+      candidateSha: args.get("--candidate-sha")!, operatorId: args.get("--operator-id")!,
+    });
+    return { ok: true, command: subcommand, receiptSha256: result.receiptSha256, ...result.receipt };
+  }
   if (subcommand === "snapshot") {
     assertOperatorMutationAllowed("Postgres migration source snapshot");
     const args = parseStrictArguments(rawArguments, {
@@ -690,7 +706,7 @@ export async function runPostgresMigrationSourceCli(
   }
   throw new PostgresMigrationSourceError(
     "ARGUMENT_INVALID",
-    "Expected inspect-target, ledger-export, snapshot, plan, apply, or verify-target.",
+    "Expected inspect-target, ledger-export, normalize-source, snapshot, plan, apply, or verify-target.",
   );
 }
 

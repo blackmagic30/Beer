@@ -556,12 +556,12 @@ alone holds `PINTPATH_RAILWAY_PRODUCTION_ROUTE_CREATE_TOKEN` and
 create credentials are distinct production-scoped tokens. Do not copy either
 writer between environments or expose any value as an input, log, or artifact.
 `production-promotion-recovery-activation` scopes credentials for the two
-data-bearing jobs, but the current workflow selects only static base labels:
-`pintpath-production-backup` and `pintpath-disposable-recovery`.
-Authoritative exact-run eligibility and controller evidence are absent, so a
-standing matching runner is not mechanically excluded and activation remains
-a hard NO-GO. If a separately reviewed successor closes that control, the
-first job captures PITR, logical backup, private
+data-bearing jobs. Each private-network base label is combined with an exact-run
+label, and the controller verifies the actual queued job and signed cleanup
+arm before one offline registration. A root-installed receipt verifies the
+assigned job/runner before data access. Live activation remains NO-GO until
+private-network hosts, actual credentials and candidate-bound recovery evidence
+exist; follow `docs/production-promotion-recovery.md`. The first job captures PITR, logical backup, private
 Storage and the deletion authority and seals the logical and private sets into
 their separate WORM authorities. The second independently retrieves both WORM
 sets, restores them, runs the compiled candidate as a local child against the
@@ -610,17 +610,15 @@ lineage sequence. Only a DISARMED state permits the next initial arm.
 
 Each teardown authority must be signed for the exact activation
 `GITHUB_RUN_ID`, attempt `1`, candidate, and reviewed disposable identities.
-The checked-in activation workflow still selects only static production and
-disposable base labels. It does not implement an authoritative exact-run hold
-and cannot exclude a standing matching runner. Do not dispatch it: live
-activation is a hard NO-GO until a separately reviewed successor supplies the
-matching workflow labels, controller, negative/positive tests, private-network
-hosts, and authentic exact-run evidence. Keep zero required reviewers, zero
-wait timers, and protected `main` only; GitHub Environment entry scopes
-credentials and a human approval pause is not a substitute for the missing
-control. The eventual control must bind and independently verify the exact-run
-arm, both teardown authorities, their hash pins, distinct read/delete tokens,
-and singleton state CAS before making either job eligible. The
+Use the checked-in exact-run controller and matching workflow labels. The
+controller binds the actual queued GitHub job, signed arm, both teardown
+authorities, their hash pins, distinct read/delete token presence and singleton
+state CAS before offline registration. The private-network host must satisfy
+its existing custody and actual credential checks before starting the listener.
+Live activation remains NO-GO until these and the upstream promotion gates
+pass. Keep zero required reviewers, zero wait timers and protected `main` only;
+GitHub Environment entry scopes credentials and a human approval pause does
+not replace the exact-run control. The
 Railway and Supabase cleanup steps run independently with
 `if: always()`. Supabase `cleanupMode=orderly` must bind the exact Storage purge
 receipt to finalize green; `emergency` cleanup is only a failure/cancellation

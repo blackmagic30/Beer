@@ -13,6 +13,7 @@ import {
   parseRailwayApplicationDeploymentAttestationEmptyPatchResponse,
   parseRailwayApplicationDeploymentAttestationPolicy,
   parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse,
+  parseProductionArchiveDeploymentProviderSnapshotResponse,
   parseRailwayApplicationDeploymentAttestationReceipt,
   parseRailwayApplicationDeploymentAttestationRuntimeResponse,
   parseRailwayApplicationDeploymentAttestationTokenScopeResponse,
@@ -24,6 +25,8 @@ import {
 } from "../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
+
+import { canonicalProtectedSourceArchiveManifest, type ProtectedSourceArchiveIdentity } from "../src/lib/protected-source-archive.js";
 
 const IDS = Object.freeze({
   project: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -928,5 +931,67 @@ describe("Railway application deployment attestation contract", () => {
     }
     expect(poisonedLengthGetterCalls).toBe(0);
     expect(substitutedReceiptResult?.candidateSha).toBe(receipt.candidateSha);
+  });
+});
+
+
+describe("explicit production archive provider authority", () => {
+  const manifest = {
+    schemaVersion: "protected-source-archive/v2" as const, target: "production" as const,
+    candidateSha: CANDIDATE_SHA, treeSha: "2".repeat(40), sourceArchiveSha256: "3".repeat(64),
+    sourceBaseManifestSha256: "4".repeat(64), uploadNonce: "5".repeat(64),
+  };
+  const identity: ProtectedSourceArchiveIdentity = { ...manifest,
+    sourceIdentitySha256: sha256(canonicalProtectedSourceArchiveManifest(manifest)) };
+  const provider = () => JSON.parse(providerSource()) as {
+    data: { serviceInstance: { environmentId: string; serviceId: string }; deployment: {
+      projectId: string; environmentId: string; serviceId: string; meta: Record<string, unknown>;
+    } };
+  };
+  function archiveSource(mutate?: (value: ReturnType<typeof provider>) => void) {
+    const value = provider();
+    value.data.serviceInstance.environmentId = "13dab015-df74-45c6-b26f-69323daea99a";
+    value.data.deployment.environmentId = value.data.serviceInstance.environmentId;
+    delete value.data.deployment.meta.commitHash;
+    delete value.data.deployment.meta.patchId;
+    mutate?.(value);
+    return JSON.stringify(value);
+  }
+  it("keeps absent provider Git metadata null only under the explicitly bound production authority", () => {
+    const source = archiveSource();
+    expect(parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(source)).toBeNull();
+    expect(parseProductionArchiveDeploymentProviderSnapshotResponse(source, identity))
+      .toMatchObject({ deployment: { commitHash: null, imageDigest: IMAGE_DIGEST, patchId: null } });
+    expect(parseProductionArchiveDeploymentProviderSnapshotResponse(archiveSource(value => {
+      value.data.deployment.meta.commitHash = CANDIDATE_SHA;
+    }), identity)).toMatchObject({ deployment: { commitHash: CANDIDATE_SHA } });
+  });
+  it.each(["project", "environment", "service", "image", "conflictingGit", "invalidPatch"])(
+    "rejects mismatched production metadata: %s", (field) => {
+      const source = archiveSource(value => {
+        if (field === "project") value.data.deployment.projectId = IDS.deployment;
+        if (field === "environment") value.data.deployment.environmentId = IDS.environment;
+        if (field === "service") value.data.serviceInstance.serviceId = IDS.deployment;
+        if (field === "image") delete value.data.deployment.meta.imageDigest;
+        if (field === "conflictingGit") value.data.deployment.meta.commitHash = "f".repeat(40);
+        if (field === "invalidPatch") value.data.deployment.meta.patchId = "invalid";
+      });
+      expect(parseProductionArchiveDeploymentProviderSnapshotResponse(source, identity)).toBeNull();
+    },
+  );
+  it("rejects staging replay, tampering and extra fields without changing historical strict parsing", () => {
+    const stagingManifest = { schemaVersion: "protected-source-archive/v1" as const,
+      candidateSha: manifest.candidateSha, treeSha: manifest.treeSha,
+      sourceArchiveSha256: manifest.sourceArchiveSha256,
+      sourceBaseManifestSha256: manifest.sourceBaseManifestSha256, uploadNonce: manifest.uploadNonce };
+    const staging = { ...stagingManifest,
+      sourceIdentitySha256: sha256(canonicalProtectedSourceArchiveManifest(stagingManifest)) };
+    for (const bad of [staging, { ...identity, sourceIdentitySha256: "f".repeat(64) },
+      { ...identity, candidateSha: "f".repeat(40) }, { ...identity, extra: true }]) {
+      expect(parseProductionArchiveDeploymentProviderSnapshotResponse(archiveSource(), bad)).toBeNull();
+    }
+    expect(parseProductionArchiveDeploymentProviderSnapshotResponse(providerSource(), identity)).toBeNull();
+    expect(parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(providerSource()))
+      .toMatchObject({ deployment: { commitHash: CANDIDATE_SHA } });
   });
 });

@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -m 700 "$RUNNER_TEMP/pintpath-production-promotion-recovery-github"
-          npm run --silent github:release-candidate:verify -- \
+          npm run --silent github:release-candidate:verify -- --scope bar-pilot \
             --candidate-sha "$CANDIDATE_SHA" \
             --phase promotion-recovery \
             --output "$RUNNER_TEMP/pintpath-production-promotion-recovery-github/required-chain.json"

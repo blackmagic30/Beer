@@ -1,3 +1,6 @@
+import { productionArchiveRuntime, productionProviderSourceExact } from "./lib/production-source-archive-authority.js";
+import type { ProtectedSourceArchiveIdentity } from "../src/lib/protected-source-archive.js";
+import { parseProductionArchiveDeploymentProviderSnapshotResponse, type ProductionArchiveDeploymentProviderSnapshot } from "../src/lib/railway-application-deployment-attestation.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -320,7 +323,7 @@ function safeString(value: unknown, maximum: number): value is string {
     && !/[\r\n\0]/.test(value);
 }
 function parseArgs(argv: readonly string[]): Args | null {
-  if (argv.length !== 12) return null;
+  if (argv.length !== 12 && argv.length !== 14) return null;
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -345,8 +348,8 @@ function parseArgs(argv: readonly string[]): Args | null {
       || deploymentReceipt === null || !path.isAbsolute(deploymentReceipt)
       || scaleReceipt === null || !path.isAbsolute(scaleReceipt)
       || closeReceipt !== null || promotionRecoveryReceipt !== null))
-    || (operation === "open" && (values.size !== 6
-      || deploymentReceipt !== null || scaleReceipt !== null
+    || (operation === "open" && (values.size !== (deploymentReceipt ? 7 : 6)
+      || (deploymentReceipt !== null && !path.isAbsolute(deploymentReceipt)) || scaleReceipt !== null
       || closeReceipt === null || !path.isAbsolute(closeReceipt)
       || promotionRecoveryReceipt === null
       || !path.isAbsolute(promotionRecoveryReceipt)))) return null;
@@ -814,13 +817,14 @@ function parseProductionDeploymentReceipt(
   source: string,
   candidateSha: string,
   stage: ProductionChainStage,
-): { sourceSha256: string; deploymentIdSha256: string; completedAt: string } | null {
+): { sourceSha256: string; deploymentIdSha256: string; completedAt: string; sourceArchive?: ProtectedSourceArchiveIdentity } | null {
   try {
     const value = JSON.parse(source) as unknown;
     const receipt = parseProductionApplicationDeploymentReceipt(value, candidateSha);
     if (canonical(value) !== source || !receipt
       || !timestampWithinStage(receipt.startedAt, receipt.completedAt, stage)) return null;
     return {
+      ...(receipt.sourceArchive ? { sourceArchive: receipt.sourceArchive } : {}),
       sourceSha256: sha256(source),
       deploymentIdSha256: receipt.deploymentIdSha256,
       completedAt: receipt.completedAt,
@@ -1124,17 +1128,22 @@ function configuredTopologyExact(inventory: Inventory): boolean {
     && inventory.configuredTopology.configuredRegions[0]?.region === PRIMARY_REGION
     && inventory.configuredTopology.configuredRegions[0]?.numReplicas === 2;
 }
+function parseCandidateSnapshot(source: string, sourceArchive?: ProtectedSourceArchiveIdentity) {
+  return sourceArchive ? parseProductionArchiveDeploymentProviderSnapshotResponse(source, sourceArchive)
+    : parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(source);
+}
 function candidateExact(
-  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
+  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | ProductionArchiveDeploymentProviderSnapshot,
   candidateSha: string,
   inventory: Inventory,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): boolean {
   return snapshot.deployment.projectId === PROJECT_ID
     && snapshot.environmentId === PRODUCTION_ENVIRONMENT_ID
     && snapshot.serviceId === SERVICE_ID
     && snapshot.deployment.environmentId === PRODUCTION_ENVIRONMENT_ID
     && snapshot.deployment.serviceId === SERVICE_ID
-    && snapshot.deployment.commitHash === candidateSha
+    && productionProviderSourceExact(snapshot.deployment.commitHash, candidateSha, sourceArchive)
     && snapshot.deployment.patchId === null
     && configuredTopologyExact(inventory)
     && snapshot.latestDeployment.id === snapshot.deployment.id
@@ -1147,7 +1156,7 @@ function candidateExact(
     && snapshot.activeDeployments[0]?.deploymentStopped === false;
 }
 function snapshotWithoutRoutes(
-  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
+  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | ProductionArchiveDeploymentProviderSnapshot,
 ): string {
   const { numReplicas: _legacyAggregateReplicas, ...authoritative } = snapshot;
   return canonical({ ...authoritative, domains: [] });
@@ -1309,14 +1318,15 @@ function runtimeIdentityExact(
   source: string,
   candidateSha: string,
   deploymentId: string,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): boolean {
-  const value = parseRailwayApplicationDeploymentAttestationRuntimeResponse(route, source);
+  const value = sourceArchive ? productionArchiveRuntime(route, source, candidateSha, sourceArchive) : parseRailwayApplicationDeploymentAttestationRuntimeResponse(route, source);
   return value !== null
     && value.route === route
     && value.restoreMarkerPresent === false
     && value.automaticMaintenance.enabled === true
     && value.automaticMaintenance.candidateBound === true
-    && value.deployment.commitSha === candidateSha
+    && (sourceArchive !== undefined || value.deployment.commitSha === candidateSha)
     && value.deployment.environment === "production"
     && value.deployment.projectIdSha256
       === railwayDeploymentIdentityIdSha256("project", PROJECT_ID)
@@ -1333,6 +1343,7 @@ async function proveOpenPublicRuntime(
   deploymentId: string,
   now: () => number,
   sleep: (milliseconds: number) => Promise<void>,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): Promise<boolean> {
   const routes = ["/health", "/startup", "/ready"] as const;
   const deadline = now() + 900_000;
@@ -1349,7 +1360,7 @@ async function proveOpenPublicRuntime(
         });
         const source = await boundedText(response);
         exact = exact
-          && runtimeIdentityExact(route, source, candidateSha, deploymentId);
+          && runtimeIdentityExact(route, source, candidateSha, deploymentId, sourceArchive);
       }
       if (exact) return true;
     } catch {
@@ -1547,10 +1558,12 @@ export async function runProtectedProductionRouteMutation(
     closedRouteReceiptSha256: null,
   };
   let metadataToken = "";
+  let sourceArchive: ProtectedSourceArchiveIdentity | undefined;
+  let expectedDeploymentReceiptSha256: string | null = null;
   let beforeInventory: Inventory | null = null;
   let immediatelyBeforeWriteInventory: Inventory | null = null;
   let afterInventory: Inventory | null = null;
-  let beforeSnapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
+  let beforeSnapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | ProductionArchiveDeploymentProviderSnapshot | null = null;
   let expectedRoute: Route | null = null;
   try {
     checks.policyExact = policyExact(dependencies.cwd);
@@ -1587,6 +1600,13 @@ export async function runProtectedProductionRouteMutation(
       || routeStartedAtMs === null || consumerStartedAtMs === null
       || routeStartedAtMs < consumerStartedAtMs) {
       throw new Error("predecessor_authority_invalid");
+    }
+    if (args.deploymentReceipt) {
+      const deploymentStage = predecessorAuthority.stages.find((stage) => stage.stage === "deploy");
+      const authority = deploymentStage ? parseProductionDeploymentReceipt(readCanonicalFile(args.deploymentReceipt), args.candidateSha, deploymentStage) : null;
+      if (!authority) throw new Error("deployment_receipt_invalid");
+      sourceArchive = authority.sourceArchive;
+      expectedDeploymentReceiptSha256 = authority.sourceSha256;
     }
     metadataToken = dependencies.env.PINTPATH_RAILWAY_PRODUCTION_ROUTE_METADATA_TOKEN ?? "";
     const writeToken = dependencies.env.PINTPATH_RAILWAY_PRODUCTION_ROUTE_MUTATION_TOKEN ?? "";
@@ -1659,11 +1679,11 @@ export async function runProtectedProductionRouteMutation(
         deploymentId: service.latestDeployment.id,
       },
     );
-    beforeSnapshot = parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
-      providerSource(targetRaw),
+    beforeSnapshot = parseCandidateSnapshot(
+      providerSource(targetRaw), sourceArchive,
     );
     checks.candidateDeploymentPreflightExact = beforeSnapshot !== null
-      && candidateExact(beforeSnapshot, args.candidateSha, beforeInventory);
+      && candidateExact(beforeSnapshot, args.candidateSha, beforeInventory, sourceArchive);
     if (!checks.candidateDeploymentPreflightExact || !beforeSnapshot) {
       throw new Error("candidate_invalid");
     }
@@ -1697,6 +1717,7 @@ export async function runProtectedProductionRouteMutation(
           )
         : null;
       checks.predecessorReceiptsExact = deploymentAuthority !== null
+        && deploymentAuthority.sourceSha256 === expectedDeploymentReceiptSha256
         && scaleAuthority !== null
         && scaleAuthority.deploymentIdSha256 === deploymentIdSha256;
       operationReceiptAuthorities.productionDeploymentReceiptSha256 =
@@ -1713,10 +1734,13 @@ export async function runProtectedProductionRouteMutation(
         deploymentIdSha256,
         predecessorAuthority,
       );
-      checks.predecessorReceiptsExact = closedRouteAuthority !== null;
+      checks.predecessorReceiptsExact = closedRouteAuthority !== null
+        && (expectedDeploymentReceiptSha256 === null || closedRouteAuthority.productionDeploymentReceiptSha256 === expectedDeploymentReceiptSha256);
       operationReceiptAuthorities.closedRouteReceiptSha256 =
         closedRouteAuthority?.sourceSha256 ?? null;
-      if (!closedRouteAuthority) throw new Error("closed_route_receipt_invalid");
+      if (!closedRouteAuthority || !checks.predecessorReceiptsExact) {
+        throw new Error("closed_route_receipt_invalid");
+      }
       operationReceiptAuthorities.productionDeploymentReceiptSha256 =
         closedRouteAuthority.productionDeploymentReceiptSha256;
       operationReceiptAuthorities.productionScaleReceiptSha256 =
@@ -1805,7 +1829,7 @@ export async function runProtectedProductionRouteMutation(
     const prewriteService = immediatelyBeforeWriteInventory
       ? targetService(immediatelyBeforeWriteInventory)
       : null;
-    let prewriteSnapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
+    let prewriteSnapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | ProductionArchiveDeploymentProviderSnapshot | null = null;
     if (prewriteService) {
       const prewriteTargetRaw = await call(
         dependencies.fetchImpl,
@@ -1818,8 +1842,8 @@ export async function runProtectedProductionRouteMutation(
           deploymentId: prewriteService.latestDeployment.id,
         },
       );
-      prewriteSnapshot = parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
-        providerSource(prewriteTargetRaw),
+      prewriteSnapshot = parseCandidateSnapshot(
+        providerSource(prewriteTargetRaw), sourceArchive,
       );
     }
     checks.providerPrewriteReasserted = prewritePatch?.environmentId
@@ -1834,6 +1858,7 @@ export async function runProtectedProductionRouteMutation(
         prewriteSnapshot,
         args.candidateSha,
         immediatelyBeforeWriteInventory,
+        sourceArchive,
       );
     if (!checks.providerPrewriteReasserted) {
       throw new Error("provider_prewrite_drift");
@@ -1906,11 +1931,11 @@ export async function runProtectedProductionRouteMutation(
               deploymentId: service.latestDeployment.id,
             },
           );
-          const afterSnapshot = parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
-            providerSource(afterTargetRaw),
+          const afterSnapshot = parseCandidateSnapshot(
+            providerSource(afterTargetRaw), sourceArchive,
           );
           checks.candidateDeploymentPostflightExact = afterSnapshot !== null
-            && candidateExact(afterSnapshot, args.candidateSha, afterInventory)
+            && candidateExact(afterSnapshot, args.candidateSha, afterInventory, sourceArchive)
             && snapshotWithoutRoutes(beforeSnapshot) === snapshotWithoutRoutes(afterSnapshot);
           if (!expectedRoute && args.operation === "open") {
             const observed = canonicalRoutes(afterInventory);
@@ -1961,6 +1986,7 @@ export async function runProtectedProductionRouteMutation(
             beforeSnapshot.deployment.id,
             dependencies.now,
             dependencies.sleep,
+            sourceArchive,
           );
         } catch {
           checks.publicRuntimePostflightExact = false;
@@ -2058,6 +2084,7 @@ export async function runProtectedProductionRouteMutation(
 }
 
 export const protectedProductionRouteMutationInternals = {
+  runtimeIdentityExact,
   parseArgs,
   policyExact,
   parseInventory,

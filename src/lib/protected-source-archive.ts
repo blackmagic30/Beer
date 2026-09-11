@@ -24,9 +24,12 @@ const STAGING_SCOPE = Object.freeze({
   RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
   RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
 });
+const PRODUCTION_SCOPE = Object.freeze({
+  ...STAGING_SCOPE,
+  RAILWAY_ENVIRONMENT_ID: "13dab015-df74-45c6-b26f-69323daea99a",
+});
 
-export interface ProtectedSourceArchiveManifest {
-  readonly schemaVersion: "protected-source-archive/v1";
+interface ProtectedSourceArchiveFields {
   readonly candidateSha: string;
   readonly treeSha: string;
   readonly sourceArchiveSha256: string;
@@ -34,9 +37,14 @@ export interface ProtectedSourceArchiveManifest {
   readonly uploadNonce: string;
 }
 
-export interface ProtectedSourceArchiveIdentity extends ProtectedSourceArchiveManifest {
+export type ProtectedSourceArchiveManifest = ProtectedSourceArchiveFields & (
+  | { readonly schemaVersion: "protected-source-archive/v1" }
+  | { readonly schemaVersion: "protected-source-archive/v2"; readonly target: "production" }
+);
+
+export type ProtectedSourceArchiveIdentity = ProtectedSourceArchiveManifest & {
   readonly sourceIdentitySha256: string;
-}
+};
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -54,8 +62,11 @@ function hash(source: string | Buffer): string {
 }
 
 function validManifest(value: unknown): value is ProtectedSourceArchiveManifest {
-  return exactKeys(value, MANIFEST_KEYS)
-    && value.schemaVersion === "protected-source-archive/v1"
+  return plainObject(value)
+    && (value.schemaVersion === "protected-source-archive/v1"
+      ? exactKeys(value, MANIFEST_KEYS)
+      : value.schemaVersion === "protected-source-archive/v2" && value.target === "production"
+        && exactKeys(value, ["schemaVersion", "target", ...MANIFEST_KEYS.slice(1)]))
     && typeof value.candidateSha === "string" && SHA.test(value.candidateSha)
     && typeof value.treeSha === "string" && SHA.test(value.treeSha)
     && [value.sourceArchiveSha256, value.sourceBaseManifestSha256, value.uploadNonce]
@@ -67,6 +78,7 @@ export function canonicalProtectedSourceArchiveManifest(
 ): string {
   const ordered = {
     schemaVersion: manifest.schemaVersion,
+    ...(manifest.schemaVersion === "protected-source-archive/v2" ? { target: manifest.target } : {}),
     candidateSha: manifest.candidateSha,
     treeSha: manifest.treeSha,
     sourceArchiveSha256: manifest.sourceArchiveSha256,
@@ -156,8 +168,11 @@ export function loadProtectedSourceArchiveRuntime(
 ): ProtectedSourceArchiveIdentity | null {
   const identity = readProtectedSourceArchiveManifest(root);
   if (!identity) return null;
-  if (environment.NODE_ENV !== "production" || environment.RAILWAY_ENVIRONMENT_NAME !== "staging"
-    || Object.entries(STAGING_SCOPE).some(([name, value]) => environment[name] !== value)
+  const production = identity.schemaVersion === "protected-source-archive/v2";
+  const scope = production ? PRODUCTION_SCOPE : STAGING_SCOPE;
+  if (environment.NODE_ENV !== "production"
+    || environment.RAILWAY_ENVIRONMENT_NAME !== (production ? "production" : "staging")
+    || Object.entries(scope).some(([name, value]) => environment[name] !== value)
     || environment.PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA !== identity.candidateSha
     || environment.RESTORE_REHEARSAL_MODE === "true"
     || environment.POSTGRES_RECOVERY_REHEARSAL_MODE === "true") {
@@ -228,7 +243,7 @@ export function parseProtectedSourceArchiveRuntimeResponse(
     const status = route === "/health" ? "ok" : route === "/startup" ? "startup_ready" : "ready";
     if (data.service !== "pint-path" || data.status !== status
       || !exactKeys(data.automaticMaintenance, ["enabled", "candidateBound"])
-      || data.automaticMaintenance.enabled !== false || data.automaticMaintenance.candidateBound !== true
+      || typeof data.automaticMaintenance.enabled !== "boolean" || data.automaticMaintenance.candidateBound !== true
       || (route !== "/health" && !plainObject(data.dependencies))) return null;
     const deployment = data.deployment;
     if (!exactKeys(deployment, [
@@ -238,12 +253,19 @@ export function parseProtectedSourceArchiveRuntimeResponse(
       || typeof deployment.commitSha !== "string"
       || !(deployment.commitSha === "unknown" || SHA.test(deployment.commitSha))
       || deployment.environment !== "production"
-      || !exactKeys(deployment.sourceArchive, [...MANIFEST_KEYS, "sourceIdentitySha256"])) return null;
+      || !plainObject(deployment.sourceArchive)
+      || !exactKeys(deployment.sourceArchive, [
+        ...(deployment.sourceArchive.schemaVersion === "protected-source-archive/v2"
+          ? ["schemaVersion", "target", ...MANIFEST_KEYS.slice(1)] : MANIFEST_KEYS),
+        "sourceIdentitySha256",
+      ])) return null;
     const { sourceIdentitySha256, ...rawManifest } = deployment.sourceArchive;
     const manifest = parseProtectedSourceArchiveManifest(`${JSON.stringify(rawManifest)}\n`);
     if (!manifest || sourceIdentitySha256 !== hash(canonicalProtectedSourceArchiveManifest(manifest))
+      || (manifest.schemaVersion === "protected-source-archive/v1" && data.automaticMaintenance.enabled !== false)
       || (deployment.commitSha !== "unknown" && deployment.commitSha !== manifest.candidateSha)) return null;
-    const scope = railwayDeploymentIdentityHashes(STAGING_SCOPE);
+    const scope = railwayDeploymentIdentityHashes(manifest.schemaVersion === "protected-source-archive/v2"
+      ? PRODUCTION_SCOPE : STAGING_SCOPE);
     if (deployment.projectIdSha256 !== scope.projectIdSha256
       || deployment.environmentIdSha256 !== scope.environmentIdSha256
       || deployment.serviceIdSha256 !== scope.serviceIdSha256
@@ -252,7 +274,7 @@ export function parseProtectedSourceArchiveRuntimeResponse(
     return {
       route, service: "pint-path", status,
       deployment: deployment as unknown as ProtectedSourceArchiveRuntimeResponse["deployment"],
-      automaticMaintenance: { enabled: false, candidateBound: true },
+      automaticMaintenance: { enabled: data.automaticMaintenance.enabled, candidateBound: true },
       restoreMarkerPresent: false,
       responseSha256: hash(source),
     };

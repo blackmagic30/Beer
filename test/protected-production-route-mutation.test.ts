@@ -1,3 +1,4 @@
+import { productionArchiveFixture, productionArchiveReceiptFixture } from "./production-source-archive-downstream.fixtures.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -201,6 +202,8 @@ function runtime(routeName: "/health" | "/startup" | "/ready") {
 function writePredecessorAuthority(
   root: string,
   operation: "close" | "open",
+  archive = false,
+  includeDeploymentReceipt = false,
 ): {
   githubAuthority: string;
   deploymentReceipt: string | null;
@@ -318,13 +321,14 @@ function writePredecessorAuthority(
     "deployment",
     DEPLOYMENT_BEFORE_ACTIVATION,
   )!;
-  const deploymentValue = productionApplicationDeploymentReceiptFixture({
+  let deploymentValue = productionApplicationDeploymentReceiptFixture({
     candidateSha: CANDIDATE,
     previousDeploymentIdSha256: "1".repeat(64),
     deploymentIdSha256: deploymentBeforeActivationIdSha256,
     startedAt: "1970-01-01T00:12:05.000Z",
     completedAt: "1970-01-01T00:12:20.000Z",
   });
+  if (archive) deploymentValue = productionArchiveReceiptFixture(deploymentValue);
   const deploymentReceipt = path.join(root, "deployment-receipt.json");
   fs.writeFileSync(deploymentReceipt, canonical(deploymentValue), { mode: 0o600 });
   const scaleRunId = String(productionChain.find(
@@ -531,7 +535,7 @@ function writePredecessorAuthority(
   fs.writeFileSync(promotionReceipt, canonical(promotion), { mode: 0o600 });
   return {
     githubAuthority,
-    deploymentReceipt: null,
+    deploymentReceipt: archive || includeDeploymentReceipt ? deploymentReceipt : null,
     scaleReceipt: null,
     closeReceipt,
     promotionReceipt,
@@ -539,6 +543,8 @@ function writePredecessorAuthority(
 }
 
 function harness(operation: "close" | "open", options: {
+  archive?: boolean;
+  deploymentReceiptHashMismatch?: boolean;
   lostAck?: boolean;
   prewriteDrift?: boolean;
   collateralDrift?: boolean;
@@ -567,7 +573,12 @@ function harness(operation: "close" | "open", options: {
   temporaryRoots.push(root);
   const evidenceDir = path.join(root, "evidence");
   fs.mkdirSync(evidenceDir, { mode: 0o700 });
-  const authority = writePredecessorAuthority(root, operation);
+  const authority = writePredecessorAuthority(root, operation, options.archive, options.deploymentReceiptHashMismatch);
+  if (options.deploymentReceiptHashMismatch && authority.deploymentReceipt) {
+    const value = JSON.parse(fs.readFileSync(authority.deploymentReceipt, "utf8"));
+    value.cliOutputSha256 = "f".repeat(64);
+    fs.writeFileSync(authority.deploymentReceipt, canonical(value));
+  }
   if (options.authorityExtraKey) {
     const value = JSON.parse(fs.readFileSync(authority.githubAuthority, "utf8"));
     value.untrusted = true;
@@ -636,6 +647,16 @@ function harness(operation: "close" | "open", options: {
     if (url.startsWith("https://pintpath.au/")) {
       const routeName = new URL(url).pathname as "/health" | "/startup" | "/ready";
       const value = runtime(routeName);
+      if (options.archive) {
+        Object.assign(value.data.deployment as object, { commitSha: "unknown", sourceArchive: productionArchiveFixture(CANDIDATE) });
+        if (routeName !== "/health") value.data.dependencies = {
+          database: { status: "ok" },
+          ...(routeName === "/ready" ? { restoreRehearsal: {
+            enabled: false, externalWritesAllowed: true, httpMutationRoutesAllowed: true,
+            runtimeDatabase: "primary_runtime_database", remoteVenueDirectoryEnabled: true,
+          } } : {}),
+        };
+      }
       if (options.runtimeCandidateDrift) {
         (value.data.deployment as { commitSha: string }).commitSha = "d".repeat(40);
       }
@@ -667,7 +688,9 @@ function harness(operation: "close" | "open", options: {
       return json(value);
     }
     if (body.operationName === "PintPathProductionRouteTarget") {
-      return json(target(routePresent, options.legacyAggregateReplicas ?? null));
+      const value = target(routePresent, options.legacyAggregateReplicas ?? null);
+      if (options.archive) Object.assign(value.data.deployment.meta, { commitHash: null });
+      return json(value);
     }
     if (body.operationName === "PintPathCloseProductionRoute") {
       mutated = true;
@@ -848,8 +871,8 @@ describe("protected production canonical-route executor", () => {
       .productionRouteReplicaTopologyExact(tampered)).toBe(false);
   });
 
-  it("closes only the canonical route after exact preflight and retains provider-only proof", async () => {
-    const fixture = harness("close");
+  it.each([false, true])("closes only the canonical route after exact preflight and retains provider-only proof (archive=%s)", async (archive) => {
+    const fixture = harness("close", { archive });
     await expect(runProtectedProductionRouteMutation(fixture.overrides)).resolves.toBe(0);
     const result = receipt(fixture.output);
     expect(result).toMatchObject({
@@ -886,8 +909,8 @@ describe("protected production canonical-route executor", () => {
       .toBe(false);
   });
 
-  it("opens only the canonical route and binds all three public TLS routes to the candidate", async () => {
-    const fixture = harness("open");
+  it.each([false, true])("opens only the canonical route and binds all three public TLS routes to the candidate (archive=%s)", async (archive) => {
+    const fixture = harness("open", { archive });
     await expect(runProtectedProductionRouteMutation(fixture.overrides)).resolves.toBe(0);
     const result = receipt(fixture.output);
     expect(result).toMatchObject({
@@ -925,6 +948,17 @@ describe("protected production canonical-route executor", () => {
         "https://pintpath.au/startup",
         "https://pintpath.au/ready",
       ]);
+  });
+
+  it.each([false, true])("rejects a deployment receipt not bound to the closed route before any write (archive=%s)", async (archive) => {
+    const fixture = harness("open", { archive, deploymentReceiptHashMismatch: true });
+    expect(await runProtectedProductionRouteMutation(fixture.overrides)).toBe(1);
+    expect(receipt(fixture.output)).toMatchObject({
+      outcome: "failed_before_attempt", attempts: 0,
+      checks: { predecessorReceiptsExact: false, durableIntentExact: false },
+    });
+    expect(fixture.calls.some((call) => call.operationName === "PintPathOpenProductionRoute")).toBe(false);
+    expect(fs.existsSync(path.join(fixture.evidenceDir, "intent.json"))).toBe(false);
   });
 
   it("accepts a lost acknowledgement only after exact read-only reconciliation", async () => {

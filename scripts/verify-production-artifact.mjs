@@ -11,6 +11,7 @@ import {
 
 const requiredFiles = [
   "dist/src/server.js",
+  "dist/scripts/lib/hosted-bar-pilot-acceptance.mjs",
   "dist/src/db/schema.sql",
   "dist/src/db/postgres-schema.sql",
   "dist/viewer/index.html",

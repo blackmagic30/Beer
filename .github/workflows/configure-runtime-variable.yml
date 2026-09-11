@@ -22,6 +22,26 @@ on:
         type: choice
         options:
           - DATABASE_URL
+          - BAR_PILOT_ENABLED
+          - BAR_PILOT_VENUE_IDS
+          - ALCOHOL_PROMOTION_APPROVAL_REFERENCE
+          - DATABASE_PATH
+          - PINTPATH_DATABASE_RESOURCE_ID
+          - PINTPATH_EXPECTED_DATABASE_RESOURCE_ID
+          - PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS
+          - PINTPATH_EXPECTED_DATABASE_URL_SHA256
+          - PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S
+          - PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID
+          - PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256
+          - PINTPATH_REDIS_RESOURCE_ID
+          - PINTPATH_EXPECTED_REDIS_RESOURCE_ID
+          - PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS
+          - PINTPATH_EXPECTED_REDIS_URL_SHA256
+          - PINTPATH_FORBIDDEN_REDIS_URL_SHA256S
+          - PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID
+          - PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256
+          - REQUIRE_REDIS_RATE_LIMITING
+          - ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION
           - DATABASE_MAINTENANCE_URL
           - PINTPATH_POSTGRES_ROOT_CA_PEM
           - PINTPATH_POSTGRES_ROOT_CA_DER_SHA256
@@ -42,7 +62,7 @@ on:
           - ACCOUNT_DELETION_NOTICE_REPLY_TO
           - PINTPATH_RUNTIME_DATABASE_URL
       confirmation:
-        description: UPSERT_<VARIABLE>_IN_<TARGET_WITH_UNDERSCORES>
+        description: UPSERT_<VARIABLE>_IN_<TARGET_WITH_UNDERSCORES> or CLEAR_DATABASE_PATH_IN_PRODUCTION
         required: true
         type: string
 
@@ -57,6 +77,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  reject-production-only-variable-outside-production:
+    if: inputs.target != 'production' && contains(fromJSON('["DATABASE_PATH","PINTPATH_DATABASE_RESOURCE_ID","PINTPATH_EXPECTED_DATABASE_RESOURCE_ID","PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS","PINTPATH_EXPECTED_DATABASE_URL_SHA256","PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S","PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID","PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256","PINTPATH_REDIS_RESOURCE_ID","PINTPATH_EXPECTED_REDIS_RESOURCE_ID","PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS","PINTPATH_EXPECTED_REDIS_URL_SHA256","PINTPATH_FORBIDDEN_REDIS_URL_SHA256S","PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID","PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256","REQUIRE_REDIS_RATE_LIMITING","ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION","BAR_PILOT_ENABLED","BAR_PILOT_VENUE_IDS","ALCOHOL_PROMOTION_APPROVAL_REFERENCE"]'), inputs.variable_name)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Reject production cutover settings outside their reviewed environment
+        run: exit 1
+
   reject-invalid-service-variable-pair:
     if: (inputs.target == 'permanent-staging-postgres' && inputs.variable_name != 'PINTPATH_RUNTIME_DATABASE_URL') || (inputs.target != 'permanent-staging-postgres' && inputs.variable_name == 'PINTPATH_RUNTIME_DATABASE_URL')
     runs-on: ubuntu-24.04
@@ -78,7 +105,7 @@ jobs:
           exit 1
 
   configure-staging:
-    if: ((inputs.target == 'permanent-staging' && inputs.variable_name != 'PINTPATH_RUNTIME_DATABASE_URL') || (inputs.target == 'permanent-staging-postgres' && inputs.variable_name == 'PINTPATH_RUNTIME_DATABASE_URL')) && inputs.variable_name != 'SUPABASE_ANON_KEY' && inputs.variable_name != 'SUPABASE_SERVICE_ROLE_KEY'
+    if: ((inputs.target == 'permanent-staging' && inputs.variable_name != 'PINTPATH_RUNTIME_DATABASE_URL') || (inputs.target == 'permanent-staging-postgres' && inputs.variable_name == 'PINTPATH_RUNTIME_DATABASE_URL')) && inputs.variable_name != 'SUPABASE_ANON_KEY' && inputs.variable_name != 'SUPABASE_SERVICE_ROLE_KEY' && !contains(fromJSON('["DATABASE_PATH","PINTPATH_DATABASE_RESOURCE_ID","PINTPATH_EXPECTED_DATABASE_RESOURCE_ID","PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS","PINTPATH_EXPECTED_DATABASE_URL_SHA256","PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S","PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID","PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256","PINTPATH_REDIS_RESOURCE_ID","PINTPATH_EXPECTED_REDIS_RESOURCE_ID","PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS","PINTPATH_EXPECTED_REDIS_URL_SHA256","PINTPATH_FORBIDDEN_REDIS_URL_SHA256S","PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID","PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256","REQUIRE_REDIS_RATE_LIMITING","ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION","BAR_PILOT_ENABLED","BAR_PILOT_VENUE_IDS","ALCOHOL_PROMOTION_APPROVAL_REFERENCE"]'), inputs.variable_name)
     name: Configure permanent staging
     uses: ./.github/workflows/runtime-variable-worker.yml
     with:
@@ -100,5 +127,5 @@ jobs:
       variable_name: ${{ inputs.variable_name }}
       confirmation: ${{ inputs.confirmation }}
       protected_environment: production-runtime-configuration
-      value_secret_name: ${{ format('PINTPATH_PRODUCTION_{0}', inputs.variable_name) }}
+      value_secret_name: ${{ inputs.variable_name == 'DATABASE_PATH' && 'PINTPATH_REVIEWED_EMPTY_DATABASE_PATH' || format('PINTPATH_PRODUCTION_{0}', inputs.variable_name) }}
     secrets: inherit

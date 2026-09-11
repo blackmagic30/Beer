@@ -696,3 +696,111 @@ describe("pilot configuration preserves the exact predecessor", () => {
     if (stopped) expect(JSON.parse(mutations[0]![1].body).variables.skipDeploys).toBe(true);
   });
 });
+
+
+describe("production database transition through the existing one-variable executor", () => {
+  const production = "13dab015-df74-45c6-b26f-69323daea99a";
+  async function run(name: string, condition = "valid", suppliedValue = "postgresql://test-only-private-runtime") {
+    let mutations = 0;
+    let metadataReads = 0;
+    const requests: Record<string, unknown>[] = [];
+    const evidence: Record<string, unknown>[] = [];
+    const reassert = vi.fn(async () => { if (condition === "changed-live-proof") throw new Error("not ready"); });
+    const close = vi.fn(async () => undefined);
+    const gate = vi.fn(async () => {
+      if (condition === "bad-native-proof" || condition === "bad-live-proof") throw new Error("not ready");
+      return { binding: { candidateSha: CANDIDATE, sourceSnapshotSha256: "a".repeat(64) }, reassert, close };
+    });
+    const readValue = vi.fn(() => Buffer.from(suppliedValue));
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("projectToken")) return json({data:{projectToken:{projectId:PROJECT,environmentId:production}}});
+      if (body.query.includes("mutation ")) {
+        mutations += 1; requests.push(body.variables);
+        return json({data:{variableCollectionUpsert:true}});
+      }
+      metadataReads += 1;
+      const page = metadataPage(name === "DATABASE_PATH" || mutations ? [metadataRow(0,name)] : []);
+      const value = JSON.parse(JSON.stringify(page).replaceAll(ENVIRONMENT,production));
+      for (const instance of [value.data.targetServiceInstance,value.data.applicationServiceInstance]) {
+        instance.latestDeployment.deploymentStopped = condition !== "active-legacy-writer";
+        instance.activeDeployments[0].deploymentStopped = condition !== "active-legacy-writer";
+      }
+      if (condition === "revived-legacy-writer" && metadataReads === 3) value.data.applicationServiceInstance.activeDeployments[0].deploymentStopped = false;
+      if (condition === "changed-deployment" && metadataReads === 2) value.data.targetServiceInstance.latestDeployment.id = "different";
+      return json(value);
+    });
+    let receipt = "";
+    const result = await runProtectedRuntimeVariableUpsert({
+      argv: ["--target","production","--variable",name,"--value-file","/private/value",
+        "--evidence-dir","/private/evidence","--candidate-sha",CANDIDATE],
+      env: { GITHUB_REF:"refs/heads/main",GITHUB_SHA:CANDIDATE,GITHUB_RUN_ATTEMPT:"1",
+        PINTPATH_RUNTIME_VARIABLE_CONFIRMATION: name === "DATABASE_PATH" ? "CLEAR_DATABASE_PATH_IN_PRODUCTION" : `UPSERT_${name}_IN_PRODUCTION`,
+        PINTPATH_RAILWAY_TARGET_METADATA_TOKEN:"read-token-long-enough",PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN:"write-token-long-enough" },
+      cwd:process.cwd(),fetchImpl,boundaryCheck:async()=>0,readValue,
+      loadProductionImportGate:gate as never,
+      writeDurable:(_dir,_leaf,source)=>{evidence.push(JSON.parse(source));return sha256(source);},
+      writeOutput:source=>{receipt=source;},
+    });
+    return {result,mutations,requests,evidence,receipt,gate,reassert,close,readValue};
+  }
+  it("performs one bounded non-deploying DATABASE_URL write after native and actual live proof reassertion", async () => {
+    const result = await run("DATABASE_URL");
+    expect(result.result).toBe(0); expect(result.mutations).toBe(1);
+    expect(result.gate).toHaveBeenCalledOnce(); expect(result.reassert).toHaveBeenCalledOnce(); expect(result.close).toHaveBeenCalledOnce();
+    expect(result.requests[0]).toMatchObject({environmentId:production,serviceId:SERVICE,skipDeploys:true});
+    expect(result.evidence[0]).toHaveProperty("productionImport");
+    expect(JSON.stringify(result.evidence)).not.toContain("postgresql://test-only-private-runtime");
+  });
+  it.each(["bad-native-proof","bad-live-proof","changed-live-proof","changed-deployment","active-legacy-writer","revived-legacy-writer"])(
+    "writes nothing when a production connection prerequisite fails: %s", async condition => {
+      const result = await run("DATABASE_URL",condition);
+      expect(result.result).toBe(1); expect(result.mutations).toBe(0);
+    });
+  it("clears only DATABASE_PATH with a fixed empty upsert without reading an arbitrary value or deleting storage", async () => {
+    const result = await run("DATABASE_PATH");
+    expect(result.result).toBe(0);expect(result.mutations).toBe(1);
+    expect(result.readValue).not.toHaveBeenCalled();expect(result.gate).not.toHaveBeenCalled();
+    expect(result.requests).toEqual([{projectId:PROJECT,serviceId:SERVICE,environmentId:production,variables:{DATABASE_PATH:""},skipDeploys:true}]);
+    expect(result.evidence[0]).toMatchObject({clearOperation:"CLEAR_DATABASE_PATH",valueSource:"REVIEWED_EMPTY_DATABASE_PATH",providerRowPreserved:true,dataFilesAndVolumesUnchanged:true});
+  });
+  it.each([
+    ["BAR_PILOT_ENABLED","true",true], ["BAR_PILOT_ENABLED","false",true],
+    ["BAR_PILOT_ENABLED","1",false], ["BAR_PILOT_VENUE_IDS","pilot-venue-one,pilot-venue-two",true],
+    ["BAR_PILOT_VENUE_IDS","",false], ["BAR_PILOT_VENUE_IDS","one,one",false],
+    ["BAR_PILOT_VENUE_IDS","one, two",false],
+    ["ALCOHOL_PROMOTION_APPROVAL_REFERENCE","Owner review record: pilot approval 2026-09",true],
+    ["ALCOHOL_PROMOTION_APPROVAL_REFERENCE","",false],
+    ["ALCOHOL_PROMOTION_APPROVAL_REFERENCE"," ",false],
+    ["ALCOHOL_PROMOTION_APPROVAL_REFERENCE","x".repeat(513),false],
+  ])("allows only a bounded real-pilot value for %s", async (name,value,valid) => {
+    const result = await run(String(name),"valid",String(value));
+    expect(result.result).toBe(valid ? 0 : 1);
+    expect(result.mutations).toBe(valid ? 1 : 0);
+    if (valid) expect(result.requests[0]).toMatchObject({variables:{[String(name)]:value},skipDeploys:true});
+  });
+  it("preserves staging access while production allows only three real-pilot controls", () => {
+    for (const name of ["BAR_PILOT_ENABLED","BAR_PILOT_VENUE_IDS","ALCOHOL_PROMOTION_APPROVAL_REFERENCE"]) {
+      expect(protectedRuntimeVariableInternals.targetVariableExact("production",name)).toBe(true);
+      expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging-postgres",name)).toBe(false);
+    }
+    for (const name of ["BAR_PILOT_ENABLED","BAR_PILOT_VENUE_IDS"]) expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging",name)).toBe(true);
+    expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging","ALCOHOL_PROMOTION_APPROVAL_REFERENCE")).toBe(false);
+    for (const name of ["BAR_PILOT_DEMO_ENABLED","BAR_PILOT_DEMO_CUSTOMER_IDS","PINT_POINTS_REWARDS_ENABLED","ALCOHOL_GAMIFICATION_ENABLED","COMMERCIAL_LAUNCH_ENABLED","CONSUMER_PAID_ENROLLMENT_ENABLED"]) {
+      expect(protectedRuntimeVariableInternals.targetVariableExact("production",name)).toBe(false);
+    }
+  });
+
+  it("does not widen staging variables, permit arbitrary deletes, or turn off Redis enforcement", () => {
+    const policy = JSON.parse(fs.readFileSync("ops/railway/protected-runtime-variable-policy.json","utf8"));
+    for (const field of policy.productionOnlyVariables) {
+      expect(protectedRuntimeVariableInternals.targetVariableExact("production",field)).toBe(true);
+      expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging",field)).toBe(false);
+      expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging-postgres",field)).toBe(false);
+    }
+    expect(protectedRuntimeVariableInternals.targetVariableExact("production","ARBITRARY_VARIABLE")).toBe(false);
+    expect(protectedRuntimeVariableInternals.productionVariableValueExact("DATABASE_PATH","/data/database.sqlite")).toBe(false);
+    expect(protectedRuntimeVariableInternals.productionVariableValueExact("REQUIRE_REDIS_RATE_LIMITING","false")).toBe(false);
+    expect(protectedRuntimeVariableInternals.productionVariableValueExact("ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION","true")).toBe(false);
+  });
+});

@@ -3905,6 +3905,22 @@ describe("reviewed candidate mutation authority", () => {
     });
   });
 
+  it("binds production cutover settings only to the production runtime-variable consumer", async () => {
+    for (const variableName of ["DATABASE_PATH", "PINTPATH_EXPECTED_DATABASE_URL_SHA256", "REQUIRE_REDIS_RATE_LIMITING", "BAR_PILOT_ENABLED", "BAR_PILOT_VENUE_IDS", "ALCOHOL_PROMOTION_APPROVAL_REFERENCE"]) {
+      await expect(harness({ operation:"runtime-variable",target:"production",variableName }).verify())
+        .resolves.toMatchObject({operation:"runtime-variable",reviewedAuthorityExact:true});
+      for (const target of ["permanent-staging","permanent-staging-postgres"]) {
+        const fixture = harness({operation:"runtime-variable",target,variableName});
+        let summary = "";
+        expect(await runGithubReviewedCandidateAuthority([
+          "--candidate-sha", CANDIDATE, "--operation", "runtime-variable",
+          "--target", target, "--variable-name", variableName,
+        ], { env:fixture.env, fetchImpl:fixture.fetchImpl, writeOutput:value=>{summary=value;} })).toBe(1);
+        expect(JSON.parse(summary).failureCode).toBe("github_reviewed_candidate_authority_arguments_invalid");
+      }
+    }
+  });
+
   it("binds the fixed PostgreSQL source repair to its one staging-only target-variable pair", async () => {
     const fixture = harness({
       operation: "runtime-variable",
