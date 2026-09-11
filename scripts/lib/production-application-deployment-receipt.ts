@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 
 import { PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA } from
   "./permanent-staging-app-deployment-executor.js";
+import { canonicalProtectedSourceArchiveManifest, parseProtectedSourceArchiveManifest,
+  type ProtectedSourceArchiveIdentity } from
+  "../../src/lib/protected-source-archive.js";
 
 const SHA = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -13,6 +16,7 @@ export interface ProductionApplicationDeploymentReceiptAuthority {
   readonly startedAt: string;
   readonly completedAt: string;
   readonly deploymentIdSha256: string;
+  readonly sourceArchive?: ProtectedSourceArchiveIdentity;
 }
 
 function object(value: unknown): value is Json {
@@ -96,6 +100,25 @@ export function parseProductionApplicationDeploymentReceipt(
   value: unknown,
   candidateSha: string,
 ): ProductionApplicationDeploymentReceiptAuthority | null {
+  const archiveReceipt = object(value)
+    && value.schemaVersion === "pintpath-railway-application-deployment-executor/v7";
+  if (archiveReceipt) {
+    if (!object(value.sourceArchive)) return null;
+    const { sourceIdentitySha256, ...manifestValue } = value.sourceArchive;
+    const manifest = parseProtectedSourceArchiveManifest(`${JSON.stringify(manifestValue)}\n`);
+    if (!manifest || manifest.schemaVersion !== "protected-source-archive/v2"
+      || manifest.target !== "production" || manifest.candidateSha !== candidateSha
+      || sourceIdentitySha256 !== crypto.createHash("sha256")
+        .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex")) return null;
+    if (!exact(value.hostedAcceptance, ["reportSha256", "requiredChecksSha256", "stagingRunId",
+      "stagingDeploymentIdSha256", "sourceIdentitySha256"])
+      || typeof value.hostedAcceptance.stagingRunId !== "string"
+      || !RUN_ID.test(value.hostedAcceptance.stagingRunId)
+      || Object.entries(value.hostedAcceptance).some(([key, hash]) => key !== "stagingRunId" && !sha256(hash))) return null;
+  }
+  if (archiveReceipt && (!exact(value.migrationEvidence, ["pinsFileSha256", "verificationReceiptFileSha256",
+    "sourceSnapshotSha256", "targetIdentitySha256"])
+    || Object.values(value.migrationEvidence).some((hash) => !sha256(hash)))) return null;
   if (!SHA.test(candidateSha) || !exact(value, [
     "schemaVersion", "operation", "executorState", "target", "outcome",
     "failureCode", "candidateSha", "startedAt", "completedAt", "writeAttempts",
@@ -104,8 +127,9 @@ export function parseProductionApplicationDeploymentReceipt(
     "boundaryPostflightSha256", "collateralSnapshotSha256s", "replicaCounts",
     "legacyReplicaCounts", "configuredTopology", "runtimeAbsence",
     "runtimeResponseSha256s", "workerFencePrerequisite", "checks",
+    ...(archiveReceipt ? ["sourceArchive", "hostedAcceptance", "migrationEvidence"] : []),
   ])
-    || value.schemaVersion !== PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA
+    || (!archiveReceipt && value.schemaVersion !== PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA)
     || value.operation !== "pintpath-railway-application-source-upload"
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.target !== "production"
@@ -195,5 +219,6 @@ export function parseProductionApplicationDeploymentReceipt(
     startedAt: value.startedAt,
     completedAt: value.completedAt,
     deploymentIdSha256: value.deploymentIdSha256,
+    ...(archiveReceipt ? { sourceArchive: value.sourceArchive as ProtectedSourceArchiveIdentity } : {}),
   };
 }

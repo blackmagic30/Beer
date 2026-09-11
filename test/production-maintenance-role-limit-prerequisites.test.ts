@@ -1,3 +1,4 @@
+import { productionArchiveFixture, productionArchiveReceiptFixture } from "./production-source-archive-downstream.fixtures.js";
 import crypto from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
@@ -978,10 +979,16 @@ function productionDeployHarness(input: {
 async function productionActivateHarness(input: {
   tamperIntentArchive?: boolean;
   tamperReceiptArchive?: boolean;
+  archive?: boolean;
 } = {}) {
-  const rolePrerequisiteTarget = harness();
+  const rolePrerequisiteTarget = harness(input.archive ? {
+    deploymentSource: canonical(productionArchiveReceiptFixture({
+      ...JSON.parse(deploymentReceipt()),
+      previousDeploymentIdSha256: JSON.parse(fenceTerminal()).providerEvidence.deploymentAfterIdSha256,
+    })),
+  } : {});
   if (await rolePrerequisiteTarget.run() !== 0) {
-    throw new Error("role_prerequisite_fixture_failed");
+    throw new Error(`role_prerequisite_fixture_failed:${rolePrerequisiteTarget.output.at(-1)}`);
   }
   const prerequisitesSource = rolePrerequisiteTarget.files.get(OUTPUT)!;
   const roleFiles = roleLimitFiles(prerequisitesSource);
@@ -1139,17 +1146,26 @@ async function productionActivateHarness(input: {
 
 async function productionScaleHarness(input: {
   tamperActivationTerminal?: boolean;
+  archive?: boolean;
+  tamperArchiveIdentity?: boolean;
 } = {}) {
-  const activationTarget = await productionActivateHarness();
+  const activationTarget = await productionActivateHarness({ archive: input.archive });
   if (await activationTarget.run() !== 0) {
     throw new Error("activation_prerequisite_fixture_failed");
   }
   const activationPrerequisites = activationTarget.files.get(ACTIVATION_OUTPUT)!;
   const parsedActivationPrerequisites = JSON.parse(activationPrerequisites);
-  const activationTerminal = activateTerminal(
+  const activationValue = JSON.parse(activateTerminal(
     parsedActivationPrerequisites.rolePrerequisites.productionDeployment
       .deploymentIdSha256,
-  );
+  ));
+  if (input.archive) {
+    activationValue.sourceArchive = productionArchiveFixture();
+    activationValue.providerEvidence.sourceBeforeSha = null;
+    activationValue.providerEvidence.sourceAfterSha = null;
+    if (input.tamperArchiveIdentity) activationValue.sourceArchive.sourceIdentitySha256 = "f".repeat(64);
+  }
+  const activationTerminal = canonical(activationValue);
   const localActivationTerminal = input.tamperActivationTerminal
     ? canonical({ tampered: true })
     : activationTerminal;
@@ -1993,5 +2009,23 @@ describe("production maintenance role-limit reconciliation authority", () => {
     const target = await reconciliationHarness({ tamperArchive: true });
     await expect(target.run()).resolves.toBe(1);
     expect(target.files.has(RECONCILIATION_OUTPUT)).toBe(false);
+  });
+});
+
+
+describe("production archive prerequisite continuity", () => {
+  it("carries the verified upload identity through role authority and a replacement activation deployment into scale", async () => {
+    const target = await productionScaleHarness({ archive: true });
+    expect(await target.run(), target.output.at(-1)).toBe(0);
+    const proof = JSON.parse(target.files.get(SCALE_OUTPUT)!);
+    expect(proof.activationPrerequisites.rolePrerequisites.productionDeployment.sourceArchive)
+      .toEqual(productionArchiveFixture());
+    expect(proof.activation.deploymentBeforeIdSha256).not.toBe(proof.activation.deploymentAfterIdSha256);
+  });
+
+  it("rejects an activation terminal with an archive different from its authenticated role chain", async () => {
+    const target = await productionScaleHarness({ archive: true, tamperArchiveIdentity: true });
+    expect(await target.run()).toBe(1);
+    expect(target.files.has(SCALE_OUTPUT)).toBe(false);
   });
 });

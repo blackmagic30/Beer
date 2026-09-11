@@ -48,7 +48,7 @@ afterEach(() => {
 
 function policySource(name: "permanent-staging" | "production"): string {
   const filename = name === "production"
-    ? "ops/railway/production-app-deployment-policy.json"
+    ? "test/fixtures/production-app-deployment-policy-v6.json"
     : "ops/railway/permanent-staging-app-deployment-policy.json";
   return fs.readFileSync(path.resolve(filename), "utf8");
 }
@@ -1172,7 +1172,7 @@ describe("Railway application deployment executor", () => {
     const exactPolicy = policy("production");
     const fixture = harness(exactPolicy, { preflightReplicaCount: replicaCount });
     await expect(runPermanentStagingAppDeploymentExecutor([
-      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--policy", "test/fixtures/production-app-deployment-policy-v6.json",
       "--candidate-sha", CANDIDATE_SHA,
       "--evidence-dir", fixture.evidenceDir,
     ], fixture.overrides)).resolves.toBe(0);
@@ -1354,7 +1354,7 @@ describe("Railway application deployment executor", () => {
       postflightReplicaCount: 1,
     });
     await expect(runPermanentStagingAppDeploymentExecutor([
-      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--policy", "test/fixtures/production-app-deployment-policy-v6.json",
       "--candidate-sha", CANDIDATE_SHA,
       "--evidence-dir", fixture.evidenceDir,
     ], fixture.overrides)).resolves.toBe(1);
@@ -1379,7 +1379,7 @@ describe("Railway application deployment executor", () => {
       workerFenceDeploymentId: TERMINAL_DRIFT_DEPLOYMENT,
     });
     await expect(runPermanentStagingAppDeploymentExecutor([
-      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--policy", "test/fixtures/production-app-deployment-policy-v6.json",
       "--candidate-sha", CANDIDATE_SHA,
       "--evidence-dir", fixture.evidenceDir,
     ], fixture.overrides)).resolves.toBe(1);
@@ -1419,7 +1419,7 @@ describe("Railway application deployment executor", () => {
     }) as typeof fs.lstatSync);
 
     await expect(runPermanentStagingAppDeploymentExecutor([
-      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--policy", "test/fixtures/production-app-deployment-policy-v6.json",
       "--candidate-sha", CANDIDATE_SHA,
       "--evidence-dir", fixture.evidenceDir,
     ], fixture.overrides)).resolves.toBe(1);
@@ -1450,7 +1450,7 @@ describe("Railway application deployment executor", () => {
     fs.linkSync(prerequisite, `${prerequisite}.alias`);
 
     await expect(runPermanentStagingAppDeploymentExecutor([
-      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--policy", "test/fixtures/production-app-deployment-policy-v6.json",
       "--candidate-sha", CANDIDATE_SHA,
       "--evidence-dir", fixture.evidenceDir,
     ], fixture.overrides)).resolves.toBe(1);
@@ -1482,7 +1482,7 @@ describe("Railway application deployment executor", () => {
     await expect(runPermanentStagingAppDeploymentExecutor([
       "--policy",
       target === "production"
-        ? "ops/railway/production-app-deployment-policy.json"
+        ? "test/fixtures/production-app-deployment-policy-v6.json"
         : "ops/railway/permanent-staging-app-deployment-policy.json",
       "--candidate-sha", CANDIDATE_SHA,
       "--evidence-dir", fixture.evidenceDir,
@@ -1675,7 +1675,7 @@ describe("Railway application deployment executor", () => {
     const exactPolicy = policy("production");
     const fixture = harness(exactPolicy, { prerequisiteSucceeds: false });
     await expect(runPermanentStagingAppDeploymentExecutor([
-      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--policy", "test/fixtures/production-app-deployment-policy-v6.json",
       "--candidate-sha", CANDIDATE_SHA,
       "--evidence-dir", fixture.evidenceDir,
     ], fixture.overrides)).resolves.toBe(1);

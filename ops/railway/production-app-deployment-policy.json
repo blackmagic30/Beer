@@ -34,7 +34,8 @@
     "railwayConfigPath": "railway.toml",
     "railwayConfigSha256": "2b62fd2b216fb8d404b15768aa02441dc453648bc8596e04d6993da62d1d98fa",
     "packageLockPath": "package-lock.json",
-    "packageLockSha256": "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b"
+    "packageLockSha256": "9b18e1ba2a9fa0f279ccfef94ccc449458dbcf7d953c33b533f461894ff5a724",
+    "sourceIdentitySchema": "protected-source-archive/v2"
   },
   "mutationBoundary": {
     "policyPath": "ops/railway/production-staging-mutation-policy.json",
@@ -107,7 +108,11 @@
     "publicOrigin": "https://beer-staging.up.railway.app",
     "publicOriginSha256": "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     "expectedReplicaCount": 1,
-    "sameCandidateRequired": true
+    "sameCandidateRequired": true,
+    "sourceIdentitySchema": "protected-source-archive/v1",
+    "configuredRegion": "us-west2",
+    "automaticMaintenanceEnabled": false,
+    "hostedAcceptanceRequired": true
   },
   "providerReadinessContract": {
     "envelopeSchema": "pintpath-production-provider-readiness-envelope/v2",

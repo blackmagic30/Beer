@@ -3,12 +3,41 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { chromium } from "playwright-core";
 import { validatePilotBrowserTarget } from "./lib/bar-pilot-browser-target.mjs";
 
 const fixturePath = process.env.PINTPATH_PILOT_BROWSER_FIXTURE_PATH || "/tmp/pintpath-bar-pilot-browser-fixture.json";
 const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
 const { origin, hosted } = validatePilotBrowserTarget(fixture, process.env.PINTPATH_PILOT_BROWSER_ALLOW_STAGING === "true");
+const startedAt = new Date().toISOString();
+const accountHashes = {};
+async function hostedRuntime() {
+  if (!/^[a-f0-9]{40}$/.test(fixture.candidateSha ?? "") || !/^[1-9][0-9]*$/.test(fixture.stagingRunId ?? "")) {
+    throw new Error("Hosted browser acceptance requires an exact reviewed candidate and protected staging run.");
+  }
+  // Build this exact source before hosted execution. Reuse the deployment parser;
+  // do not turn a client-supplied SHA or an ordinary 200 response into provenance.
+  const { parseProtectedSourceArchiveRuntimeResponse } = await import("../dist/src/lib/protected-source-archive.js");
+  const routes = await Promise.all(["/health", "/startup", "/ready"].map(async (route) => {
+    const response = await fetch(`${origin}${route}`, { redirect: "error", signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error("Hosted staging readiness did not pass.");
+    const value = parseProtectedSourceArchiveRuntimeResponse(route, await response.text());
+    if (!value || value.deployment.sourceArchive.schemaVersion !== "protected-source-archive/v1"
+      || value.deployment.sourceArchive.candidateSha !== fixture.candidateSha) {
+      throw new Error("Hosted staging does not match the reviewed browser candidate.");
+    }
+    return value;
+  }));
+  const { deploymentIdSha256, sourceArchive } = routes[0].deployment;
+  if (routes.some(({ deployment }) => deployment.deploymentIdSha256 !== deploymentIdSha256
+    || deployment.sourceArchive.sourceIdentitySha256 !== sourceArchive.sourceIdentitySha256)) {
+    throw new Error("Hosted staging changed during readiness checks.");
+  }
+  return { stagingDeploymentIdSha256: deploymentIdSha256, sourceIdentitySha256: sourceArchive.sourceIdentitySha256,
+    responseSha256s: Object.fromEntries(routes.map((value) => [value.route, value.responseSha256])) };
+}
+const runtimeBefore = hosted ? await hostedRuntime() : null;
 // The optional output path is a prefix, not a reusable directory: every run
 // receives an atomically created private sibling and preserves earlier evidence.
 const outputPrefix = process.env.PINTPATH_PILOT_BROWSER_OUTPUT || path.join(os.tmpdir(), "pintpath-pilot-browser-evidence");
@@ -37,6 +66,17 @@ async function login(role, mobile = false) {
   if (await page.locator('[data-cookie-choice="essential"]').isVisible()) await page.locator('[data-cookie-choice="essential"]').click();
   if (hosted) {
     await page.locator("#accountDashboard").waitFor({ state: "visible" });
+    const response = await page.request.get(`${origin}/api/business/account`);
+    invariant(response.ok(), "Hosted account session was not accepted.");
+    const account = (await response.json())?.data?.account;
+    invariant(account?.id === fixture.accounts[role].id && account.authProvider === "supabase"
+      && account.status === "active" && account.emailVerifiedAt && account.ageConfirmedAt
+      && account.legalAcceptanceCurrent === true, "Hosted role requires its intended verified, consented provider-backed account.");
+    invariant(role === "admin" ? account.role === "admin" && account.mfaLevel === "aal2" && account.mfaVerifiedAt
+      : account.role !== "admin", "Hosted account privilege or administrator MFA does not match the intended role.");
+    const accountHash = crypto.createHash("sha256").update(`pintpath/pilot-account/v1\0${account.id}`).digest("hex");
+    invariant(!Object.values(accountHashes).includes(accountHash), "Hosted pilot roles must use distinct accounts.");
+    accountHashes[role === "admin" ? "ownerAdmin" : role] = accountHash;
     pass(`${role} existing Supabase-authenticated browser session is accepted`);
     return page;
   }
@@ -76,6 +116,10 @@ try {
   const customer = await login("customer", true);
   const manager = await login("manager");
   const staff = await login("staff");
+  if (hosted) await login("admin");
+  const deniedHistory = await customer.request.get(`${origin}/api/business/venue-portal/${encodeURIComponent(fixture.venueId)}/reconciliation`);
+  invariant(deniedHistory.status() === 403, "An unauthorised customer could access protected venue history, or its session expired.");
+  pass("an authenticated customer outside the venue roles cannot access protected venue history");
   await showCounter(manager);
   await showCounter(staff);
   invariant(await staff.locator('[data-tab="profile"]').isHidden(), "Counter staff can see manager profile controls.");
@@ -89,7 +133,9 @@ try {
   await textIncludes(manager, "#profileStatus", "saved");
   pass("manager edits venue profile and ordinary opening hours");
   await manager.locator('[data-tab="beers"]').click();
-  for (const [beer, size, price] of [["Carlton Draught", "schooner", "10.50"], ["Guinness", "pot", "8.50"], ["Stone & Wood Pacific Ale", "schooner", "11.50"]]) {
+  // The approved hosted fixture starts with three beers. Create the additional
+  // non-preview beer through the same manager UI before asserting publication.
+  for (const [beer, size, price] of [["Carlton Draught", "schooner", "10.50"], ["Guinness", "pot", "8.50"], ["Stone & Wood Pacific Ale", "schooner", "11.50"], ["Balter XPA", "pint", "15.00"]]) {
     const existing = manager.locator("#beerList .listItem").filter({ hasText: beer }).filter({ hasText: size });
     if (await existing.count()) await existing.first().locator("[data-edit-beer]").click();
     await manager.locator('#beerForm [name="beerName"]').fill(beer);
@@ -109,7 +155,7 @@ try {
     try { await manager.waitForFunction(() => document.querySelector('#beerForm [name="beerName"]')?.value === ""); }
     catch { throw new Error(`Beer form did not complete: ${await manager.locator("#beerStatus").textContent()}`); }
   }
-  pass("manager creates or updates three beer/size/stock/price rows using the form");
+  pass("manager creates or updates at least three beer/size/stock/price rows using the form");
   await customer.goto(`${origin}/?venueId=${encodeURIComponent(fixture.venueId)}`);
   await textIncludes(customer, "#venueRail", "Pilot");
   await phoneFits(customer, "map-provider fallback and venue list");
@@ -171,10 +217,11 @@ try {
   await manager.locator('[data-tab="redemption"]').click();
   await customer.locator("#refreshPintPointPassButton").click();
   await customer.locator("#pintPointPassResult").waitFor({ state: "visible" });
-  await identify(manager, await customer.locator("#pintPointPassCode").innerText());
-  await manager.locator('#memberPurchaseForm [name="itemName"]').fill("Guinness");
-  await manager.locator("#recordMemberPurchaseButton").click();
+  await identify(staff, await customer.locator("#pintPointPassCode").innerText());
+  await staff.locator('#memberPurchaseForm [name="itemName"]').fill("Guinness");
+  await staff.locator("#recordMemberPurchaseButton").click();
   await textIncludes(customer, "#pintPointBalanceHero", "1 / 50");
+  pass("counter staff records one eligible purchase and the customer receives exactly one point");
   await manager.locator('[data-tab="history"]').click();
   await manager.locator("#refreshReconciliationButton").click();
   await manager.locator("[data-void-pint-point]").first().click();
@@ -184,6 +231,22 @@ try {
   await textIncludes(manager, "#reconciliationHistory", "Reversed");
   pass("audited reversal corrects the balance and retains original history");
   invariant(pageErrors.length === 0, `Browser exceptions: ${JSON.stringify(pageErrors)}`);
+  if (hosted) {
+    const runtimeAfter = await hostedRuntime();
+    invariant(runtimeBefore.stagingDeploymentIdSha256 === runtimeAfter.stagingDeploymentIdSha256
+      && runtimeBefore.sourceIdentitySha256 === runtimeAfter.sourceIdentitySha256,
+    "Hosted deployment changed during browser acceptance; repeat against one candidate.");
+    // This is supporting evidence, not the complete promotion record. Google
+    // ceremony and hosted map failure checks still require actual observations.
+    fs.writeFileSync(path.join(output, "hosted-observations.json"), JSON.stringify({
+      schemaVersion: "pintpath-hosted-bar-pilot-observations/v1", runtime: "hosted-staging",
+      candidateSha: fixture.candidateSha, origin, stagingRunId: String(fixture.stagingRunId),
+      stagingDeploymentIdSha256: runtimeAfter.stagingDeploymentIdSha256,
+      sourceIdentitySha256: runtimeAfter.sourceIdentitySha256,
+      startedAt, completedAt: new Date().toISOString(), accountHashes,
+      viewport: { width: 390, height: 844 }, runtimeBefore, runtimeAfter, evidence,
+    }, null, 2), { flag: "wx", mode: 0o600 });
+  }
   fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({ runtime: hosted ? "permanent hosted staging" : "disposable loopback PostgreSQL 17", viewport: "390x844", evidence, pageErrors }, null, 2), { flag: "wx", mode: 0o600 });
   console.log(`Completed ${evidence.length} browser checks. Evidence: ${output}`);
 } finally { await browser.close(); }

@@ -150,10 +150,26 @@ jobs:
           npm run --silent github:release-candidate:verify -- \
             --candidate-sha "$CANDIDATE_SHA" \
             --phase production \
+            --scope bar-pilot \
             --output "$RUNNER_TEMP/github-candidate-evidence/required-checks.json"
 
       - name: Validate the candidate-bound release-evidence register
         run: npm run --silent release:evidence
+
+      - name: Materialize the protected real hosted pilot acceptance record
+        env:
+          ACCEPTANCE_BASE64: ${{ secrets.PINTPATH_HOSTED_PILOT_ACCEPTANCE_BASE64 }}
+          ACCEPTANCE_SHA256: ${{ secrets.PINTPATH_HOSTED_PILOT_ACCEPTANCE_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ACCEPTANCE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          private_root="$RUNNER_TEMP/pintpath-hosted-acceptance"
+          mkdir -m 700 "$private_root"
+          umask 077
+          printf '%s' "$ACCEPTANCE_BASE64" | base64 --decode > "$private_root/acceptance.json"
+          test "$(sha256sum "$private_root/acceptance.json" | cut -d ' ' -f 1)" = "$ACCEPTANCE_SHA256"
+          test "$(wc -c < "$private_root/acceptance.json")" -le 131072
 
       - name: Verify fresh protected production provider-readiness envelope v2
         env:
@@ -217,6 +233,21 @@ jobs:
             echo "PINTPATH_RAILWAY_CLI_ARCHIVE=$cli_archive"
           } >> "$GITHUB_ENV"
 
+      - name: Materialize and verify independently pinned native production import evidence
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_PRODUCTION_MIGRATION_EVIDENCE_DIR: ${{ runner.temp }}/production-migration-evidence
+          PINTPATH_PRODUCTION_MIGRATION_PINS_FILE: ${{ runner.temp }}/production-migration-authority/pins.json
+          PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256 }}
+          PINTPATH_PRODUCTION_MIGRATION_PINS_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_PINS_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_SNAPSHOT_MANIFEST_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_SNAPSHOT_MANIFEST_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_APPLY_RECEIPT_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_APPLY_RECEIPT_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_RECEIPT_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_RECEIPT_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_APPROVAL_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_APPROVAL_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_VERIFIER_PUBLIC_KEY_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_VERIFIER_PUBLIC_KEY_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_TARGET_IDENTITY_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_TARGET_IDENTITY_GZIP_BASE64 }}
+        run: ./node_modules/.bin/tsx scripts/materialize-bar-pilot-production-migration-evidence.ts
+
       - name: Reassert current main immediately before the provider write
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -235,6 +266,12 @@ jobs:
           PINTPATH_RAILWAY_WRITE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_DEPLOY_TOKEN }}
           PINTPATH_PRODUCTION_DEPLOYMENT_FENCE_RUN_ID: ${{ inputs.fence_run_id }}
           PINTPATH_PRODUCTION_DEPLOYMENT_WORKER_FENCE_VERIFICATION_FILE: ${{ runner.temp }}/pintpath-production-deployment-evidence/production-deployment-worker-fence-verification.json
+          PINTPATH_PRODUCTION_REQUIRED_CHECKS_FILE: ${{ runner.temp }}/github-candidate-evidence/required-checks.json
+          PINTPATH_HOSTED_PILOT_ACCEPTANCE_FILE: ${{ runner.temp }}/pintpath-hosted-acceptance/acceptance.json
+          PINTPATH_HOSTED_PILOT_ACCEPTANCE_SHA256: ${{ secrets.PINTPATH_HOSTED_PILOT_ACCEPTANCE_SHA256 }}
+          PINTPATH_PRODUCTION_MIGRATION_EVIDENCE_DIR: ${{ runner.temp }}/production-migration-evidence
+          PINTPATH_PRODUCTION_MIGRATION_PINS_FILE: ${{ runner.temp }}/production-migration-authority/pins.json
+          PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256 }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         shell: bash
         run: |
@@ -244,6 +281,35 @@ jobs:
             --evidence-dir "$RUNNER_TEMP/pintpath-production-deployment-evidence" \
             --production-worker-fence-run-id "$PINTPATH_PRODUCTION_DEPLOYMENT_FENCE_RUN_ID" \
             --production-worker-fence-verification-file "$PINTPATH_PRODUCTION_DEPLOYMENT_WORKER_FENCE_VERIFICATION_FILE"
+
+      - name: Remove private native migration input custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/production-migration-evidence"
+          authority="$RUNNER_TEMP/production-migration-authority"
+          if [ -d "$evidence" ] && [ ! -L "$evidence" ]; then
+            rm -f -- "$evidence/snapshot-manifest.json" "$evidence/apply-receipt.json" \
+              "$evidence/verification-receipt.json" "$evidence/verification-approval.json" \
+              "$evidence/verifier-public-key.pem" "$evidence/target-identity.json"
+            rmdir "$evidence"
+          fi
+          if [ -d "$authority" ] && [ ! -L "$authority" ]; then
+            rm -f -- "$authority/pins.json"
+            rmdir "$authority"
+          fi
+
+      - name: Remove private hosted acceptance input
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          private_root="$RUNNER_TEMP/pintpath-hosted-acceptance"
+          if [ -d "$private_root" ] && [ ! -L "$private_root" ]; then
+            rm -f -- "$private_root/acceptance.json"
+            rmdir "$private_root"
+          fi
 
       - name: Bind the artifact to the tested commit
         if: always()

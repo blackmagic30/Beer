@@ -1,3 +1,5 @@
+import { productionSourceArchiveIdentity } from "./lib/production-source-archive-authority.js";
+import type { ProtectedSourceArchiveIdentity } from "../src/lib/protected-source-archive.js";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -5,6 +7,7 @@ import { TextDecoder } from "node:util";
 import zlib from "node:zlib";
 
 import { fetchBoundedResponseText } from "./lib/bounded-http-response.js";
+import { parseProductionApplicationDeploymentReceipt } from "./lib/production-application-deployment-receipt.js";
 import {
   holdPrivateDirectoryIdentity,
   readTrustedRegularFile,
@@ -34,7 +37,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "979d080d49c0c38ea8e552739e4b21fe51a0adfab5930b713846a60228b4d304" as const;
+  "f167ffd281afd7962c240bb10f8ce22b5a9d204fbafe95942839004941018b42" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -64,7 +67,7 @@ const FENCE_POLICY_SHA256 =
 const FENCE_PRODUCER_PATH =
   "scripts/execute-protected-automatic-maintenance-worker-fence.ts" as const;
 const FENCE_PRODUCER_SHA256 =
-  "74e4b137234a40252a482bcb2bc3fe7563229f7c1c6d5ac58d13b50a1fffaebd" as const;
+  "9f3f1215e43c080f6d06e2984ec292273ab20701b6520c6be0498d3167a4ff8c" as const;
 const FENCE_TERMINAL_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-terminal/v2" as const;
 const DEPLOYMENT_WORKFLOW = ".github/workflows/deploy-production.yml" as const;
@@ -72,7 +75,7 @@ const DEPLOYMENT_WORKFLOW_ID = "deploy-production.yml" as const;
 const DEPLOYMENT_WORKFLOW_NAME =
   "Deploy Pint Path protected production" as const;
 const DEPLOYMENT_WORKFLOW_SHA256 =
-  "414163692a141fc581498e8faf9d810f441710c0312df4a814ceabd36f03b511" as const;
+  "848bea6c84e267ed40f218352114f3edff5dcbfef71794bc137525226cbc98a9" as const;
 const PRODUCTION_SCALE_WORKFLOW =
   ".github/workflows/production-converge-two-replicas.yml" as const;
 const PRODUCTION_SCALE_WORKFLOW_ID =
@@ -88,15 +91,15 @@ const PRODUCTION_SCALE_POLICY_SHA256 =
 const PRODUCTION_SCALE_PRODUCER_PATH =
   "scripts/execute-protected-permanent-staging-scale.ts" as const;
 const PRODUCTION_SCALE_PRODUCER_SHA256 =
-  "becc2628287263c14f834206c799e376d1a8fe5f3a454df5646271e7f382049b" as const;
+  "5f3ac7e76c5194bbb12af2f037738494d121de852a3d9ee02b3e7d2355ed2c91" as const;
 const DEPLOYMENT_POLICY_PATH =
   "ops/railway/production-app-deployment-policy.json" as const;
 const DEPLOYMENT_POLICY_SHA256 =
-  "0a6fc8332fe370729693363f4ef1a2f1acc83fea8cf598455659a587797c35a7" as const;
+  "04b0aa9edd64ab0a2e9bb97d3f78e6baa87d71f28a822bba4bc0bd559888c89d" as const;
 const DEPLOYMENT_PRODUCER_PATH =
-  "scripts/lib/permanent-staging-app-deployment-executor.ts" as const;
+  "scripts/lib/bar-pilot-staging-app-deployment-executor.ts" as const;
 const DEPLOYMENT_PRODUCER_SHA256 =
-  "d161a40dc8b2a13cb33ef30687f031f3be44a8b24e8b27d378c07edac1260f65" as const;
+  "3d7052fbb0178660d64c6047577ada054ab27ba7a91816759cb15e2d4e9bac7b" as const;
 const DEPLOYMENT_RECEIPT_SCHEMA =
   "pintpath-railway-application-deployment-executor/v6" as const;
 const GITHUB_API_ORIGIN = "https://api.github.com" as const;
@@ -236,6 +239,7 @@ export interface ProductionMaintenanceRoleLimitPrerequisitesVerification {
     readonly intentSha256: string;
   };
   readonly productionDeployment: {
+    readonly sourceArchive?: ProtectedSourceArchiveIdentity;
     readonly workflowPath: typeof DEPLOYMENT_WORKFLOW;
     readonly runId: string;
     readonly runAttempt: 1;
@@ -1741,6 +1745,7 @@ function validateWorkerTerminal(
   value: JsonRecord,
   candidateSha: string,
   expectedOperation: "fence" | "activate",
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): {
   readonly terminalSha256: string;
   readonly bindingSha256: string;
@@ -1768,7 +1773,11 @@ function validateWorkerTerminal(
     "productionDeploymentVerification",
     "secretMaterialIncluded",
     "secretDerivedCommitmentsIncluded",
+    ...(sourceArchive ? ["sourceArchive"] : []),
   ])) fail("fence_receipt_invalid");
+  if (sourceArchive && (!productionSourceArchiveIdentity(value.sourceArchive, candidateSha)
+    || !productionSourceArchiveIdentity(sourceArchive, candidateSha)
+    || (value.sourceArchive as ProtectedSourceArchiveIdentity).sourceIdentitySha256 !== sourceArchive.sourceIdentitySha256)) fail("fence_receipt_invalid");
   const binding = record(value.binding) ? value.binding : null;
   const variables = record(binding?.configuredVariables)
     ? binding.configuredVariables
@@ -1860,8 +1869,8 @@ function validateWorkerTerminal(
         !== provider.deploymentBeforeIdSha256
       : provider.deploymentAfterIdSha256
         === provider.deploymentBeforeIdSha256)
-    || !SHA_PATTERN.test(String(provider.sourceBeforeSha))
-    || (expectedOperation === "activate"
+    || (sourceArchive ? provider.sourceBeforeSha !== null && provider.sourceBeforeSha !== candidateSha : !SHA_PATTERN.test(String(provider.sourceBeforeSha)))
+    || (expectedOperation === "activate" && !sourceArchive
       && provider.sourceBeforeSha !== candidateSha)
     || provider.sourceAfterSha !== provider.sourceBeforeSha
     || provider.sourcePreservedExact !== true
@@ -1981,8 +1990,9 @@ function validateActivateTerminal(
   source: string,
   value: JsonRecord,
   candidateSha: string,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ) {
-  return validateWorkerTerminal(source, value, candidateSha, "activate");
+  return validateWorkerTerminal(source, value, candidateSha, "activate", sourceArchive);
 }
 
 const DEPLOYMENT_CHECK_KEYS = [
@@ -2073,6 +2083,7 @@ function validateDeploymentReceipt(
   value: JsonRecord,
   candidateSha: string,
 ): {
+  readonly sourceArchive?: ProtectedSourceArchiveIdentity;
   readonly receiptSha256: string;
   readonly deploymentIdSha256: string;
   readonly workerFenceRunId: string;
@@ -2084,6 +2095,11 @@ function validateDeploymentReceipt(
   readonly startedAtMs: number;
   readonly completedAtMs: number;
 } {
+  const archiveReceipt = value.schemaVersion === "pintpath-railway-application-deployment-executor/v7";
+  const archiveAuthority = archiveReceipt ? parseProductionApplicationDeploymentReceipt(value, candidateSha)?.sourceArchive : undefined;
+  if (archiveReceipt && !parseProductionApplicationDeploymentReceipt(value, candidateSha)) {
+    fail("deployment_receipt_invalid");
+  }
   if (!exactKeys(value, [
     "schemaVersion",
     "operation",
@@ -2110,6 +2126,7 @@ function validateDeploymentReceipt(
     "runtimeResponseSha256s",
     "workerFencePrerequisite",
     "checks",
+    ...(archiveReceipt ? ["sourceArchive", "hostedAcceptance", "migrationEvidence"] : []),
   ])) fail("deployment_receipt_invalid");
   const collateral = record(value.collateralSnapshotSha256s)
     ? value.collateralSnapshotSha256s
@@ -2150,7 +2167,7 @@ function validateDeploymentReceipt(
       && SHA256_PATTERN.test(String(value.cliOutputSha256))
       && value.deploymentIdSha256 !== value.previousDeploymentIdSha256);
   if (
-    value.schemaVersion !== DEPLOYMENT_RECEIPT_SCHEMA
+    (!archiveReceipt && value.schemaVersion !== DEPLOYMENT_RECEIPT_SCHEMA)
     || value.operation !== "pintpath-railway-application-source-upload"
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.target !== "production"
@@ -2200,6 +2217,7 @@ function validateDeploymentReceipt(
     || !exactTrueChecks(value.checks, DEPLOYMENT_CHECK_KEYS)
   ) fail("deployment_receipt_invalid");
   return {
+    ...(archiveAuthority ? { sourceArchive: archiveAuthority } : {}),
     receiptSha256: sha256(source),
     deploymentIdSha256: String(value.deploymentIdSha256),
     workerFenceRunId: String(workerFence.runId),
@@ -2736,7 +2754,9 @@ function parseVerificationObject(
       "receiptSha256",
       "deploymentIdSha256",
       "replicaCount",
+      ...(deployment && "sourceArchive" in deployment ? ["sourceArchive"] : []),
     ])
+    || (deployment && "sourceArchive" in deployment && !productionSourceArchiveIdentity(deployment.sourceArchive, expected.candidateSha))
     || deployment.workflowPath !== DEPLOYMENT_WORKFLOW
     || !RUN_ID_PATTERN.test(String(deployment.runId))
     || (expected.deploymentRunId !== null
@@ -3526,6 +3546,7 @@ async function verifyRoleLimit(
       intentSha256: fenceReceipt.intentSha256,
     },
     productionDeployment: {
+      ...(deploymentReceipt.sourceArchive ? { sourceArchive: deploymentReceipt.sourceArchive } : {}),
       workflowPath: DEPLOYMENT_WORKFLOW,
       runId: deploymentRunId,
       runAttempt: 1,
@@ -4298,6 +4319,7 @@ async function verifyProductionScale(
     terminalInput.source,
     terminalInput.value,
     args.candidateSha,
+    activationPrerequisites.rolePrerequisites.productionDeployment.sourceArchive,
   );
   if (
     activationTerminal.deploymentBeforeIdSha256

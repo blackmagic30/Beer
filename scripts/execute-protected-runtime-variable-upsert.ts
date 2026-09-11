@@ -4,6 +4,8 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { loadProductionRuntimeVariableImportGate } from "./lib/production-runtime-variable-import-gate.js";
+
 import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
@@ -81,9 +83,33 @@ const ALLOWED_VARIABLES = Object.freeze([
   "ACCOUNT_DELETION_NOTICE_REPLY_TO",
   ...BAR_PILOT_STAGING_VARIABLES,
 ] as const);
+const PRODUCTION_PILOT_VARIABLES = Object.freeze([
+  "BAR_PILOT_ENABLED",
+  "BAR_PILOT_VENUE_IDS",
+  "ALCOHOL_PROMOTION_APPROVAL_REFERENCE"
+] as const);
+const PRODUCTION_ONLY_VARIABLES = Object.freeze([
+  "DATABASE_PATH",
+  "PINTPATH_DATABASE_RESOURCE_ID",
+  "PINTPATH_EXPECTED_DATABASE_RESOURCE_ID",
+  "PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS",
+  "PINTPATH_EXPECTED_DATABASE_URL_SHA256",
+  "PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256",
+  "PINTPATH_REDIS_RESOURCE_ID",
+  "PINTPATH_EXPECTED_REDIS_RESOURCE_ID",
+  "PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS",
+  "PINTPATH_EXPECTED_REDIS_URL_SHA256",
+  "PINTPATH_FORBIDDEN_REDIS_URL_SHA256S",
+  "PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256",
+  "REQUIRE_REDIS_RATE_LIMITING",
+  "ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION"
+] as const);
 const POLICY_PATH = "ops/railway/protected-runtime-variable-policy.json";
 const POLICY_SHA256 =
-  "2d06378d1ce5d821edfeb418e8938adf2d4d35fd1d3747ec00ff73277947ae9a";
+  "7f47a616a090575c99a19b88fa8607400224320c779cc8a5035d4dd203186c6a";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
@@ -141,7 +167,7 @@ export const PROTECTED_RUNTIME_VARIABLE_SCOPE = `query PintPathProtectedRuntimeV
 
 type TargetName = keyof typeof TARGETS;
 type ApplicationVariable = (typeof ALLOWED_VARIABLES)[number];
-type AllowedVariable = ApplicationVariable | typeof STAGING_POSTGRES_RUNTIME_VARIABLE;
+type AllowedVariable = ApplicationVariable | (typeof PRODUCTION_PILOT_VARIABLES)[number] | (typeof PRODUCTION_ONLY_VARIABLES)[number] | typeof STAGING_POSTGRES_RUNTIME_VARIABLE;
 
 interface Row {
   readonly id: string;
@@ -166,6 +192,7 @@ interface Dependencies {
   readonly fetchImpl: typeof fetch;
   readonly boundaryCheck: () => Promise<0 | 1>;
   readonly readValue: (filename: string) => Buffer;
+  readonly loadProductionImportGate: typeof loadProductionRuntimeVariableImportGate;
   readonly writeDurable: (
     directory: string,
     leaf: string,
@@ -238,9 +265,31 @@ function targetVariableExact(
   if (target === "permanent-staging-postgres") {
     return variableName === STAGING_POSTGRES_RUNTIME_VARIABLE;
   }
+  if (target === "production" && (PRODUCTION_PILOT_VARIABLES as readonly string[]).includes(variableName)) return true;
   if ((BAR_PILOT_STAGING_VARIABLES as readonly string[]).includes(variableName)
     && target !== "permanent-staging") return false;
+  if ((PRODUCTION_ONLY_VARIABLES as readonly string[]).includes(variableName)) return target === "production";
   return ALLOWED_VARIABLES.includes(variableName as ApplicationVariable);
+}
+
+function productionVariableValueExact(name: string, value: string): boolean {
+  if (name === "BAR_PILOT_ENABLED" || name === "BAR_PILOT_VENUE_IDS") return barPilotVariableValueExact(name, value, "");
+  if (name === "ALCOHOL_PROMOTION_APPROVAL_REFERENCE") return value.length >= 1 && value.length <= 512
+    && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+  if (!(PRODUCTION_ONLY_VARIABLES as readonly string[]).includes(name)) return true;
+  if (name === "DATABASE_PATH") return value === "";
+  if (name === "REQUIRE_REDIS_RATE_LIMITING") return value === "true";
+  if (name === "ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION") return value === "false";
+  if (name.endsWith("_URL_SHA256")) return /^[a-f0-9]{64}$/.test(value);
+  if (name.endsWith("_URL_SHA256S")) {
+    const values = value.split(",");
+    return values.length >= 2 && values.length <= 10 && new Set(values).size === values.length
+      && values.every(item => /^[a-f0-9]{64}$/.test(item));
+  }
+  const values = value.split(",");
+  return values.length >= (name.includes("FORBIDDEN") ? 2 : 1) && values.length <= (name.includes("FORBIDDEN") ? 10 : 1)
+    && new Set(values).size === values.length
+    && values.every(item => /^[a-zA-Z0-9][a-zA-Z0-9:._-]{7,255}$/.test(item));
 }
 
 function argumentsExact(argv: readonly string[]): {
@@ -545,6 +594,17 @@ function isFixedStagingPostgresRepair(
     variableName === STAGING_POSTGRES_RUNTIME_VARIABLE;
 }
 
+function legacyProductionWritersStopped(snapshot: Snapshot): boolean {
+  try {
+    const deployments = JSON.parse(snapshot.deploymentCanonical);
+    return [deployments.targetServiceInstance, deployments.applicationServiceInstance].every(instance =>
+      record(instance) && record(instance.latestDeployment)
+      && instance.latestDeployment.deploymentStopped === true
+      && Array.isArray(instance.activeDeployments)
+      && instance.activeDeployments.every(deployment => record(deployment) && deployment.deploymentStopped === true));
+  } catch { return false; }
+}
+
 function targetBeforeExact(
   before: Snapshot,
   variableName: string,
@@ -611,6 +671,9 @@ function policyExact(cwd: string): boolean {
         "postgresServiceId",
         "targets",
         "allowedVariables",
+        "productionOnlyVariables",
+        "productionPilotVariables",
+        "productionDatabasePathClear",
         "fixedStagingPostgresRepair",
         "mutation",
         "evidence",
@@ -622,6 +685,9 @@ function policyExact(cwd: string): boolean {
       value.postgresServiceId === POSTGRES_SERVICE_ID &&
       Array.isArray(value.allowedVariables) &&
       JSON.stringify(value.allowedVariables) === JSON.stringify(ALLOWED_VARIABLES) &&
+      JSON.stringify(value.productionOnlyVariables) === JSON.stringify(PRODUCTION_ONLY_VARIABLES) &&
+      JSON.stringify(value.productionPilotVariables) === JSON.stringify(PRODUCTION_PILOT_VARIABLES) &&
+      canonical(value.productionDatabasePathClear) === canonical({ variableName: "DATABASE_PATH", target: "production", value: "", providerRowPreserved: true, dataFilesAndVolumesUnchanged: true, nativeLiveImportRequiredBeforeDatabaseUrl: true }) &&
       canonical(value.fixedStagingPostgresRepair) === canonical({
         variableName: STAGING_POSTGRES_RUNTIME_VARIABLE,
         valueSource: "REVIEWED_COMPILE_TIME_CONSTANT",
@@ -680,6 +746,7 @@ export async function runProtectedRuntimeVariableUpsert(
         argv: ["--policy", BOUNDARY_POLICY_PATH],
       }),
     readValue: privateRead,
+    loadProductionImportGate: loadProductionRuntimeVariableImportGate,
     writeDurable: durableWrite,
     writeOutput: (source) => process.stdout.write(source),
     ...overrides,
@@ -695,6 +762,7 @@ export async function runProtectedRuntimeVariableUpsert(
     | "mutation_uncertain"
     | "blocked" = "blocked";
   let held: Buffer | null = null;
+  let importGate: Awaited<ReturnType<typeof loadProductionRuntimeVariableImportGate>> | null = null;
   let before: Snapshot | null = null;
   let metadataToken = "";
   let activeTarget: (typeof TARGETS)[TargetName] | null = null;
@@ -708,8 +776,9 @@ export async function runProtectedRuntimeVariableUpsert(
       dependencies.env.GITHUB_REF === "refs/heads/main" &&
       dependencies.env.GITHUB_SHA === args.candidateSha &&
       dependencies.env.GITHUB_RUN_ATTEMPT === "1" &&
-      dependencies.env.PINTPATH_RUNTIME_VARIABLE_CONFIRMATION ===
-        `UPSERT_${args.variableName}_IN_${args.target.toUpperCase().replaceAll("-", "_")}`;
+      dependencies.env.PINTPATH_RUNTIME_VARIABLE_CONFIRMATION === (args.target === "production" && args.variableName === "DATABASE_PATH"
+        ? "CLEAR_DATABASE_PATH_IN_PRODUCTION"
+        : `UPSERT_${args.variableName}_IN_${args.target.toUpperCase().replaceAll("-", "_")}`);
     if (!args || !target || !checks.policyExact || !checks.githubAuthorityExact)
       throw new Error("authority_invalid");
     metadataToken =
@@ -769,7 +838,8 @@ export async function runProtectedRuntimeVariableUpsert(
     const fixedStagingPostgresRepair =
       args.target === "permanent-staging-postgres" &&
       args.variableName === STAGING_POSTGRES_RUNTIME_VARIABLE;
-    held = fixedStagingPostgresRepair
+    const clearDatabasePath = args.target === "production" && args.variableName === "DATABASE_PATH";
+    held = clearDatabasePath ? Buffer.from("") : fixedStagingPostgresRepair
       ? Buffer.from(STAGING_POSTGRES_RUNTIME_URL, "utf8")
       : dependencies.readValue(args.valueFile);
     const decoded = new TextDecoder("utf-8", { fatal: true }).decode(held);
@@ -778,9 +848,10 @@ export async function runProtectedRuntimeVariableUpsert(
       ? decoded.slice(0, -1)
       : decoded;
     if (
-      decoded.length < 1 ||
+      (!clearDatabasePath && decoded.length < 1) ||
       decoded.length > 65536 ||
       !barPilotVariableValueExact(args.variableName, decoded, args.candidateSha) ||
+      !productionVariableValueExact(args.variableName, decoded) ||
       (fixedStagingPostgresRepair && decoded !== STAGING_POSTGRES_RUNTIME_URL) ||
       (multilinePem
         ? canonicalPem !== canonicalPem.trim()
@@ -791,6 +862,15 @@ export async function runProtectedRuntimeVariableUpsert(
         : /[\u0000-\u001f\u007f]/.test(decoded))
     )
       throw new Error("value_invalid");
+    if (args.target === "production" && args.variableName === "DATABASE_URL") {
+      checks.targetPreflightExact = false;
+      if (!legacyProductionWritersStopped(before)) throw new Error("legacy_writers_active");
+      importGate = await dependencies.loadProductionImportGate({ env: dependencies.env,
+        candidateSha: args.candidateSha, databaseUrl: decoded });
+      const afterGate = await readSnapshot(dependencies.fetchImpl, metadataToken, target.environmentId, target.serviceId);
+      if (!afterGate || !legacyProductionWritersStopped(afterGate) || canonical(afterGate) !== canonical(before)) throw new Error("legacy_writers_changed");
+      checks.targetPreflightExact = true;
+    }
     const intent = canonical({
       schemaVersion: "pintpath-protected-runtime-variable-intent/v1",
       target: args.target,
@@ -800,9 +880,11 @@ export async function runProtectedRuntimeVariableUpsert(
       environmentId: target.environmentId,
       serviceId: target.serviceId,
       operationName: "variableCollectionUpsert",
-      valueSource: fixedStagingPostgresRepair
+      valueSource: clearDatabasePath ? "REVIEWED_EMPTY_DATABASE_PATH" : fixedStagingPostgresRepair
         ? "REVIEWED_COMPILE_TIME_CONSTANT"
         : "PROTECTED_GITHUB_SECRET_FILE",
+      ...(clearDatabasePath ? { clearOperation: "CLEAR_DATABASE_PATH", providerRowPreserved: true, dataFilesAndVolumesUnchanged: true } : {}),
+      ...(importGate ? { productionImport: importGate.binding, legacyApplicationWritersStopped: true } : {}),
       skipDeploys: true,
       maximumAttempts: 1,
       retryAllowed: false,
@@ -818,6 +900,13 @@ export async function runProtectedRuntimeVariableUpsert(
     );
     checks.durableIntentExact = intentSha === sha256(intent);
     if (!checks.durableIntentExact) throw new Error("intent_invalid");
+    if (importGate) {
+      checks.targetPreflightExact = false;
+      await importGate.reassert();
+      const immediate = await readSnapshot(dependencies.fetchImpl, metadataToken, target.environmentId, target.serviceId);
+      if (!immediate || !legacyProductionWritersStopped(immediate) || canonical(immediate) !== canonical(before)) throw new Error("target_changed");
+      checks.targetPreflightExact = true;
+    }
     attempts = 1;
     let acknowledged = false;
     try {
@@ -883,6 +972,12 @@ export async function runProtectedRuntimeVariableUpsert(
   } catch {
     outcome = attempts === 1 ? "mutation_uncertain" : "failed_before_attempt";
   } finally {
+    if (importGate) {
+      try { await importGate.close(); } catch {
+        checks.targetPreflightExact = false;
+        outcome = attempts === 1 ? "mutation_uncertain" : "failed_before_attempt";
+      }
+    }
     if (held) {
       held.fill(0);
       checks.inputZeroized = held.every((byte) => byte === 0);
@@ -972,6 +1067,7 @@ export async function runProtectedRuntimeVariableUpsert(
 export const protectedRuntimeVariableInternals = {
   argumentsExact,
   targetVariableExact,
+  productionVariableValueExact,
   scopeExact,
   snapshot,
   targetBeforeExact,

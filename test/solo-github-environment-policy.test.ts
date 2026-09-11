@@ -67,30 +67,19 @@ describe("solo unattended GitHub Environment documentation", () => {
     expect(documentation).toMatch(/automated fail-closed/i);
   });
 
-  it("documents the checked-in static-label activation as a hard NO-GO", () => {
-    const workflow = read(
-      ".github/workflows/activate-production-promotion-recovery.yml",
-    );
-    expect(workflow).toContain(
-      "runs-on: [self-hosted, linux, x64, pintpath-production-backup]",
-    );
-    expect(workflow).toContain(
-      "runs-on: [self-hosted, linux, x64, pintpath-disposable-recovery]",
-    );
-
+  it("documents exact-run eligibility while retaining the live recovery prerequisites", () => {
+    const workflow = read(".github/workflows/activate-production-promotion-recovery.yml");
+    for (const role of ["production-capture", "disposable-recover"]) {
+      expect(workflow).toContain(`format('pintpath-recovery-{0}-{1}-${role}', github.run_id, github.run_attempt)`);
+    }
+    expect(workflow.match(/control-production-recovery-jit-runner\.ts verify-job/g)).toHaveLength(2);
+    expect(workflow).not.toContain("runs-on: [self-hosted, linux, x64, pintpath-production-backup]");
     for (const path of activationRunbooks) {
       const document = read(path);
-      expect(document).toMatch(/static (?:production and disposable )?base labels?/i);
-      expect(document).toMatch(/hard NO-GO/i);
-      expect(document).toMatch(/authoritative exact-run/i);
-      expect(document).not.toMatch(/mechanically queued/i);
-      expect(document).not.toMatch(/capture (?:stays|remains) queued/i);
-      expect(document).not.toMatch(/standing base-label runner cannot claim/i);
-      expect(document).not.toMatch(/repository-scoped controller is implemented/i);
-      expect(document).not.toMatch(/controller.{0,40}offline-tested/i);
-      expect(document).not.toMatch(
-        /pintpath-(?:production-promotion-recovery|disposable-recovery)-\$\{\{/i,
-      );
+      expect(document).toMatch(/exact-run/i);
+      expect(document).toMatch(/NO-GO/i);
+      expect(document).toMatch(/private-network hosts|private-network host|private-network runner/i);
+      expect(document).not.toMatch(/controller evidence are absent|does not implement an authoritative exact-run/i);
     }
   });
 });

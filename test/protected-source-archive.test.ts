@@ -118,6 +118,42 @@ describe("protected source archive identity", () => {
       .toEqual(identity);
   });
 
+  it("binds a production archive to its exact environment and rejects cross-environment replay", () => {
+    const productionManifest: ProtectedSourceArchiveManifest = {
+      schemaVersion: "protected-source-archive/v2", target: "production",
+      candidateSha: manifest.candidateSha, treeSha: manifest.treeSha,
+      sourceArchiveSha256: manifest.sourceArchiveSha256,
+      sourceBaseManifestSha256: manifest.sourceBaseManifestSha256,
+      uploadNonce: manifest.uploadNonce,
+    };
+    const source = canonicalProtectedSourceArchiveManifest(productionManifest);
+    const productionScope = { ...scope, RAILWAY_ENVIRONMENT_NAME: "production",
+      RAILWAY_ENVIRONMENT_ID: "13dab015-df74-45c6-b26f-69323daea99a" };
+    const productionIdentity = loadProtectedSourceArchiveRuntime(productionScope, fixture(source));
+    expect(productionIdentity).toMatchObject(productionManifest);
+    expect(() => loadProtectedSourceArchiveRuntime(scope, fixture(source))).toThrow("runtime_scope_invalid");
+    expect(() => loadProtectedSourceArchiveRuntime(productionScope, fixture())).toThrow("runtime_scope_invalid");
+    expect(() => loadProtectedSourceArchiveRuntime({ ...productionScope,
+      PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: "9".repeat(40) }, fixture(source))).toThrow();
+    expect(() => loadProtectedSourceArchiveRuntime({ ...productionScope,
+      RAILWAY_GIT_COMMIT_SHA: "9".repeat(40) }, fixture(source))).toThrow("git_identity_conflict");
+    for (const route of ["/health", "/startup", "/ready"] as const) {
+      const value = response(route);
+      Object.assign(value.data.deployment, railwayDeploymentIdentityHashes(productionScope),
+        { sourceArchive: productionIdentity });
+      expect(parseProtectedSourceArchiveRuntimeResponse(route, JSON.stringify(value)))
+        .toMatchObject({ deployment: { commitSha: "unknown", sourceArchive: productionIdentity } });
+      value.data.automaticMaintenance.enabled = true;
+      expect(parseProtectedSourceArchiveRuntimeResponse(route, JSON.stringify(value)))
+        .toMatchObject({ automaticMaintenance: { enabled: true, candidateBound: true } });
+      value.data.automaticMaintenance.candidateBound = false;
+      expect(parseProtectedSourceArchiveRuntimeResponse(route, JSON.stringify(value))).toBeNull();
+      value.data.automaticMaintenance.candidateBound = true;
+      Object.assign(value.data.deployment, railwayDeploymentIdentityHashes(scope));
+      expect(parseProtectedSourceArchiveRuntimeResponse(route, JSON.stringify(value))).toBeNull();
+    }
+  });
+
   it("rejects symlinks, hard links, group-writable files and unsafe parent paths", () => {
     const root = fixture();
     const file = path.join(root, PROTECTED_SOURCE_ARCHIVE_FILENAME);
@@ -198,6 +234,7 @@ describe("protected source archive identity", () => {
     const script = path.resolve("scripts/verify-production-artifact.mjs");
     const required = [
       "dist/src/server.js", "dist/src/db/schema.sql", "dist/src/db/postgres-schema.sql",
+      "dist/scripts/lib/hosted-bar-pilot-acceptance.mjs",
       ...["index.html", "404.html", "account.html", "admin.html", "auth/callback.html", "business.css",
         "business.js", "site.webmanifest", "venue-portal.html"].map((name) => `dist/viewer/${name}`),
     ];

@@ -33,6 +33,12 @@ export const POSTGRES_MIGRATION_PLAN_KIND = "pint-path-postgres-migration-plan" 
 export const POSTGRES_MIGRATION_SNAPSHOT_VERSION = 2 as const;
 export const POSTGRES_MIGRATION_PLAN_VERSION = 1 as const;
 
+// Exact physical schema observed after the existing schema-11 production copy
+// receives initializeDatabaseSchema. Unknown drift is never normalized away.
+export const POSTGRES_MIGRATION_LEGACY_NORMALIZATION_FINGERPRINT =
+  "744cb43aaecdfeddf5e79b5556c24b3d4e95c8443ae316e08903d34d9e12fa3a" as const;
+const LEGACY_NORMALIZATION_ARCHIVE_TABLES = ["beer_price_results", "call_runs", "call_sessions"] as const;
+
 export type PostgresMigrationSourceErrorCode =
   | "ARTIFACT_INVALID"
   | "ARGUMENT_INVALID"
@@ -1404,6 +1410,161 @@ export async function createPostgresMigrationSnapshot(input: {
       }
     }
     throw error;
+  }
+}
+
+/**
+ * Prepares a new private source file only. It does not mutate the sealed input,
+ * relax the native import contract, or claim the later write-frozen snapshot.
+ */
+export async function normalizeLegacyPostgresMigrationSource(input: {
+  sourceSqlite: string;
+  expectedSourceSha256: string;
+  outputDirectory: string;
+  candidateSha: string;
+  operatorId: string;
+  now?: Date;
+}): Promise<{ databasePath: string; receiptPath: string; receiptSha256: string;
+  receipt: Record<string, unknown> }> {
+  const sourcePath = assertCanonicalAbsolutePath(input.sourceSqlite, "Sealed legacy source");
+  const outputDirectory = assertCanonicalAbsolutePath(input.outputDirectory, "Normalized source directory");
+  const expectedSourceSha256 = assertSha256(input.expectedSourceSha256, "Sealed source hash");
+  const candidateSha = normalizeCandidateSha(input.candidateSha);
+  const operatorIdSha256 = sha256Identity(input.operatorId, "operator-id");
+  const normalizedAt = (input.now ?? new Date()).toISOString();
+  if (sourcePath.startsWith(`${outputDirectory}${path.sep}`)
+    || ["-wal", "-shm", "-journal"].some(suffix => fs.existsSync(`${sourcePath}${suffix}`))) {
+    throw sourceError("ARTIFACT_INVALID", "Normalization requires a sealed, sidecar-free isolated source.");
+  }
+  const before = await readStableRegularFile(sourcePath, "Sealed legacy source", { requiredMode: 0o600 });
+  if (before.sha256 !== expectedSourceSha256) throw sourceError("SOURCE_CHANGED", "Sealed source hash does not match.");
+  let source: BetterSqlite3.Database | undefined;
+  let target: BetterSqlite3.Database | undefined;
+  let custody: SnapshotOutputCustody | undefined;
+  const databasePath = path.join(outputDirectory, POSTGRES_MIGRATION_SNAPSHOT_DATABASE_FILE);
+  try {
+    source = openValidatedReadOnlySqlite(sourcePath);
+    const sourceInspection = inspectPostgresMigrationSchema(source);
+    if (sourceInspection.fingerprint !== POSTGRES_MIGRATION_LEGACY_NORMALIZATION_FINGERPRINT
+      || source.pragma("integrity_check", { simple: true }) !== "ok"
+      || (source.pragma("foreign_key_check") as unknown[]).length !== 0) {
+      throw sourceError("SOURCE_SCHEMA_MISMATCH", "Legacy source is not the reviewed normalization profile.");
+    }
+    const sourceVersion = source.pragma("data_version", { simple: true });
+    custody = await SnapshotOutputCustody.create(outputDirectory);
+    await custody.writeFile(POSTGRES_MIGRATION_SNAPSHOT_DATABASE_FILE, Buffer.alloc(0));
+    target = new BetterSqlite3(databasePath, { fileMustExist: true });
+    // Dynamically loaded only for this preparation command; other native
+    // snapshot/import commands retain their existing configuration boundaries.
+    const { initializeDatabaseSchema } = await import("./database.js");
+    initializeDatabaseSchema(target);
+    assertSchemaMatchesContract(inspectPostgresMigrationSchema(target));
+    target.pragma("foreign_keys = OFF");
+    const nativeTables = POSTGRES_MIGRATION_CONTRACT.tables;
+    const tableCounts: Record<string, number> = {};
+    const tableValueHashes: Record<string, string> = {};
+    const archivedCounts: Record<string, number> = {};
+    const archivePayloads: Array<{ id: string; payload: string }> = [];
+    const heldSource = source;
+    const heldTarget = target;
+    const typedCell = (value: unknown): unknown => {
+      if (value === null) return ["null"];
+      if (typeof value === "bigint") return ["integer", value.toString()];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        const bytes = Buffer.alloc(8); bytes.writeDoubleBE(value); return ["float64", bytes.toString("hex")];
+      }
+      if (typeof value === "string") return ["text", value];
+      if (Buffer.isBuffer(value)) return ["blob", value.toString("base64")];
+      throw sourceError("SOURCE_DATA_INVALID", "Legacy value cannot be preserved losslessly.");
+    };
+    const canonicalValues = (row: Record<string, unknown>, table: PostgresMigrationTableContract) => table.columns.map(column => {
+      let value = row[column[0]];
+      if (column[1] === "REAL" && typeof value === "bigint") {
+        const number = Number(value);
+        if (!Number.isSafeInteger(number) || BigInt(number) !== value) throw new Error("unsafe-affinity-conversion");
+        value = number;
+      }
+      canonicalSourceValue(value, column);
+      return value;
+    });
+    const valueHash = (table: PostgresMigrationTableContract, database: BetterSqlite3.Database) => {
+      const digest = crypto.createHash("sha256"); let count = 0;
+      const columns = table.columns.map(column => quoteIdentifier(column[0])).join(",");
+      const order = table.columns.filter(column => column[4] > 0).sort((a, b) => a[4] - b[4]).map(column => quoteIdentifier(column[0])).join(",");
+      for (const row of database.prepare(`SELECT ${columns} FROM ${quoteIdentifier(table.name)} ORDER BY ${order}`).safeIntegers().iterate() as Iterable<Record<string, unknown>>) {
+        updateLengthFramed(digest, serializeCanonicalPostgresMigrationJson(canonicalValues(row, table).map(typedCell)).toString("utf8"));
+        count += 1;
+      }
+      return { count, hash: digest.digest("hex") };
+    };
+    heldTarget.transaction(() => {
+      for (const name of [...POSTGRES_MIGRATION_CONTRACT.importOrder].reverse()) heldTarget.prepare(`DELETE FROM ${quoteIdentifier(name)}`).run();
+      for (const name of POSTGRES_MIGRATION_CONTRACT.importOrder) {
+        const table = nativeTables.find(item => item.name === name)!;
+        const columns = table.columns.map(column => quoteIdentifier(column[0])).join(",");
+        const insert = heldTarget.prepare(`INSERT INTO ${quoteIdentifier(name)} (${columns}) VALUES (${table.columns.map(() => "?").join(",")})`);
+        for (const row of heldSource.prepare(`SELECT ${columns} FROM ${quoteIdentifier(name)}`).safeIntegers().iterate() as Iterable<Record<string, unknown>>) {
+          insert.run(...canonicalValues(row, table));
+        }
+        const original = valueHash(table, heldSource); const copied = valueHash(table, heldTarget);
+        if (original.count !== copied.count || original.hash !== copied.hash) throw new Error("copy-reconciliation");
+        tableCounts[name] = original.count; tableValueHashes[name] = original.hash;
+      }
+      const insertArchive = heldTarget.prepare(`INSERT INTO migration_quarantined_records
+        (id,entity_type,original_id,reason,payload_json,quarantined_at) VALUES (?,?,?,?,?,?)`);
+      for (const table of LEGACY_NORMALIZATION_ARCHIVE_TABLES) {
+        const descriptor = sourceInspection.descriptor.tables.find(item => item.name === table)!;
+        const columns = descriptor.columns.map(column => column.name);
+        const primaryKey = descriptor.columns.filter(column => column.pk > 0).sort((a, b) => a.pk - b.pk).map(column => column.name);
+        archivedCounts[table] = 0;
+        for (const row of heldSource.prepare(`SELECT ${columns.map(quoteIdentifier).join(",")} FROM ${quoteIdentifier(table)} ORDER BY ${primaryKey.map(quoteIdentifier).join(",")}`).safeIntegers().iterate() as Iterable<Record<string, unknown>>) {
+          const keySha256 = sha256PostgresMigrationBytes(serializeCanonicalPostgresMigrationJson(primaryKey.map(name => typedCell(row[name]))));
+          const payload = serializeCanonicalPostgresMigrationJson({ kind: "preserved-legacy-source-row/v1", candidateSha,
+            sourceSha256: expectedSourceSha256, sourceSchemaFingerprint: sourceInspection.fingerprint,
+            table, columns, cells: columns.map(name => typedCell(row[name])), operatorIdSha256 }).toString("utf8");
+          const id = `legacy-source:${sha256PostgresMigrationBytes(`${expectedSourceSha256}:${table}:${keySha256}`)}`;
+          insertArchive.run(id, table, keySha256, "Legacy call data preserved for canonical PostgreSQL import.", payload, normalizedAt);
+          archivePayloads.push({ id, payload }); archivedCounts[table] += 1;
+        }
+      }
+      for (const archived of archivePayloads) {
+        const row = heldTarget.prepare("SELECT payload_json FROM migration_quarantined_records WHERE id=?").get(archived.id) as { payload_json: string } | undefined;
+        if (!row || row.payload_json !== archived.payload) throw new Error("archive-reconciliation");
+      }
+      if ((heldTarget.pragma("foreign_key_check") as unknown[]).length !== 0) throw new Error("canonical-foreign-keys");
+    })();
+    target.pragma("foreign_keys = ON");
+    const targetInspection = inspectAndValidateSqlite(target);
+    if (source.pragma("data_version", { simple: true }) !== sourceVersion) throw new Error("source-changed");
+    target.pragma("wal_checkpoint(TRUNCATE)");
+    target.pragma("journal_mode = DELETE");
+    target.close(); target = undefined; source.close(); source = undefined;
+    await custody.removeCreatedSidecar(`${databasePath}-wal`); await custody.removeCreatedSidecar(`${databasePath}-shm`);
+    await custody.assertTrackedFile(databasePath);
+    const after = await readStableRegularFile(sourcePath, "Sealed legacy source", { requiredMode: 0o600 });
+    if (after.sha256 !== before.sha256 || !sameFileIdentity(before.stat, after.stat)) throw new Error("source-changed");
+    const normalized = await readStableRegularFile(databasePath, "Normalized source", { requiredMode: 0o600 });
+    const receipt = { kind: "pint-path-postgres-source-normalization", version: 1, candidateSha, normalizedAt, operatorIdSha256,
+      sourceSha256: before.sha256, sourceSchemaFingerprint: sourceInspection.fingerprint,
+      normalizedSha256: normalized.sha256, normalizedSchemaFingerprint: targetInspection.fingerprint,
+      sourceUnchanged: true, canonicalValuesReconciled: true, archivedValuesReconciled: true,
+      tableCounts, tableValueHashes, archivedCounts, archivedRowCount: archivePayloads.length };
+    const receiptBytes = serializeCanonicalPostgresMigrationJson(receipt);
+    await custody.writeFile("normalization-receipt.json", receiptBytes);
+    await custody.syncDirectory(outputDirectory); await custody.assertExactInventory(); await custody.close(); custody = undefined;
+    return { databasePath, receiptPath: path.join(outputDirectory, "normalization-receipt.json"),
+      receiptSha256: sha256PostgresMigrationBytes(receiptBytes), receipt };
+  } catch (error) {
+    try { target?.close(); } catch { /* preserve original failure */ }
+    try { source?.close(); } catch { /* preserve original failure */ }
+    if (custody) {
+      for (const suffix of ["-wal", "-shm", "-journal"]) {
+        try { await custody.removeCreatedSidecar(`${databasePath}${suffix}`); } catch { /* retain unproven custody */ }
+      }
+      if (!await custody.cleanupExact()) throw sourceError("ARTIFACT_INVALID", "Normalization failed; private output requires operator review.");
+    }
+    if (error instanceof PostgresMigrationSourceError) throw error;
+    throw sourceError("SOURCE_DATA_INVALID", "Legacy normalization failed a lossless value, constraint, or source-custody check.");
   }
 }
 

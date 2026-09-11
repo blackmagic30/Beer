@@ -42,9 +42,12 @@ do not mix test credits into real customer balances.
    remove a point already spent on the reward.
 
 These are the meeting steps; preparation/deployment is completed beforehand.
-The connected loop passed 21 real-browser checks against isolated PostgreSQL,
+The connected loop passed 23 real-browser checks against isolated PostgreSQL,
 including the 390×844 customer viewport. This is desktop browser emulation;
 the owner's actual iPhone and hosted Google accounts are separate checks.
+The browser rehearsal starts with the same three beers as the approved hosted
+fixture, adds its non-preview beer through the manager form, and also proves a
+counter-staff purchase before the manager reverses that mistaken purchase.
 
 ## Prepare the isolated staging demo before the meeting
 
@@ -87,18 +90,22 @@ does not receive GitHub-origin commit metadata; an `unknown` Git commit field
 alone is not a failed source match. Do not substitute a Git environment variable
 for the archive proof.
 
-**Owner prerequisite observed on 2026-09-10:** staging Google authorization
-returns “provider is not enabled”; the available Management API credential
-cannot read Auth configuration. In Supabase project `bbfibbadwjxzrcdncavy`,
-enable Google under **Authentication → Sign In / Providers** with the owner's
-Google web OAuth client. Its Google redirect URI is
-`https://bbfibbadwjxzrcdncavy.supabase.co/auth/v1/callback`. In Supabase URL
-Configuration set the staging Site URL and allow
-`https://beer-staging.up.railway.app/auth/callback`. Keep credentials in provider
-settings. Follow the [official Google setup](https://supabase.com/docs/guides/auth/social-login/auth-google)
-and [redirect guidance](https://supabase.com/docs/guides/auth/redirect-urls).
-Pass condition: **Continue with Google** returns to staging with a signed-in
-account, then age/policy acceptance completes.
+**Hosted authentication update, 2026-09-11:** the earlier disabled-provider
+blocker is resolved. Real Google signup and consent succeeded after PR #112;
+logout, real Google login and session persistence were proved on deployed
+`457cb9f1bff3367a7009c60bb7b2c3c30a226660`. Do not repeat provider setup or
+replace the working OAuth client. This proves one ordinary account, not the
+manager/staff/reward walkthrough. The remaining preparation is four distinct
+controlled identities and their legitimate role assignments.
+
+The owner-selected `admin@pintpath.au` matches the existing staging admin
+allowlist but had not signed up when checked. Its first normal Google signup
+assigns the intended administrator role. Complete the age/current-policy
+prompts, then **Account → Security → Authenticator app** and verify the
+authenticator. The owner performs personal authentication and consent;
+deployment operators must not fabricate them or convert an unrelated ordinary
+account into the administrator. Keep passwords, authenticator secrets and
+usable customer/reward codes out of release evidence.
 
 1. Four distinct controlled accounts complete the hosted Google sign-in and
    age/policy flow: existing allowlisted administrator, manager, staff and

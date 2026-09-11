@@ -1,4 +1,6 @@
+import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { canonicalProtectedSourceArchiveManifest } from "../src/lib/protected-source-archive.js";
 
 import { parseProductionApplicationDeploymentReceipt } from
   "../scripts/lib/production-application-deployment-receipt.js";
@@ -18,6 +20,31 @@ function receipt(): Record<string, unknown> {
 }
 
 describe("production application deployment receipt v6", () => {
+  it("accepts production archive receipts while rejecting staging identity, wrong candidate and forged hash", () => {
+    const manifest = { schemaVersion: "protected-source-archive/v2" as const,
+      target: "production" as const, candidateSha, treeSha: "b".repeat(40),
+      sourceArchiveSha256: "c".repeat(64), sourceBaseManifestSha256: "d".repeat(64),
+      uploadNonce: "e".repeat(64) };
+    const value = { ...receipt(), schemaVersion: "pintpath-railway-application-deployment-executor/v7",
+      migrationEvidence: { pinsFileSha256: "a".repeat(64), verificationReceiptFileSha256: "b".repeat(64),
+        sourceSnapshotSha256: "c".repeat(64), targetIdentitySha256: "d".repeat(64) },
+      hostedAcceptance: { reportSha256: "a".repeat(64), requiredChecksSha256: "b".repeat(64),
+        stagingRunId: "1234", stagingDeploymentIdSha256: "c".repeat(64), sourceIdentitySha256: "d".repeat(64) },
+      sourceArchive: { ...manifest, sourceIdentitySha256: crypto.createHash("sha256")
+        .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex") } };
+    expect(parseProductionApplicationDeploymentReceipt(value, candidateSha)).not.toBeNull();
+    for (const change of [
+      { schemaVersion: "protected-source-archive/v1" }, { candidateSha: "f".repeat(40) },
+      { sourceIdentitySha256: "f".repeat(64) }, { target: "staging" },
+    ]) {
+      expect(parseProductionApplicationDeploymentReceipt({ ...value,
+        sourceArchive: { ...value.sourceArchive, ...change } }, candidateSha)).toBeNull();
+    }
+    expect(parseProductionApplicationDeploymentReceipt({ ...value,
+      checks: { ...(value.checks as Record<string, unknown>), prerequisiteExact: false } }, candidateSha)).toBeNull();
+    expect(parseProductionApplicationDeploymentReceipt({ ...value,
+      schemaVersion: "pintpath-railway-application-deployment-executor/v6" }, candidateSha)).toBeNull();
+  });
   it("accepts exact configured-topology evidence while retaining legacy nulls", () => {
     expect(parseProductionApplicationDeploymentReceipt(receipt(), candidateSha))
       .toEqual({

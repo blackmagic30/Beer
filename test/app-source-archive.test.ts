@@ -59,3 +59,18 @@ it("forces workers off for archive runtime even when a flag and matching genuine
   expect(shouldRunAutomaticMaintenance("production", false, false, true, candidate, candidate)).toBe(false);
   expect(shouldRunAutomaticMaintenance("production", false, false, true, candidate, candidate, null)).toBe(true);
 });
+
+
+it("honors the protected worker activation phase for an already validated production archive", () => {
+  const candidate = "1".repeat(40);
+  const identity = {
+    schemaVersion: "protected-source-archive/v2" as const, target: "production" as const,
+    candidateSha: candidate, treeSha: "2".repeat(40), sourceArchiveSha256: "3".repeat(64),
+    sourceBaseManifestSha256: "4".repeat(64), uploadNonce: "5".repeat(64), sourceIdentitySha256: "6".repeat(64),
+  };
+  expect(shouldRunAutomaticMaintenance("production", false, false, false, candidate, undefined, identity)).toBe(false);
+  expect(shouldRunAutomaticMaintenance("production", false, false, true, candidate, undefined, identity)).toBe(true);
+  expect(shouldRunAutomaticMaintenance("production", false, false, true, "9".repeat(40), undefined, identity)).toBe(false);
+  expect(shouldRunAutomaticMaintenance("production", true, false, true, candidate, undefined, identity)).toBe(false);
+  expect(shouldRunAutomaticMaintenance("production", false, true, true, candidate, undefined, identity)).toBe(false);
+});

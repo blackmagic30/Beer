@@ -1,6 +1,6 @@
-// Isolated pilot variant of the existing source-upload executor. The historical
-// production/staging producer remains byte-identical for its attestation pins.
-// This entry point accepts only the exact bar-pilot staging policy.
+// Archive provenance support for the existing protected source-upload path.
+// Historical Git receipts remain bound to the unchanged original producer.
+// Only the exact pilot staging and current production policies are accepted.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -36,6 +36,8 @@ import {
   type RailwayRegionReplicaCount,
 } from "./railway-multi-region-replica-topology.js";
 import { readTrustedRegularFile } from "./trusted-filesystem.js";
+import { assertHostedBarPilotAcceptance } from "./hosted-bar-pilot-acceptance.mjs";
+import { loadBarPilotProductionMigrationEvidence } from "./bar-pilot-production-runtime-preflight.js";
 import {
   BAR_PILOT_STAGING_POLICY_ID,
   BAR_PILOT_STOPPED_SOURCE_SHA,
@@ -299,6 +301,14 @@ const RAILWAY_CLI_EXECUTABLE_SHA256 =
 const sha256Schema = z.string().regex(SHA256_PATTERN);
 const uuidSchema = z.string().regex(UUID_PATTERN);
 const targetSchema = z.enum(["permanent-staging", "production"]);
+const PILOT_STAGING_TOPOLOGY = Object.freeze({
+  ...TARGET_LOCKS["permanent-staging"].configuredTopologyContract,
+  allowedConfiguredRegions: ["us-west2"],
+  solePositiveRegion: "us-west2",
+  zeroOnlyRegions: [],
+});
+export const PRODUCTION_ARCHIVE_DEPLOYMENT_RECEIPT_SCHEMA =
+  "pintpath-railway-application-deployment-executor/v7" as const;
 
 const policySchema = z.object({
   schemaVersion: z.literal(PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA),
@@ -340,6 +350,7 @@ const policySchema = z.object({
     railwayConfigSha256: z.literal(RAILWAY_CONFIG_SHA256),
     packageLockPath: z.literal("package-lock.json"),
     packageLockSha256: z.union([z.literal(PACKAGE_LOCK_SHA256), z.literal(BAR_PILOT_PACKAGE_LOCK_SHA256)]),
+    sourceIdentitySchema: z.literal("protected-source-archive/v2").optional(),
   }).strict(),
   mutationBoundary: z.object({
     policyPath: z.literal("ops/railway/production-staging-mutation-policy.json"),
@@ -452,6 +463,10 @@ const policySchema = z.object({
       ),
       expectedReplicaCount: z.literal(1),
       sameCandidateRequired: z.literal(true),
+      sourceIdentitySchema: z.literal("protected-source-archive/v1"),
+      configuredRegion: z.literal("us-west2"),
+      automaticMaintenanceEnabled: z.literal(false),
+      hostedAcceptanceRequired: z.literal(true),
     }).strict(),
   ]),
   providerReadinessContract: z.union([
@@ -589,12 +604,7 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
       policy.configuredTopologyContract,
     ) === canonicalJson(
       barPilot
-        ? {
-            ...stagingLock.configuredTopologyContract,
-            allowedConfiguredRegions: ["us-west2"],
-            solePositiveRegion: "us-west2",
-            zeroOnlyRegions: [],
-          }
+        ? PILOT_STAGING_TOPOLOGY
         : fenced
         ? stagingLock.fencedConfiguredTopologyContract
         : stagingLock.configuredTopologyContract,
@@ -631,8 +641,10 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
       policy.fencedDeploymentContract === undefined;
   }
   return policyIdExact
-    && policy.sourceContract.packageLockSha256 === (policy.policyId === BAR_PILOT_STAGING_POLICY_ID
-      ? BAR_PILOT_PACKAGE_LOCK_SHA256 : PACKAGE_LOCK_SHA256)
+    && policy.sourceContract.packageLockSha256 === BAR_PILOT_PACKAGE_LOCK_SHA256
+    && (policy.target.name === "production"
+      ? policy.sourceContract.sourceIdentitySchema === "protected-source-archive/v2"
+      : policy.sourceContract.sourceIdentitySchema === undefined)
     && configuredTopologyContractExact
     && fencedDeploymentContractExact
     && policy.projectId === PROJECT_ID
@@ -689,7 +701,7 @@ export function parsePermanentStagingAppDeploymentPolicy(
   try {
     const raw: unknown = JSON.parse(source);
     const policy = policySchema.parse(raw);
-    if (policy.policyId !== BAR_PILOT_STAGING_POLICY_ID
+    if (![BAR_PILOT_STAGING_POLICY_ID, TARGET_LOCKS.production.policyId].includes(policy.policyId)
       || canonicalJson(policy) !== source || !policyMatchesLock(policy)) return null;
     return Object.freeze(policy);
   } catch {
@@ -810,6 +822,7 @@ interface ExecutorDependencies {
     candidateSha: string,
     env: Readonly<Record<string, string | undefined>>,
     expectedPackageLockSha256?: string,
+    target?: DeploymentTarget,
   ) => Promise<SourceAuthority>;
   readonly validateCli: (
     policy: PermanentStagingAppDeploymentPolicy,
@@ -819,6 +832,8 @@ interface ExecutorDependencies {
     policy: PermanentStagingAppDeploymentPolicy,
     token: string,
   ) => Promise<boolean>;
+  readonly validateHostedAcceptance: typeof assertHostedBarPilotAcceptance;
+  readonly loadProductionMigrationEvidence: typeof loadBarPilotProductionMigrationEvidence;
   readonly validateProductionWorkerFencePrerequisite: (
     source: string,
     expected: {
@@ -891,7 +906,16 @@ export interface PermanentStagingAppDeploymentExecutorChecks {
 }
 
 export interface PermanentStagingAppDeploymentExecutorReceipt {
-  readonly schemaVersion: typeof PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA;
+  readonly schemaVersion: typeof PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA
+    | typeof PRODUCTION_ARCHIVE_DEPLOYMENT_RECEIPT_SCHEMA;
+  readonly sourceArchive?: ProtectedSourceArchiveIdentity | null;
+  readonly hostedAcceptance?: ProductionHostedAcceptanceBinding | null;
+  readonly migrationEvidence?: {
+    readonly pinsFileSha256: string;
+    readonly verificationReceiptFileSha256: string;
+    readonly sourceSnapshotSha256: string;
+    readonly targetIdentitySha256: string;
+  } | null;
   readonly operation: typeof PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION;
   readonly executorState: typeof PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE;
   readonly target: DeploymentTarget | null;
@@ -1390,9 +1414,12 @@ function materializeSourceArchiveIdentity(
   candidateSha: string,
   treeSha: string,
   archiveSha256: string,
+  target: DeploymentTarget = "permanent-staging",
 ): ProtectedSourceArchiveIdentity {
   const sourceManifest: ProtectedSourceArchiveManifest = {
-    schemaVersion: "protected-source-archive/v1",
+    ...(target === "production"
+      ? { schemaVersion: "protected-source-archive/v2" as const, target: "production" as const }
+      : { schemaVersion: "protected-source-archive/v1" as const }),
     candidateSha,
     treeSha,
     sourceArchiveSha256: archiveSha256,
@@ -1419,6 +1446,7 @@ async function defaultCreateSourceAuthority(
   candidateSha: string,
   env: Readonly<Record<string, string | undefined>>,
   expectedPackageLockSha256: string = PACKAGE_LOCK_SHA256,
+  target: DeploymentTarget = "permanent-staging",
 ): Promise<SourceAuthority> {
   if (
     env.GITHUB_ACTIONS !== "true"
@@ -1468,7 +1496,7 @@ async function defaultCreateSourceAuthority(
     await checkedCommand("tar", ["-xf", archivePath, "-C", snapshotPath], cwd);
     const archiveSha256 = readSourceArchiveSha256(archivePath);
     const sourceArchive = materializeSourceArchiveIdentity(
-      snapshotPath, candidateSha, treeSha, archiveSha256,
+      snapshotPath, candidateSha, treeSha, archiveSha256, target,
     );
     const manifestSha256 = snapshotManifestSha256(snapshotPath);
     heldSnapshotRoot = holdSnapshotRootDirectory(snapshotPath);
@@ -2094,7 +2122,8 @@ function configuredTopologyAllowed(
   const contract = environmentId === policy.target.environmentId
     ? policy.configuredTopologyContract
     : environmentId === TARGET_LOCKS["permanent-staging"].environmentId
-      ? TARGET_LOCKS["permanent-staging"].configuredTopologyContract
+      ? (policy.target.name === "production" ? PILOT_STAGING_TOPOLOGY
+        : TARGET_LOCKS["permanent-staging"].configuredTopologyContract)
       : null;
   if (!contract) return false;
   if (
@@ -2293,11 +2322,14 @@ function runtimeMatches(
   const automaticMaintenanceEnabled = environmentId === policy.target.environmentId
     ? policy.postflightContract.automaticMaintenanceEnabled
     : environmentId === TARGET_LOCKS["permanent-staging"].environmentId
-      ? TARGET_LOCKS["permanent-staging"].activeAutomaticMaintenanceEnabled
+      ? (policy.prerequisite?.automaticMaintenanceEnabled
+        ?? TARGET_LOCKS["permanent-staging"].activeAutomaticMaintenanceEnabled)
       : null;
   if (automaticMaintenanceEnabled === null) return false;
   return response.route === route
     && response.deployment.sourceArchive.candidateSha === candidateSha
+    && response.deployment.sourceArchive.schemaVersion === (environmentId === TARGET_LOCKS.production.environmentId
+      ? "protected-source-archive/v2" : "protected-source-archive/v1")
     && (!expectedSourceArchive || canonicalJson(response.deployment.sourceArchive)
       === canonicalJson(expectedSourceArchive))
     && response.deployment.projectIdSha256
@@ -2431,6 +2463,8 @@ const DEFAULT_DEPENDENCIES: ExecutorDependencies = {
   createSourceAuthority: defaultCreateSourceAuthority,
   validateCli,
   validateWriteToken: async (...args) => defaultValidateWriteToken(fetch, ...args),
+  validateHostedAcceptance: assertHostedBarPilotAcceptance,
+  loadProductionMigrationEvidence: loadBarPilotProductionMigrationEvidence,
   validateProductionWorkerFencePrerequisite:
     parseProductionDeploymentWorkerFencePrerequisiteVerification,
   queryTarget: async (...args) => defaultQueryTarget(fetch, ...args),
@@ -2491,6 +2525,65 @@ function parseArguments(argv: readonly string[]): {
     productionWorkerFenceVerificationFile:
       values.get("--production-worker-fence-verification-file") ?? null,
   };
+}
+
+interface ProductionHostedAcceptanceBinding {
+  readonly reportSha256: string;
+  readonly requiredChecksSha256: string;
+  readonly stagingRunId: string;
+  readonly stagingDeploymentIdSha256: string;
+  readonly sourceIdentitySha256: string;
+}
+
+function productionStagingRunAuthority(
+  env: Readonly<Record<string, string | undefined>>,
+  cwd: string,
+  candidateSha: string,
+): { runId: string; receiptSha256: string } {
+  try {
+    const filename = env.PINTPATH_PRODUCTION_REQUIRED_CHECKS_FILE;
+    if (!env.RUNNER_TEMP || !path.isAbsolute(env.RUNNER_TEMP) || !filename
+      || filename !== path.join(env.RUNNER_TEMP, "github-candidate-evidence", "required-checks.json")) {
+      throw new Error("path");
+    }
+    const bytes = readTrustedRegularFile(filename, { minBytes: 2, maxBytes: 1024 * 1024,
+      requireExactMode: 0o600, requireOwner: true, requirePrivate: true });
+    const receipt = JSON.parse(bytes.toString("utf8"));
+    const policyBytes = fs.readFileSync(path.resolve(cwd, ".github/bar-pilot-release-required-checks.json"));
+    const checksPolicy = JSON.parse(policyBytes.toString("utf8"));
+    const expectedChecks = [...checksPolicy.requiredChecks.base, ...checksPolicy.requiredChecks.staging];
+    const expectedArtifacts = [...checksPolicy.requiredArtifacts.base, ...checksPolicy.requiredArtifacts.staging];
+    if (canonicalJson(receipt) !== bytes.toString("utf8")
+      || receipt.schemaVersion !== "pintpath-github-release-candidate-receipt/v5"
+      || receipt.repository !== "blackmagic30/Beer" || receipt.branch !== "main"
+      || receipt.phase !== "production" || receipt.candidateSha !== candidateSha
+      || receipt.policySha256 !== sha256(policyBytes)
+      || receipt.consumer?.workflowPath !== ".github/workflows/deploy-production.yml"
+      || String(receipt.consumer?.runId) !== env.GITHUB_RUN_ID || receipt.consumer?.runAttempt !== 1
+      || ["requiredChecksExact", "requiredArtifactsExact", "chronologyExact", "currentConsumerExact"]
+        .some((key) => receipt[key] !== true)
+      || !Array.isArray(receipt.checks) || receipt.checks.length !== expectedChecks.length
+      || !Array.isArray(receipt.artifacts) || receipt.artifacts.length !== expectedArtifacts.length
+      || expectedChecks.some((expected) => receipt.checks.filter((check: Record<string, unknown>) =>
+        check.name === expected.name && check.workflowPath === expected.workflowPath
+        && check.event === expected.event && check.runAttempt === 1).length !== 1)
+      || expectedArtifacts.some((expected) => receipt.artifacts.filter((artifact: Record<string, unknown>) =>
+        artifact.name === expected.name.replaceAll("{candidateSha}", candidateSha)
+        && artifact.producerCheck === expected.producerCheck
+        && typeof artifact.digest === "string" && /^sha256:[a-f0-9]{64}$/.test(artifact.digest)).length !== 1)) {
+      throw new Error("receipt");
+    }
+    const staged = receipt.checks.filter((check: Record<string, unknown>) =>
+      check.workflowPath === ".github/workflows/deploy-bar-pilot-staging.yml");
+    if (staged.length !== 2 || staged[0].runId !== staged[1].runId
+      || !RUN_ID_PATTERN.test(String(staged[0].runId))
+      || receipt.artifacts.filter((artifact: Record<string, unknown>) =>
+        typeof artifact.name === "string" && /^pintpath-bar-pilot-(configuration|deployment)-/.test(artifact.name))
+        .some((artifact: Record<string, unknown>) => artifact.runId !== staged[0].runId)) throw new Error("run");
+    return { runId: String(staged[0].runId), receiptSha256: sha256(bytes) };
+  } catch {
+    throw new Error("prerequisite_failed");
+  }
 }
 
 function readPrivatePrerequisite(
@@ -3038,6 +3131,11 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let preflightAlreadyCandidate = false;
   let previousCandidateSha: string | null = null;
   let previousRuntime: RuntimeObservation | null = null;
+  let productionStagingPrerequisite: ProviderObservation | null = null;
+  let productionStagingRuntime: RuntimeObservation | null = null;
+  let hostedAcceptance: ProductionHostedAcceptanceBinding | null = null;
+  let productionMigrationEvidence: ReturnType<typeof loadBarPilotProductionMigrationEvidence> | null = null;
+  let migrationBinding: PermanentStagingAppDeploymentExecutorReceipt["migrationEvidence"] = null;
   let failedStartupCorrectionProofSha256: string | null = null;
   let preservedReplicaCount: number | null = null;
   let parsedArgs: ReturnType<typeof parseArguments> | null = null;
@@ -3065,7 +3163,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
       || dependencies.env.GITHUB_SHA !== candidateSha
     ) throw new Error("github_authority_failed");
     checks.githubMainExact = true;
-    previousCandidateSha = barPilotPreviousCandidateSha(dependencies.env, candidateSha);
+    previousCandidateSha = policy.target.name === "production" ? candidateSha
+      : barPilotPreviousCandidateSha(dependencies.env, candidateSha);
     if (
       sha256(fs.readFileSync(path.resolve(dependencies.cwd,
         policy.mutationBoundary.policyPath)))
@@ -3139,17 +3238,37 @@ export async function runPermanentStagingAppDeploymentExecutor(
       checks.workerFenceDeploymentContinuityExact = true;
     }
 
+    if (policy.target.name === "production") {
+      try {
+        productionMigrationEvidence = dependencies.loadProductionMigrationEvidence({
+          env: dependencies.env, candidateSha, now: dependencies.now(),
+        });
+        const binding = productionMigrationEvidence.binding;
+        if (binding.candidateSha !== candidateSha) throw new Error("candidate");
+        migrationBinding = {
+          pinsFileSha256: binding.pinsFileSha256,
+          verificationReceiptFileSha256: binding.verificationReceiptFileSha256,
+          sourceSnapshotSha256: binding.sourceSnapshotSha256,
+          targetIdentitySha256: binding.targetIdentitySha256,
+        };
+        if (Object.values(migrationBinding).some((hash) => !SHA256_PATTERN.test(hash))) throw new Error("binding");
+      } catch { throw new Error("prerequisite_failed"); }
+    }
+
     sourceAuthority = await dependencies.createSourceAuthority(
       dependencies.cwd,
       candidateSha,
       dependencies.env,
       policy.sourceContract.packageLockSha256,
+      policy.target.name,
     );
     checks.sourceAuthorityExact = sourceAuthority.candidateSha === candidateSha
       && SHA1_PATTERN.test(sourceAuthority.treeSha)
       && SHA256_PATTERN.test(sourceAuthority.archiveSha256)
       && SHA256_PATTERN.test(sourceAuthority.snapshotManifestSha256)
       && sourceAuthority.sourceArchive.candidateSha === candidateSha
+      && sourceAuthority.sourceArchive.schemaVersion === (policy.target.name === "production"
+        ? "protected-source-archive/v2" : "protected-source-archive/v1")
       && sourceAuthority.sourceArchive.treeSha === sourceAuthority.treeSha
       && sourceAuthority.sourceArchive.sourceArchiveSha256 === sourceAuthority.archiveSha256
       && sourceAuthority.sourceArchive.sourceIdentitySha256 === sha256(
@@ -3185,13 +3304,29 @@ export async function runPermanentStagingAppDeploymentExecutor(
         candidateSha,
         policy.prerequisite.expectedReplicaCount,
       )) throw new Error("prerequisite_failed");
-      await dependencies.probeRuntime(
+      productionStagingPrerequisite = prerequisite;
+      productionStagingRuntime = await dependencies.probeRuntime(
         policy.prerequisite.publicOrigin,
         candidateSha,
         policy,
         policy.prerequisite.environmentId,
         prerequisite.snapshot.deployment.id,
       );
+      const requiredChecks = productionStagingRunAuthority(dependencies.env, dependencies.cwd, candidateSha);
+      const reportSha256 = dependencies.env.PINTPATH_HOSTED_PILOT_ACCEPTANCE_SHA256 ?? "";
+      if (!SHA256_PATTERN.test(reportSha256)) throw new Error("prerequisite_failed");
+      hostedAcceptance = {
+        reportSha256, requiredChecksSha256: requiredChecks.receiptSha256,
+        stagingRunId: requiredChecks.runId,
+        stagingDeploymentIdSha256: railwayDeploymentIdentityIdSha256("deployment", prerequisite.snapshot.deployment.id)!,
+        sourceIdentitySha256: productionStagingRuntime.health.deployment.sourceArchive.sourceIdentitySha256,
+      };
+      dependencies.validateHostedAcceptance({
+        filePath: dependencies.env.PINTPATH_HOSTED_PILOT_ACCEPTANCE_FILE ?? "",
+        expectedSha256: reportSha256, candidateSha, stagingRunId: requiredChecks.runId,
+        stagingDeploymentIdSha256: hostedAcceptance.stagingDeploymentIdSha256,
+        sourceIdentitySha256: hostedAcceptance.sourceIdentitySha256, now: dependencies.now(),
+      });
     }
     checks.prerequisiteExact = true;
 
@@ -3296,6 +3431,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
       sourceArchiveSha256: sourceAuthority.archiveSha256,
       sourceSnapshotManifestSha256: sourceAuthority.snapshotManifestSha256,
       sourceArchive: sourceAuthority.sourceArchive,
+      ...(hostedAcceptance ? { hostedAcceptance } : {}),
+      ...(migrationBinding ? { migrationEvidence: migrationBinding } : {}),
       previousDeploymentIdSha256: railwayDeploymentIdentityIdSha256(
         "deployment",
         preflight.snapshot.deployment.id,
@@ -3362,6 +3499,31 @@ export async function runPermanentStagingAppDeploymentExecutor(
         throw new Error("fenced_runtime_present");
       }
     }
+    if (policy.prerequisite) {
+      checks.prerequisiteExact = false;
+      if (!productionMigrationEvidence) throw new Error("prerequisite_failed");
+      if (!productionStagingPrerequisite || !productionStagingRuntime || !hostedAcceptance) {
+        throw new Error("prerequisite_failed");
+      }
+      const currentStaging = await dependencies.queryTarget(policy, policy.prerequisite.environmentId,
+        [policy.prerequisite.expectedReplicaCount], policy.prerequisite.publicOrigin,
+        tokenForTarget("permanent-staging", dependencies.env));
+      if (!providerDeploymentUnchanged(productionStagingPrerequisite, currentStaging)
+        || !collateralUnchanged(productionStagingPrerequisite, currentStaging)) throw new Error("prerequisite_failed");
+      await dependencies.probeRuntime(policy.prerequisite.publicOrigin, candidateSha, policy,
+        policy.prerequisite.environmentId, currentStaging.snapshot.deployment.id,
+        productionStagingRuntime.health.deployment.sourceArchive);
+      const currentAuthority = productionStagingRunAuthority(dependencies.env, dependencies.cwd, candidateSha);
+      if (currentAuthority.runId !== hostedAcceptance.stagingRunId
+        || currentAuthority.receiptSha256 !== hostedAcceptance.requiredChecksSha256) throw new Error("prerequisite_failed");
+      dependencies.validateHostedAcceptance({
+        filePath: dependencies.env.PINTPATH_HOSTED_PILOT_ACCEPTANCE_FILE ?? "",
+        expectedSha256: hostedAcceptance.reportSha256, candidateSha, stagingRunId: hostedAcceptance.stagingRunId,
+        stagingDeploymentIdSha256: hostedAcceptance.stagingDeploymentIdSha256,
+        sourceIdentitySha256: hostedAcceptance.sourceIdentitySha256, now: dependencies.now(),
+      });
+      checks.prerequisiteExact = true;
+    }
     immediatePrewrite = await dependencies.queryTarget(
       policy,
       policy.target.environmentId,
@@ -3396,6 +3558,21 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.sourceReasserted = true;
     cliAuthority.assertExact();
     assertBarPilotPreviousCandidateAncestor(dependencies.cwd, previousCandidateSha, candidateSha);
+    if (policy.prerequisite) {
+      checks.prerequisiteExact = false;
+      if (!productionMigrationEvidence || !hostedAcceptance) throw new Error("prerequisite_failed");
+      productionMigrationEvidence.reassert(dependencies.now());
+      const authority = productionStagingRunAuthority(dependencies.env, dependencies.cwd, candidateSha);
+      if (authority.runId !== hostedAcceptance.stagingRunId
+        || authority.receiptSha256 !== hostedAcceptance.requiredChecksSha256) throw new Error("prerequisite_failed");
+      dependencies.validateHostedAcceptance({
+        filePath: dependencies.env.PINTPATH_HOSTED_PILOT_ACCEPTANCE_FILE ?? "",
+        expectedSha256: hostedAcceptance.reportSha256, candidateSha, stagingRunId: hostedAcceptance.stagingRunId,
+        stagingDeploymentIdSha256: hostedAcceptance.stagingDeploymentIdSha256,
+        sourceIdentitySha256: hostedAcceptance.sourceIdentitySha256, now: dependencies.now(),
+      });
+      checks.prerequisiteExact = true;
+    }
 
     if (!preflightAlreadyCandidate) {
       writeAttempts = 1;
@@ -3488,6 +3665,10 @@ export async function runPermanentStagingAppDeploymentExecutor(
       outcome = "mutation_uncertain";
     }
   } finally {
+    try { productionMigrationEvidence?.close(); } catch {
+      failureCode ??= "prerequisite_failed";
+      checks.prerequisiteExact = false;
+    }
     try { cliAuthority?.close(); } catch {
       failureCode ??= "cli_invalid";
       checks.cliExact = false;
@@ -3612,7 +3793,10 @@ export async function runPermanentStagingAppDeploymentExecutor(
   const completedAt = safeDate(dependencies.now);
   const receiptBase: Omit<PermanentStagingAppDeploymentExecutorReceipt,
     "checks"> = {
-    schemaVersion: PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA,
+    schemaVersion: policy?.target.name === "production"
+      ? PRODUCTION_ARCHIVE_DEPLOYMENT_RECEIPT_SCHEMA : PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA,
+    ...(policy?.target.name === "production" ? { sourceArchive: runtime?.health.deployment.sourceArchive ?? null, hostedAcceptance,
+        migrationEvidence: migrationBinding } : {}),
     operation: PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION,
     executorState: PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE,
     target: policy?.target.name ?? null,
@@ -3727,6 +3911,7 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   parsePilotProviderSnapshot,
   parseProviderSnapshotWithConfiguredTopology,
   materializeSourceArchiveIdentity,
+  productionStagingRunAuthority,
   queryCollateralSnapshot,
   readSourceArchiveSha256,
   parseDiscoveryDeploymentId,

@@ -80,7 +80,7 @@ await identity.upsertVenueLocationCache({ venueId, venueName: "PintPath Pilot Ho
 for (const [index, beer] of [
   { name: "Carlton Draught", key: "carlton_draft", price: 13, brewery: "Carlton & United", style: "Lager", abv: 4.6 },
   { name: "Guinness", key: "guinness", price: 14.5, brewery: "Guinness", style: "Stout", abv: 4.2 },
-  { name: "Balter XPA", key: "balter_xpa", price: 15, brewery: "Balter", style: "XPA", abv: 5 },
+  { name: "Stone & Wood Pacific Ale", key: "stone_wood_pacific_ale", price: 15, brewery: "Stone & Wood", style: "Pacific Ale", abv: 4.4 },
 ].entries()) {
   await inventory.upsertBarBeer({ id: `pintpath-pilot-demo:beer:${index}`, barId: venueId, beerName: beer.name,
     normalizedBeerId: beer.key, brewery: beer.brewery, style: beer.style, abv: beer.abv, serveSize: "pint", price: beer.price,

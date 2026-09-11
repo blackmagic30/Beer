@@ -64,7 +64,12 @@ concurrency:
 jobs:
   production-capture:
     name: Capture production recovery authorities into immutable WORM
-    runs-on: [self-hosted, linux, x64, pintpath-production-backup]
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - pintpath-production-backup
+      - ${{ format('pintpath-recovery-{0}-{1}-production-capture', github.run_id, github.run_attempt) }}
     timeout-minutes: 180
     environment: production-promotion-recovery-activation
     env:
@@ -169,6 +174,14 @@ jobs:
       - name: Install immutable dependencies
         run: corepack npm ci --ignore-scripts
 
+      - name: Verify exact controller registration and GitHub job assignment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/control-production-recovery-jit-runner.ts verify-job
+
       - name: Require the exact durable emergency cleanup arm before capture
         env:
           PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_REQUIRED: "true"
@@ -233,7 +246,7 @@ jobs:
           authority_root="$RUNNER_TEMP/pintpath-production-recovery-chain"
           test ! -e "$authority_root"
           mkdir -m 700 "$authority_root"
-          npm run --silent github:release-candidate:verify -- \
+          npm run --silent github:release-candidate:verify -- --scope bar-pilot \
             --candidate-sha "$CANDIDATE_SHA" --phase activation \
             --output "$authority_root/required-chain.json"
           npm run --silent github:production-promotion-recovery:materialize -- \
@@ -521,7 +534,12 @@ jobs:
   disposable-recover:
     name: Recover and prove exact disposable application
     needs: production-capture
-    runs-on: [self-hosted, linux, x64, pintpath-disposable-recovery]
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - pintpath-disposable-recovery
+      - ${{ format('pintpath-recovery-{0}-{1}-disposable-recover', github.run_id, github.run_attempt) }}
     timeout-minutes: 180
     environment: production-promotion-recovery-activation
     env:
@@ -598,6 +616,14 @@ jobs:
           set -euo pipefail
           corepack npm ci --ignore-scripts
           npm run --silent build
+
+      - name: Verify exact controller registration and GitHub job assignment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/control-production-recovery-jit-runner.ts verify-job
 
       - name: Verify the disposable-recovery JIT runner and prepare tmpfs custody
         shell: bash

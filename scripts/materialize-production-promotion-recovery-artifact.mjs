@@ -13,9 +13,11 @@ const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 const ARCHIVE_LEAF = ".production-rollout-artifact.zip";
 const RELEASE_POLICY_SHA256 =
   "4aaedd863d08e539e1628db5d14557cc23531a0c6d586ffb25acebcba7907e90";
+const BAR_PILOT_RELEASE_POLICY_SHA256 =
+  "9066e91f40c251ac5d178d67b0c8e0e225dfb2ef1aa6c072dd64f544363522c6";
 const STAGE_CONTRACTS = Object.freeze({
   deploy: Object.freeze({
-    phases: Object.freeze(["close", "activation", "promotion-recovery"]),
+    phases: Object.freeze(["close", "activation", "promotion-recovery", "open"]),
     chainStage: "deploy",
     namePrefix: "pintpath-production-deployment-",
     producerCheck: "Deploy protected production",
@@ -281,7 +283,8 @@ function readAuthority(filename, candidateSha, stage) {
       !contract.phases.includes(value.phase) ||
       value.candidateSha !== candidateSha ||
       !reviewedPullRequestExact(value.reviewedPullRequest, candidateSha) ||
-      value.policySha256 !== RELEASE_POLICY_SHA256 ||
+      (value.policySha256 !== RELEASE_POLICY_SHA256
+        && value.policySha256 !== BAR_PILOT_RELEASE_POLICY_SHA256) ||
       value.requiredChecksExact !== true ||
       value.requiredArtifactsExact !== true ||
       value.chronologyExact !== true ||

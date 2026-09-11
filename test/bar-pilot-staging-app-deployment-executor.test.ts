@@ -19,6 +19,7 @@ import {
 import {
   canonicalProtectedSourceArchiveManifest,
   type ProtectedSourceArchiveIdentity,
+  type ProtectedSourceArchiveManifest,
   type ProtectedSourceArchiveRuntimeResponse,
 } from "../src/lib/protected-source-archive.js";
 import type {
@@ -34,6 +35,8 @@ import { BAR_PILOT_STOPPED_DEPLOYMENT_ID, BAR_PILOT_STOPPED_SOURCE_SHA } from
 import * as failedStartupRecovery from
   "../scripts/lib/bar-pilot-failed-startup-recovery.js";
 import * as healthyRollout from "../scripts/lib/bar-pilot-healthy-rollout.js";
+import { parseProductionApplicationDeploymentReceipt } from "../scripts/lib/production-application-deployment-receipt.js";
+import { HOSTED_PILOT_CHECKS, assertHostedBarPilotAcceptance } from "../scripts/lib/hosted-bar-pilot-acceptance.mjs";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const SOURCE_MANIFEST = {
@@ -49,6 +52,22 @@ const SOURCE_IDENTITY: ProtectedSourceArchiveIdentity = {
   sourceIdentitySha256: crypto.createHash("sha256")
     .update(canonicalProtectedSourceArchiveManifest(SOURCE_MANIFEST)).digest("hex"),
 };
+function identityForEnvironment(environmentId: string, candidateSha = CANDIDATE_SHA): ProtectedSourceArchiveIdentity {
+  if (environmentId !== "13dab015-df74-45c6-b26f-69323daea99a") {
+    const manifest = { ...SOURCE_MANIFEST, candidateSha };
+    return { ...manifest, sourceIdentitySha256: crypto.createHash("sha256")
+      .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex") };
+  }
+  const manifest: ProtectedSourceArchiveManifest = {
+    schemaVersion: "protected-source-archive/v2", target: "production",
+    candidateSha, treeSha: SOURCE_MANIFEST.treeSha,
+    sourceArchiveSha256: SOURCE_MANIFEST.sourceArchiveSha256,
+    sourceBaseManifestSha256: SOURCE_MANIFEST.sourceBaseManifestSha256,
+    uploadNonce: SOURCE_MANIFEST.uploadNonce,
+  };
+  return { ...manifest, sourceIdentitySha256: crypto.createHash("sha256")
+    .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex") };
+}
 const DEPLOYMENT_BEFORE = "11111111-1111-4111-8111-111111111111";
 const DEPLOYMENT_AFTER = "22222222-2222-4222-8222-222222222222";
 const SNAPSHOT_BEFORE = "33333333-3333-4333-8333-333333333333";
@@ -234,9 +253,7 @@ function runtimeObservation(
   candidateSha: string,
   deploymentId: string,
 ) {
-  const manifest = { ...SOURCE_MANIFEST, candidateSha };
-  const identity = { ...manifest, sourceIdentitySha256: crypto.createHash("sha256")
-    .update(canonicalProtectedSourceArchiveManifest(manifest)).digest("hex") };
+  const identity = identityForEnvironment(exactPolicy.target.environmentId, candidateSha);
   const response = (
     route: "/health" | "/startup" | "/ready",
     status: "ok" | "startup_ready" | "ready",
@@ -338,6 +355,36 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       mode: 0o600,
     });
   }
+  const requiredChecksDir = path.join(root, "github-candidate-evidence");
+  fs.mkdirSync(requiredChecksDir, { mode: 0o700 });
+  const requiredChecksFile = path.join(requiredChecksDir, "required-checks.json");
+  const acceptanceFile = path.join(root, "hosted-acceptance.json");
+  const pilotReleasePolicyBytes = fs.readFileSync(".github/bar-pilot-release-required-checks.json");
+  const pilotReleasePolicy = JSON.parse(pilotReleasePolicyBytes.toString("utf8"));
+  fs.writeFileSync(requiredChecksFile, `${JSON.stringify({
+    schemaVersion: "pintpath-github-release-candidate-receipt/v5", repository: "blackmagic30/Beer", branch: "main",
+    phase: "production", candidateSha: CANDIDATE_SHA,
+    policySha256: crypto.createHash("sha256").update(pilotReleasePolicyBytes).digest("hex"),
+    consumer: { workflowPath: ".github/workflows/deploy-production.yml", runId: Number(PRODUCTION_RUN_ID), runAttempt: 1 },
+    requiredChecksExact: true, requiredArtifactsExact: true, chronologyExact: true, currentConsumerExact: true,
+    checks: [...pilotReleasePolicy.requiredChecks.base, ...pilotReleasePolicy.requiredChecks.staging]
+      .map((check) => ({ ...check, runId: 7000, runAttempt: 1 })),
+    artifacts: [...pilotReleasePolicy.requiredArtifacts.base, ...pilotReleasePolicy.requiredArtifacts.staging]
+      .map((artifact) => ({ ...artifact, name: artifact.name.replaceAll("{candidateSha}", CANDIDATE_SHA),
+        digest: `sha256:${"1".repeat(64)}`, runId: 7000 })),
+  }, null, 2)}\n`, { mode: 0o600 });
+  const acceptance = {
+    schemaVersion: "pintpath-hosted-bar-pilot-acceptance/v1", runtime: "hosted-staging", candidateSha: CANDIDATE_SHA,
+    origin: "https://beer-staging.up.railway.app", stagingRunId: "7000",
+    stagingDeploymentIdSha256: railwayDeploymentIdentityIdSha256("deployment", DEPLOYMENT_AFTER),
+    sourceIdentitySha256: SOURCE_IDENTITY.sourceIdentitySha256,
+    startedAt: "2026-08-12T23:59:00.000Z", completedAt: "2026-08-12T23:59:59.000Z",
+    accountHashes: { ownerAdmin: "1".repeat(64), manager: "2".repeat(64), staff: "3".repeat(64), customer: "4".repeat(64) },
+    viewport: { width: 390, height: 844 },
+    checks: HOSTED_PILOT_CHECKS.map((id) => ({ id, status: "PASS", evidenceSha256: "5".repeat(64) })),
+  };
+  const acceptanceBytes = `${JSON.stringify(acceptance, null, 2)}\n`;
+  fs.writeFileSync(acceptanceFile, acceptanceBytes, { mode: 0o600 });
   const output: string[] = [];
   const preflightCandidateSha = options.preflightCandidateSha ?? "c".repeat(40);
   const preflightReplicaCount = options.preflightReplicaCount
@@ -436,7 +483,7 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
     candidateSha: CANDIDATE_SHA,
     treeSha: "d".repeat(40),
     archiveSha256: "e".repeat(64),
-    sourceArchive: SOURCE_IDENTITY,
+    sourceArchive: identityForEnvironment(exactPolicy.target.environmentId),
     snapshotManifestSha256: "f".repeat(64),
     snapshotPath,
     deploymentPath: snapshotPath,
@@ -447,6 +494,8 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   let nowTick = 0;
   return {
     evidenceDir,
+    acceptanceFile,
+    requiredChecksFile,
     output,
     runCommand,
     cliAuthority,
@@ -460,6 +509,10 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
         GITHUB_REF: "refs/heads/main",
         GITHUB_RUN_ID: PRODUCTION_RUN_ID,
         GITHUB_SHA: CANDIDATE_SHA,
+        RUNNER_TEMP: root,
+        PINTPATH_PRODUCTION_REQUIRED_CHECKS_FILE: requiredChecksFile,
+        PINTPATH_HOSTED_PILOT_ACCEPTANCE_FILE: acceptanceFile,
+        PINTPATH_HOSTED_PILOT_ACCEPTANCE_SHA256: crypto.createHash("sha256").update(acceptanceBytes).digest("hex"),
         PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: "p".repeat(32),
         PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: "s".repeat(32),
         PINTPATH_RAILWAY_WRITE_TOKEN: "w".repeat(32),
@@ -484,6 +537,13 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       validateCli: vi.fn(async () => cliAuthority),
       validateWriteToken: vi.fn(async () =>
         options.writeTokenScopeSucceeds !== false),
+      validateHostedAcceptance: vi.fn(assertHostedBarPilotAcceptance),
+      loadProductionMigrationEvidence: vi.fn(() => ({
+        binding: { candidateSha: CANDIDATE_SHA, pinsFileSha256: "a".repeat(64),
+          verificationReceiptFileSha256: "b".repeat(64), sourceSnapshotSha256: "c".repeat(64),
+          targetIdentitySha256: "d".repeat(64), targetUrlSha256: "e".repeat(64), transportAuthoritySha256: "f".repeat(64) },
+        reassert: vi.fn(), close: vi.fn(),
+      })),
       validateProductionWorkerFencePrerequisite: vi.fn(() => ({
         candidateSha: CANDIDATE_SHA,
         consumer: { runId: PRODUCTION_RUN_ID },
@@ -525,8 +585,7 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
             1,
             1,
             [
-              { region: "asia-southeast1-eqsg3a", numReplicas: 1 },
-              { region: "europe-west4-drams3a", numReplicas: 0 },
+              { region: "us-west2", numReplicas: 1 },
             ],
           );
         }
@@ -718,11 +777,14 @@ describe("bar pilot fresh-source staging deployment", () => {
     legacy.configuredTopologyContract = exact.configuredTopologyContract;
     expect(parsePermanentStagingAppDeploymentPolicy(JSON.stringify(legacy))).toBeNull();
   });
-  it("preserves historical producer authority and refuses its production or regular staging policies", () => {
+  it("preserves historical producer authority and refuses its legacy policies", () => {
     expect(crypto.createHash("sha256").update(fs.readFileSync(
       "scripts/lib/permanent-staging-app-deployment-executor.ts")).digest("hex"))
       .toBe("d161a40dc8b2a13cb33ef30687f031f3be44a8b24e8b27d378c07edac1260f65");
-    expect(parsePermanentStagingAppDeploymentPolicy(policySource("production"))).toBeNull();
+    const historical = JSON.parse(policySource("production"));
+    delete historical.sourceContract.sourceIdentitySchema;
+    historical.sourceContract.packageLockSha256 = "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b";
+    expect(parsePermanentStagingAppDeploymentPolicy(JSON.stringify(historical))).toBeNull();
     expect(parsePermanentStagingAppDeploymentPolicy(policySource("permanent-staging"))).toBeNull();
   });
   it("rejects an archive pathname replaced after its no-follow descriptor opens", () => {
@@ -1021,5 +1083,137 @@ describe("bar pilot fresh-source staging deployment", () => {
     expect(identities[0]!.sourceBaseManifestSha256).toBe(identities[1]!.sourceBaseManifestSha256);
     expect(identities[0]!.sourceIdentitySha256).not.toBe(identities[1]!.sourceIdentitySha256);
     expect(finals[0]).not.toBe(finals[1]);
+  });
+});
+
+
+describe("existing production source upload with protected archive provenance", () => {
+  function productionHarness(options: Parameters<typeof harness>[1] = {}) {
+    const value = harness(policy("production"), options);
+    return { ...value, args: ["--policy", "ops/railway/production-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA, "--evidence-dir", value.evidenceDir] };
+  }
+
+  it("keeps production scope, readiness, fence, source and hosted prerequisite policy requirements mandatory", () => {
+    const exact = JSON.parse(policySource("production"));
+    for (const change of [
+      (value) => { delete value.sourceContract.sourceIdentitySchema; },
+      (value) => { value.sourceContract.packageLockSha256 = "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b"; },
+      (value) => { value.target.environmentId = "a4e0f507-d6d3-4df9-a818-ad92c0071a35"; },
+      (value) => { value.prerequisite = null; },
+      (value) => { value.prerequisite.hostedAcceptanceRequired = false; },
+      (value) => { value.prerequisite.configuredRegion = "asia-southeast1-eqsg3a"; },
+      (value) => { value.providerReadinessContract = null; },
+      (value) => { delete value.workerFencePrerequisiteContract; },
+      (value) => { value.postflightContract.automaticMaintenanceEnabled = true; },
+    ]) {
+      const changed = structuredClone(exact); change(changed);
+      expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify(changed, null, 2)}\n`)).toBeNull();
+    }
+  });
+
+  it("materializes a production-target manifest with a fresh nonce instead of relabelling staging identity", () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "production-archive-manifest-")));
+    temporaryRoots.push(root);
+    const identity = permanentStagingAppDeploymentExecutorInternals.materializeSourceArchiveIdentity(
+      root, CANDIDATE_SHA, "b".repeat(40), "c".repeat(64), "production");
+    expect(identity).toMatchObject({ schemaVersion: "protected-source-archive/v2", target: "production" });
+    expect(identity.uploadNonce).toMatch(/^[a-f0-9]{64}$/);
+    expect(identity.sourceIdentitySha256).toBe(crypto.createHash("sha256")
+      .update(fs.readFileSync(path.join(root, ".pintpath-source-archive.json"))).digest("hex"));
+  });
+
+  it("uploads once with production provenance only after fenced source and same-candidate staging checks", async () => {
+    const fixture = productionHarness();
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.validateProductionWorkerFencePrerequisite).toHaveBeenCalledOnce();
+    expect(fixture.overrides.queryTarget.mock.calls.some(([, environment]) =>
+      environment === "a4e0f507-d6d3-4df9-a818-ad92c0071a35")).toBe(true);
+    const receipt = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir, "deployment-receipt.json"), "utf8"));
+    expect(receipt.sourceArchive).toMatchObject({ schemaVersion: "protected-source-archive/v2", target: "production" });
+    expect(parseProductionApplicationDeploymentReceipt(receipt, CANDIDATE_SHA)).not.toBeNull();
+    expect(Object.values(receipt.checks).every((check) => check === true)).toBe(true);
+  });
+
+  it("uploads the reviewed candidate from a stopped legacy predecessor without restarting its source", async () => {
+    const fixture = productionHarness();
+    const query = fixture.overrides.queryTarget.getMockImplementation()!;
+    fixture.overrides.queryTarget.mockImplementation(async (...args) => {
+      const observation = structuredClone(await query(...args));
+      if (args[1] === "13dab015-df74-45c6-b26f-69323daea99a" && observation.snapshot.deployment.id === DEPLOYMENT_BEFORE) {
+        observation.snapshot.latestDeployment.deploymentStopped = true;
+        for (const deployment of observation.snapshot.activeDeployments) deployment.deploymentStopped = true;
+      }
+      return observation;
+    });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args,fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    expect(fixture.runCommand.mock.calls[0]?.[1]?.[0]).toBe("up");
+  });
+
+  it.each([
+    { prerequisiteSucceeds: false }, { writeTokenScopeSucceeds: false },
+    { preflightGitAutodeployAbsent: false }, { preflightTargetExact: false },
+    { immediatePrewriteConfiguredReplicaCount: 2 }, { workerFenceDeploymentId: DEPLOYMENT_AFTER },
+    { runtimeProbeThrows: true },
+  ])("does not write when a production prewrite gate fails: %j", async (options) => {
+    const fixture = productionHarness(options);
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing", "changed-before-write", "wrong-staging-run", "wrong-staging-source", "incomplete"])(
+    "rejects missing or invalid actual hosted acceptance before any upload: %s", async (failure) => {
+      const fixture = productionHarness();
+      if (failure === "changed-before-write") {
+        let calls = 0;
+        fixture.overrides.validateHostedAcceptance.mockImplementation((input) => {
+          const result = assertHostedBarPilotAcceptance(input);
+          if (++calls === 1) fs.writeFileSync(fixture.acceptanceFile, "{}\n", { mode: 0o600 });
+          return result;
+        });
+      } else if (failure === "missing") {
+        fs.unlinkSync(fixture.acceptanceFile);
+      } else {
+        const value = JSON.parse(fs.readFileSync(fixture.acceptanceFile, "utf8"));
+        if (failure === "wrong-staging-run") value.stagingRunId = "7001";
+        if (failure === "wrong-staging-source") value.sourceIdentitySha256 = "f".repeat(64);
+        if (failure === "incomplete") value.checks.pop();
+        const bytes = `${JSON.stringify(value, null, 2)}\n`;
+        fs.writeFileSync(fixture.acceptanceFile, bytes, { mode: 0o600 });
+        fixture.overrides.env.PINTPATH_HOSTED_PILOT_ACCEPTANCE_SHA256 = crypto.createHash("sha256").update(bytes).digest("hex");
+      }
+      expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+      expect(fixture.runCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["load", "reassert"])("requires authentic migration evidence before upload: %s", async (stage) => {
+    const fixture = productionHarness();
+    if (stage === "load") fixture.overrides.loadProductionMigrationEvidence.mockImplementation(() => { throw new Error("native evidence invalid"); });
+    else fixture.overrides.loadProductionMigrationEvidence.mockImplementation(() => ({
+      binding: { candidateSha: CANDIDATE_SHA, pinsFileSha256: "a".repeat(64), verificationReceiptFileSha256: "b".repeat(64),
+        sourceSnapshotSha256: "c".repeat(64), targetIdentitySha256: "d".repeat(64), targetUrlSha256: "e".repeat(64), transportAuthoritySha256: "f".repeat(64) },
+      reassert: () => { throw new Error("native evidence changed"); }, close: vi.fn(),
+    }));
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects a staging source manifest before any production upload", async () => {
+    const fixture = productionHarness();
+    fixture.sourceAuthority.sourceArchive = SOURCE_IDENTITY;
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("retains nonce-bound read-only reconciliation after a missing acknowledgement", async () => {
+    const fixture = productionHarness({ acknowledgementTimedOut: true, acknowledgementCode: null });
+    expect(await runPermanentStagingAppDeploymentExecutor(fixture.args, fixture.overrides)).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledOnce();
+    const receipt = JSON.parse(fs.readFileSync(path.join(fixture.evidenceDir, "deployment-receipt.json"), "utf8"));
+    expect(receipt.outcome).toBe("reconciled_success");
+    expect(parseProductionApplicationDeploymentReceipt(receipt, CANDIDATE_SHA)).not.toBeNull();
   });
 });

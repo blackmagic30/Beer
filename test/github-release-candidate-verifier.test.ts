@@ -350,6 +350,8 @@ function cleanupSuccessorCloseoutJobs(
 function harness(
   options: {
     phase?: "staging" | "bar-pilot-staging" | "production" | "close" | "activation" | "promotion-recovery" | "open" | "release";
+    scope?: "bar-pilot";
+    pilotSeparateRuns?: boolean;
     omitCheck?: string;
     omitArtifact?: string;
     duplicateCheck?: string;
@@ -411,7 +413,7 @@ function harness(
     producerCheck: string;
   };
   const phase = options.phase ?? "release";
-  const policy = JSON.parse(phase === "bar-pilot-staging" ? BAR_PILOT_POLICY : POLICY) as {
+  const policy = JSON.parse(phase === "bar-pilot-staging" || options.scope === "bar-pilot" ? BAR_PILOT_POLICY : POLICY) as {
     phaseConsumers: Record<string, { workflowPath: string; event: "workflow_dispatch" }>;
     requiredChecks: Record<string, RequiredCheck[]>;
     requiredArtifacts: Record<string, RequiredArtifact[]>;
@@ -441,7 +443,10 @@ function harness(
     name: item.name.replaceAll("{candidateSha}", CANDIDATE),
   }));
   const runByCheck = new Map(
-    requiredChecks.map((check, index) => [check.name, index + 100]),
+    requiredChecks.map((check, index) => [check.name,
+      options.scope === "bar-pilot" && !options.pilotSeparateRuns
+        && check.workflowPath === ".github/workflows/deploy-bar-pilot-staging.yml"
+        ? 100 + policy.requiredChecks.base.length : index + 100]),
   );
   const runFixtures = new Map<number, RequiredCheck>();
   const runStartedAtById = new Map<number, string>();
@@ -464,9 +469,12 @@ function harness(
       });
       const venueDirectoryCheck =
         check.name === "Apply and prove permanent-staging venue directory";
+      const minute = options.scope === "bar-pilot"
+        && check.workflowPath === ".github/workflows/deploy-bar-pilot-staging.yml"
+        ? requiredChecks.indexOf(check) : runId - 100;
       const checkStartedAt = venueDirectoryCheck
         ? "2026-09-01T01:08:30.100Z"
-        : new Date(Date.UTC(2026, 8, 1, 1, runId - 100, 0)).toISOString();
+        : new Date(Date.UTC(2026, 8, 1, 1, minute, 0)).toISOString();
       const checkCompletedAt = venueDirectoryCheck
         ? "2026-09-01T01:08:30.400Z"
         : new Date(Date.UTC(
@@ -477,7 +485,7 @@ function harness(
           options.chronologyOverlapStage !== undefined &&
               options.chronologyOverlapStage === check.stage
             ? 59
-            : runId - 100,
+            : minute,
           30,
         )).toISOString();
       if (venueDirectoryCheck) {
@@ -881,6 +889,7 @@ function harness(
       phase,
       "--output",
       path.join(directory, "receipt.json"),
+      ...(options.scope ? ["--scope", options.scope] : []),
     ],
     directory,
     fetchImpl,
@@ -927,8 +936,12 @@ describe("GitHub release-candidate verifier", () => {
     expect(originalPolicy).not.toBeNull();
     expect(pilotPolicy).not.toBeNull();
     expect(originalPolicy.phaseConsumers["bar-pilot-staging"]).toBeUndefined();
-    expect(pilotPolicy.requiredChecks).toEqual(originalPolicy.requiredChecks);
-    expect(pilotPolicy.requiredArtifacts).toEqual(originalPolicy.requiredArtifacts);
+    expect(pilotPolicy.requiredChecks.base).toEqual(originalPolicy.requiredChecks.base);
+    expect(pilotPolicy.requiredChecks.production).toEqual(originalPolicy.requiredChecks.production);
+    expect(pilotPolicy.requiredArtifacts.base).toEqual(originalPolicy.requiredArtifacts.base);
+    expect(pilotPolicy.requiredArtifacts.production).toEqual(originalPolicy.requiredArtifacts.production);
+    expect(pilotPolicy.requiredChecks.staging).toHaveLength(2);
+    expect(pilotPolicy.requiredArtifacts.staging).toHaveLength(2);
     expect(pilotPolicy.phaseConsumers).toEqual({
       ...originalPolicy.phaseConsumers,
       "bar-pilot-staging": {
@@ -966,6 +979,51 @@ describe("GitHub release-candidate verifier", () => {
       expect(fs.existsSync(path.join(fixture.directory, "receipt.json"))).toBe(false);
     } finally {
       readSpy.mockRestore();
+    }
+  });
+
+
+  it("requires exact hosted pilot deployment jobs and artifacts for explicit pilot production scope", async () => {
+    const pilot = JSON.parse(BAR_PILOT_POLICY);
+    for (const missing of [null, { pilotSeparateRuns: true },
+      ...pilot.requiredChecks.staging.map((value: { name: string }) => ({ omitCheck: value.name })),
+      ...pilot.requiredArtifacts.staging.map((value: { name: string }) => ({ omitArtifact: value.name.replaceAll("{candidateSha}", CANDIDATE) })),
+    ]) {
+      const fixture = harness({ phase: "production", scope: "bar-pilot", ...missing });
+      let summary = "";
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer", GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999", GITHUB_TOKEN: "g".repeat(32) },
+        fetchImpl: fixture.fetchImpl, writeOutput: (value: string) => { summary += value; },
+      });
+      expect(code, summary).toBe(missing === null ? 0 : 1);
+      if (code === 0) {
+        const receipt = JSON.parse(fs.readFileSync(path.join(fixture.directory, "receipt.json"), "utf8"));
+        expect(receipt.checks).toHaveLength(10);
+        expect(receipt.artifacts).toHaveLength(5);
+        expect(receipt.policySha256).toBe(crypto.createHash("sha256").update(BAR_PILOT_POLICY).digest("hex"));
+      }
+    }
+  });
+
+  it("preserves the full production recovery chronology under explicit bar pilot scope", async () => {
+    for (const missing of [false, true]) {
+      const fixture = harness({ phase: "open", scope: "bar-pilot",
+        ...(missing ? { omitCheck: "Attest protected production promotion and recovery" } : {}) });
+      let summary = "";
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main", GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer", GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999", GITHUB_TOKEN: "g".repeat(32) },
+        fetchImpl: fixture.fetchImpl, writeOutput: (value: string) => { summary += value; },
+      });
+      expect(code, summary).toBe(missing ? 1 : 0);
+      if (!missing) {
+        const receipt = JSON.parse(fs.readFileSync(path.join(fixture.directory, "receipt.json"), "utf8"));
+        expect(receipt.productionChain.map((entry: { stage: string }) => entry.stage))
+          .toEqual(["deploy", "scale", "close", "activation", "promotion-recovery"]);
+      }
     }
   });
 

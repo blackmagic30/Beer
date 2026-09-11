@@ -1,3 +1,4 @@
+import { productionArchiveFixture } from "./production-source-archive-downstream.fixtures.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -87,7 +88,7 @@ function snapshot(
   replicas: 0 | 1 | 2,
   environmentId = ENVIRONMENT_ID,
   domain = "beer-staging.up.railway.app",
-  deployedSha = CANDIDATE_SHA,
+  deployedSha: string | null = CANDIDATE_SHA,
   deploymentId = DEPLOYMENT_ID,
   snapshotId = SNAPSHOT_ID,
   targetPort = 8080,
@@ -1429,8 +1430,8 @@ describe("protected permanent-staging scale evidence operation", () => {
     });
   });
 
-  it("converges an exact existing production deployment to two without a scale-down path", async () => {
-    const deployedSha = CANDIDATE_SHA;
+  it.each([false, true])("converges an exact existing production deployment to two without a scale-down path (archive=%s)", async (archive) => {
+    const deployedSha = archive ? null : CANDIDATE_SHA;
     const evidenceDirectory = fs.realpathSync(fs.mkdtempSync(
       path.join(os.tmpdir(), "pintpath-production-scale-test-"),
     ));
@@ -1465,7 +1466,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       argv: [
         "--direction", "converge-production-two",
         "--candidate-sha", CANDIDATE_SHA,
-        "--expected-deployment-sha", deployedSha,
+        "--expected-deployment-sha", CANDIDATE_SHA,
         "--evidence-dir", evidenceDirectory,
         "--production-activation-run-id", PRODUCTION_ACTIVATE_RUN_ID,
         "--production-scale-verification-file", activationVerificationFile,
@@ -1493,6 +1494,9 @@ describe("protected permanent-staging scale evidence operation", () => {
       validateProductionActivationPrerequisite: vi.fn(() => ({
         candidateSha: CANDIDATE_SHA,
         consumer: { runId: PRODUCTION_SCALE_RUN_ID },
+        activationPrerequisites: { rolePrerequisites: { productionDeployment: {
+          ...(archive ? { sourceArchive: productionArchiveFixture() } : {}),
+        } } },
         activation: {
           runId: PRODUCTION_ACTIVATE_RUN_ID,
           terminalSha256: "1".repeat(64),
@@ -1611,6 +1615,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       validateProductionActivationPrerequisite: vi.fn(() => ({
         candidateSha: CANDIDATE_SHA,
         consumer: { runId: PRODUCTION_SCALE_RUN_ID },
+        activationPrerequisites: { rolePrerequisites: { productionDeployment: {} } },
         activation: {
           runId: PRODUCTION_ACTIVATE_RUN_ID,
           terminalSha256: "1".repeat(64),
@@ -1730,6 +1735,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       validateProductionActivationPrerequisite: vi.fn(() => ({
         candidateSha: CANDIDATE_SHA,
         consumer: { runId: PRODUCTION_SCALE_RUN_ID },
+        activationPrerequisites: { rolePrerequisites: { productionDeployment: {} } },
         activation: {
           runId: PRODUCTION_ACTIVATE_RUN_ID,
           terminalSha256: "1".repeat(64),

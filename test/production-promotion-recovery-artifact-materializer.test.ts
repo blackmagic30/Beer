@@ -277,6 +277,21 @@ describe("production promotion-recovery artifact materializer", () => {
     }
   });
 
+  it("accepts only the two exact reviewed policy authorities while retaining stage bindings", async () => {
+    const pilotPolicyHash = crypto.createHash("sha256")
+      .update(fs.readFileSync(".github/bar-pilot-release-required-checks.json")).digest("hex");
+    for (const mutation of ["pilot", "unknown-policy", "wrong-candidate", "wrong-producer"] as const) {
+      const value = fixture();
+      const authority = JSON.parse(fs.readFileSync(value.authorityPath, "utf8"));
+      authority.policySha256 = mutation === "unknown-policy" ? "0".repeat(64) : pilotPolicyHash;
+      if (mutation === "wrong-candidate") authority.candidateSha = "0".repeat(40);
+      if (mutation === "wrong-producer") authority.productionChain[0].artifact.producerCheck = "unreviewed";
+      fs.writeFileSync(value.authorityPath, canonical(authority), { mode: 0o600 });
+      expect(await runFixture(value)).toBe(mutation === "pilot" ? 0 : 1);
+      if (mutation !== "pilot") expect(value.fetchImpl).not.toHaveBeenCalled();
+    }
+  });
+
   it("fails closed before download when fresh metadata differs from authority", async () => {
     const value = fixture({ metadataDigestDrift: true });
     const code = await runProductionPromotionRecoveryArtifactMaterializer(

@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { TextDecoder, TextEncoder } from "node:util";
 import { URL as NodeUrl } from "node:url";
 
+import type { ProtectedSourceArchiveIdentity } from "./protected-source-archive.js";
+
 import { railwayDeploymentIdentityIdSha256 } from
   "./railway-deployment-identity.js";
 
@@ -239,6 +241,14 @@ export interface RailwayApplicationDeploymentAttestationProviderSnapshot {
     readonly patchId: string | null;
   };
 }
+
+export type ProductionArchiveDeploymentProviderSnapshot = Omit<
+  RailwayApplicationDeploymentAttestationProviderSnapshot, "deployment"
+> & {
+  readonly deployment: Omit<RailwayApplicationDeploymentAttestationProviderSnapshot["deployment"], "commitHash"> & {
+    readonly commitHash: string | null;
+  };
+};
 
 interface RuntimeDeployment {
   readonly version: string;
@@ -708,6 +718,52 @@ export function parseRailwayApplicationDeploymentAttestationEmptyPatchResponse(
 export function parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse(
   source: string,
 ): RailwayApplicationDeploymentAttestationProviderSnapshot | null {
+  const snapshot = parseProviderSnapshot(source, false);
+  return snapshot && snapshot.deployment.commitHash !== null
+    ? snapshot as RailwayApplicationDeploymentAttestationProviderSnapshot : null;
+}
+
+/**
+ * An archive authority comes from an independently verified production receipt.
+ * Provider metadata stays honest; callers must also bind the exact live archive,
+ * deployment, immutable image and independently observed empty staged patch.
+ */
+export function parseProductionArchiveDeploymentProviderSnapshotResponse(
+  source: string,
+  expectedArchive: ProtectedSourceArchiveIdentity,
+): ProductionArchiveDeploymentProviderSnapshot | null {
+  if (!exactKeys(expectedArchive, [
+    "schemaVersion", "target", "candidateSha", "treeSha", "sourceArchiveSha256",
+    "sourceBaseManifestSha256", "uploadNonce", "sourceIdentitySha256",
+  ]) || expectedArchive.schemaVersion !== "protected-source-archive/v2"
+    || expectedArchive.target !== "production") return null;
+  for (const key of ["candidateSha", "treeSha"] as const) {
+    if (typeof expectedArchive[key] !== "string" || !matches(CANDIDATE_PATTERN, expectedArchive[key])) return null;
+  }
+  for (const key of ["sourceArchiveSha256", "sourceBaseManifestSha256", "uploadNonce", "sourceIdentitySha256"] as const) {
+    if (typeof expectedArchive[key] !== "string" || !matches(SHA256_PATTERN, expectedArchive[key])) return null;
+  }
+  const canonical = `{"schemaVersion":"protected-source-archive/v2","target":"production",`
+    + `"candidateSha":${jsonString(expectedArchive.candidateSha)},"treeSha":${jsonString(expectedArchive.treeSha)},`
+    + `"sourceArchiveSha256":${jsonString(expectedArchive.sourceArchiveSha256)},`
+    + `"sourceBaseManifestSha256":${jsonString(expectedArchive.sourceBaseManifestSha256)},`
+    + `"uploadNonce":${jsonString(expectedArchive.uploadNonce)}}\n`;
+  if (sha256(canonical) !== expectedArchive.sourceIdentitySha256) return null;
+  const snapshot = parseProviderSnapshot(source, true);
+  if (!snapshot
+    || snapshot.deployment.projectId !== "48d8c6cd-1c66-4148-874b-20877f48e1a5"
+    || snapshot.environmentId !== "13dab015-df74-45c6-b26f-69323daea99a"
+    || snapshot.deployment.environmentId !== snapshot.environmentId
+    || snapshot.serviceId !== "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+    || snapshot.deployment.serviceId !== snapshot.serviceId
+    || (snapshot.deployment.commitHash !== null && snapshot.deployment.commitHash !== expectedArchive.candidateSha)) return null;
+  return snapshot;
+}
+
+function parseProviderSnapshot(
+  source: string,
+  allowArchiveMetadata: boolean,
+): ProductionArchiveDeploymentProviderSnapshot | null {
   const value = parseBoundedJson(
     source,
     RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_MAX_PROVIDER_RESPONSE_BYTES,
@@ -840,16 +896,15 @@ export function parseRailwayApplicationDeploymentAttestationProviderSnapshotResp
   );
   const patchIdDescriptor = ownEnumerableDataDescriptor(deployment.meta, "patchId");
   if (
-    commitHashDescriptor === null
+    (!allowArchiveMetadata && (commitHashDescriptor === null || patchIdDescriptor === null))
     || imageDigestDescriptor === null
-    || patchIdDescriptor === null
   ) return null;
-  const commitHash = commitHashDescriptor.value;
+  const commitHash: unknown = commitHashDescriptor?.value ?? null;
   const imageDigest = imageDigestDescriptor.value;
-  const patchId = patchIdDescriptor.value;
+  const patchId: unknown = patchIdDescriptor?.value ?? null;
   if (
-    typeof commitHash !== "string"
-    || !matches(CANDIDATE_PATTERN, commitHash)
+    !(allowArchiveMetadata && commitHash === null)
+      && (typeof commitHash !== "string" || !matches(CANDIDATE_PATTERN, commitHash))
     || typeof imageDigest !== "string"
     || !matches(IMAGE_DIGEST_PATTERN, imageDigest)
     || !(patchId === null || (typeof patchId === "string" && matches(UUID_PATTERN, patchId)))
@@ -869,7 +924,7 @@ export function parseRailwayApplicationDeploymentAttestationProviderSnapshotResp
       environmentId: deployment.environmentId,
       serviceId: deployment.serviceId,
       snapshotId: deployment.snapshotId,
-      commitHash,
+      commitHash: commitHash as string | null,
       imageDigest,
       patchId,
     },

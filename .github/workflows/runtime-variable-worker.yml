@@ -106,6 +106,60 @@ on:
         required: false
       PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_REPLY_TO:
         required: false
+      PINTPATH_PRODUCTION_PINTPATH_DATABASE_RESOURCE_ID:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_EXPECTED_DATABASE_RESOURCE_ID:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_EXPECTED_DATABASE_URL_SHA256:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_REDIS_RESOURCE_ID:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_EXPECTED_REDIS_RESOURCE_ID:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_EXPECTED_REDIS_URL_SHA256:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_REDIS_URL_SHA256S:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256:
+        required: false
+      PINTPATH_PRODUCTION_REQUIRE_REDIS_RATE_LIMITING:
+        required: false
+      PINTPATH_PRODUCTION_ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_PINS_BASE64:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_SNAPSHOT_MANIFEST_GZIP_BASE64:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_APPLY_RECEIPT_GZIP_BASE64:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_RECEIPT_GZIP_BASE64:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_APPROVAL_GZIP_BASE64:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_VERIFIER_PUBLIC_KEY_GZIP_BASE64:
+        required: false
+      PINTPATH_PRODUCTION_MIGRATION_TARGET_IDENTITY_GZIP_BASE64:
+        required: false
+      PINTPATH_PRODUCTION_BAR_PILOT_ENABLED:
+        required: false
+      PINTPATH_PRODUCTION_BAR_PILOT_VENUE_IDS:
+        required: false
+      PINTPATH_PRODUCTION_ALCOHOL_PROMOTION_APPROVAL_REFERENCE:
+        required: false
 
 permissions:
   actions: read
@@ -115,7 +169,7 @@ permissions:
 jobs:
   configure:
     if: ${{ github.repository == 'blackmagic30/Beer' }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.target == 'production' && inputs.variable_name == 'DATABASE_URL' && fromJSON('["self-hosted","linux","x64","pintpath-production-postgres"]') || 'ubuntu-24.04' }}
     timeout-minutes: 35
     environment: ${{ inputs.protected_environment == 'production-runtime-configuration' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}
     steps:
@@ -149,10 +203,18 @@ jobs:
           test -z "$(git status --porcelain=v2 --untracked-files=all)"
           target_confirmation="${TARGET^^}"
           target_confirmation="${target_confirmation//-/_}"
-          test "$CONFIRMATION" = "UPSERT_${VARIABLE_NAME}_IN_${target_confirmation}"
+          if test "$TARGET" = production && test "$VARIABLE_NAME" = DATABASE_PATH; then
+            test "$CONFIRMATION" = CLEAR_DATABASE_PATH_IN_PRODUCTION
+          else
+            test "$CONFIRMATION" = "UPSERT_${VARIABLE_NAME}_IN_${target_confirmation}"
+          fi
           if test "$TARGET" = production; then
             test "$PROTECTED_ENVIRONMENT" = production-runtime-configuration
-            test "$VALUE_SECRET_NAME" = "PINTPATH_PRODUCTION_${VARIABLE_NAME}"
+            if test "$VARIABLE_NAME" = DATABASE_PATH; then
+              test "$VALUE_SECRET_NAME" = PINTPATH_REVIEWED_EMPTY_DATABASE_PATH
+            else
+              test "$VALUE_SECRET_NAME" = "PINTPATH_PRODUCTION_${VARIABLE_NAME}"
+            fi
             test "$VARIABLE_NAME" != PINTPATH_RUNTIME_DATABASE_URL
           elif test "$TARGET" = permanent-staging-postgres; then
             test "$PROTECTED_ENVIRONMENT" = permanent-staging-provider-mutation
@@ -222,7 +284,10 @@ jobs:
           set -euo pipefail
           mkdir -m 700 "$RUNNER_TEMP/pintpath-runtime-evidence"
           umask 077
-          if test "$TARGET" = permanent-staging-postgres; then
+          if test "$TARGET" = production && test "$VARIABLE_NAME" = DATABASE_PATH; then
+            test "$VALUE_SECRET_NAME" = PINTPATH_REVIEWED_EMPTY_DATABASE_PATH
+            test -z "$RUNTIME_VALUE"
+          elif test "$TARGET" = permanent-staging-postgres; then
             test "$VARIABLE_NAME" = PINTPATH_RUNTIME_DATABASE_URL
             test "$VALUE_SECRET_NAME" = PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL
             test -z "$RUNTIME_VALUE"
@@ -233,8 +298,25 @@ jobs:
           fi
           jq -n --arg candidateSha "$CANDIDATE_SHA" --arg target "$TARGET" \
             --arg variableName "$VARIABLE_NAME" --arg secretName "$VALUE_SECRET_NAME" \
-            '{schemaVersion:"pintpath-runtime-variable-dispatch/v2",candidateSha:$candidateSha,target:$target,variableName:$variableName,valueSource:(if $target == "permanent-staging-postgres" then "REVIEWED_COMPILE_TIME_CONSTANT" else "PROTECTED_GITHUB_SECRET" end),secretName:(if $target == "permanent-staging-postgres" then null else $secretName end),secretMaterialIncluded:false}' \
+            '{schemaVersion:"pintpath-runtime-variable-dispatch/v2",candidateSha:$candidateSha,target:$target,variableName:$variableName,valueSource:(if $target == "production" and $variableName == "DATABASE_PATH" then "REVIEWED_EMPTY_DATABASE_PATH" elif $target == "permanent-staging-postgres" then "REVIEWED_COMPILE_TIME_CONSTANT" else "PROTECTED_GITHUB_SECRET" end),secretName:(if $target == "permanent-staging-postgres" or $variableName == "DATABASE_PATH" then null else $secretName end),secretMaterialIncluded:false}' \
             > "$RUNNER_TEMP/pintpath-runtime-evidence/dispatch.json"
+
+      - name: Materialize and verify independently pinned native production import evidence
+        if: inputs.target == 'production' && inputs.variable_name == 'DATABASE_URL'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_PRODUCTION_MIGRATION_EVIDENCE_DIR: ${{ runner.temp }}/production-migration-evidence
+          PINTPATH_PRODUCTION_MIGRATION_PINS_FILE: ${{ runner.temp }}/production-migration-authority/pins.json
+          PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256 }}
+          PINTPATH_PRODUCTION_MIGRATION_PINS_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_PINS_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_SNAPSHOT_MANIFEST_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_SNAPSHOT_MANIFEST_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_APPLY_RECEIPT_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_APPLY_RECEIPT_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_RECEIPT_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_RECEIPT_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_APPROVAL_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_VERIFICATION_APPROVAL_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_VERIFIER_PUBLIC_KEY_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_VERIFIER_PUBLIC_KEY_GZIP_BASE64 }}
+          PINTPATH_PRODUCTION_MIGRATION_TARGET_IDENTITY_GZIP_BASE64: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_TARGET_IDENTITY_GZIP_BASE64 }}
+        run: ./node_modules/.bin/tsx scripts/materialize-bar-pilot-production-migration-evidence.ts
+
 
       - name: Reassert exact current main immediately before the provider write
         env:
@@ -257,6 +339,27 @@ jobs:
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_VARIABLE_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+          PINTPATH_PRODUCTION_MIGRATION_EVIDENCE_DIR: ${{ runner.temp }}/production-migration-evidence
+          PINTPATH_PRODUCTION_MIGRATION_PINS_FILE: ${{ runner.temp }}/production-migration-authority/pins.json
+          PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256: ${{ secrets.PINTPATH_PRODUCTION_MIGRATION_PINS_SHA256 }}
+          PINTPATH_POSTGRES_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_POSTGRES_ROOT_CA_PEM }}
+          PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_POSTGRES_ROOT_CA_DER_SHA256 }}
+          PINTPATH_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_DATABASE_RESOURCE_ID }}
+          PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_EXPECTED_DATABASE_RESOURCE_ID }}
+          PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS }}
+          PINTPATH_EXPECTED_DATABASE_URL_SHA256: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_EXPECTED_DATABASE_URL_SHA256 }}
+          PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S }}
+          PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID }}
+          PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256 }}
+          PINTPATH_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_REDIS_RESOURCE_ID }}
+          PINTPATH_EXPECTED_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_EXPECTED_REDIS_RESOURCE_ID }}
+          PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS }}
+          PINTPATH_EXPECTED_REDIS_URL_SHA256: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_EXPECTED_REDIS_URL_SHA256 }}
+          PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_FORBIDDEN_REDIS_URL_SHA256S }}
+          PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID }}
+          PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: ${{ secrets.PINTPATH_PRODUCTION_PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256 }}
+          REQUIRE_REDIS_RATE_LIMITING: ${{ secrets.PINTPATH_PRODUCTION_REQUIRE_REDIS_RATE_LIMITING }}
+          ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: ${{ secrets.PINTPATH_PRODUCTION_ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           TARGET: ${{ inputs.target }}
           VARIABLE_NAME: ${{ inputs.variable_name }}
@@ -282,6 +385,19 @@ jobs:
             find "$input_root" -depth -type d -exec rmdir -- {} +
           fi
           test ! -e "$input_root"
+
+      - name: Remove private native migration inputs
+        if: always() && inputs.target == 'production' && inputs.variable_name == 'DATABASE_URL'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for leaf in production-migration-evidence production-migration-authority; do
+            private_root="$RUNNER_TEMP/$leaf"
+            if test -d "$private_root" && test ! -L "$private_root"; then
+              find "$private_root" -depth -mindepth 1 -delete
+              rmdir "$private_root"
+            fi
+          done
 
       - name: Reconcile the Railway mutation boundary after every attempt
         if: always()

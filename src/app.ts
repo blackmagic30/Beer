@@ -545,10 +545,10 @@ export function shouldRunAutomaticMaintenance(
     typeof configuredCandidateSha === "string"
     && APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_COMMIT_PATTERN, [configuredCandidateSha])
       !== null
-    && configuredCandidateSha === deployedCandidateSha
+    && configuredCandidateSha === (sourceArchive?.candidateSha ?? deployedCandidateSha)
   );
   return automaticMaintenanceEnabled
-    && sourceArchive === null
+    && (sourceArchive === null || sourceArchive.schemaVersion === "protected-source-archive/v2")
     && candidateBound
     && nodeEnv !== "test"
     && !restoreRehearsalMode

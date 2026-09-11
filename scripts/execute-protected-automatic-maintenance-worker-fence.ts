@@ -1,3 +1,5 @@
+import { productionArchiveRuntime, productionProviderSourceExact } from "./lib/production-source-archive-authority.js";
+import type { ProtectedSourceArchiveIdentity } from "../src/lib/protected-source-archive.js";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -258,7 +260,7 @@ interface ProviderSnapshot {
     readonly environmentId: string;
     readonly serviceId: string;
     readonly snapshotId: string;
-    readonly commitHash: string;
+    readonly commitHash: string | null;
     readonly imageDigest: string;
     readonly patchId: string | null;
   };
@@ -1155,7 +1157,7 @@ function metadataPart(value: unknown, environmentId: string) {
   };
 }
 
-function deploymentPart(value: unknown, expectedId: string) {
+function deploymentPart(value: unknown, expectedId: string, sourceArchive?: ProtectedSourceArchiveIdentity) {
   if (
     !exactKeys(value, ["data"]) ||
     !exactKeys(value.data, ["deployment"]) ||
@@ -1179,12 +1181,12 @@ function deploymentPart(value: unknown, expectedId: string) {
     !UUID_PATTERN.test(deployment.snapshotId) ||
     !record(deployment.meta)
   ) return null;
-  const commitHash = deployment.meta.commitHash;
+  const commitHash = sourceArchive ? deployment.meta.commitHash ?? null : deployment.meta.commitHash;
   const imageDigest = deployment.meta.imageDigest;
-  const patchId = deployment.meta.patchId;
+  const patchId = sourceArchive ? deployment.meta.patchId ?? null : deployment.meta.patchId;
   if (
-    typeof commitHash !== "string" ||
-    !SHA_PATTERN.test(commitHash) ||
+    !(sourceArchive && deployment.environmentId === TARGETS.production.environmentId && commitHash === null) &&
+    (typeof commitHash !== "string" || !SHA_PATTERN.test(commitHash)) ||
     typeof imageDigest !== "string" ||
     !/^sha256:[a-f0-9]{64}$/.test(imageDigest) ||
     !(patchId === null || (typeof patchId === "string" && UUID_PATTERN.test(patchId)))
@@ -1205,6 +1207,7 @@ async function readProviderSnapshot(
   dependencies: Dependencies,
   metadataToken: string,
   environmentId: string,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): Promise<ProviderSnapshot | null> {
   try {
     const metadata = metadataPart(
@@ -1225,6 +1228,7 @@ async function readProviderSnapshot(
         { deploymentId: metadata.latestDeployment.id },
       ),
       metadata.latestDeployment.id,
+      sourceArchive,
     );
     if (
       !deployment ||
@@ -1313,7 +1317,7 @@ function providerAuthorityCanonical(snapshot: ProviderSnapshot): string {
   });
 }
 
-function soleHealthyCandidate(snapshot: ProviderSnapshot, candidateSha: string): boolean {
+function soleHealthyCandidate(snapshot: ProviderSnapshot, candidateSha: string, sourceArchive?: ProtectedSourceArchiveIdentity): boolean {
   const active = snapshot.activeDeployments[0];
   return activeConfiguredTopologyExact(snapshot) &&
     snapshot.latestDeployment.status === "SUCCESS" &&
@@ -1327,7 +1331,7 @@ function soleHealthyCandidate(snapshot: ProviderSnapshot, candidateSha: string):
     snapshot.deployment.environmentId === snapshot.environmentId &&
     snapshot.deployment.serviceId === SERVICE_ID &&
     snapshot.deployment.snapshotId === snapshot.latestDeployment.snapshotId &&
-    snapshot.deployment.commitHash === candidateSha &&
+    productionProviderSourceExact(snapshot.deployment.commitHash, candidateSha, sourceArchive) &&
     snapshot.deployment.patchId === null;
 }
 
@@ -1385,6 +1389,7 @@ async function runtimeResponse(
   expectedCandidateBound: boolean,
   environmentId: string,
   deploymentId: string,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): Promise<string | null> {
   try {
     const response = await dependencies.fetchImpl(`${origin}${route}`, {
@@ -1396,6 +1401,14 @@ async function runtimeResponse(
     });
     const source = await boundedBody(response, MAX_RUNTIME_BYTES);
     if (!response.ok) return null;
+    if (sourceArchive) {
+      const runtime = productionArchiveRuntime(route, source, expectedSourceSha, sourceArchive);
+      return runtime && environmentId === TARGETS.production.environmentId
+        && runtime.deployment.deploymentIdSha256 === railwayDeploymentIdentityIdSha256("deployment", deploymentId)
+        && runtime.automaticMaintenance.enabled === expectedEnabled
+        && runtime.automaticMaintenance.candidateBound === expectedCandidateBound ? sha256(source) : null;
+    }
+
     const value = JSON.parse(source) as unknown;
     const expectedStatus = route === "/health"
       ? "ok"
@@ -1448,6 +1461,7 @@ async function reconcileAfterWrite(
   args: Arguments,
   metadataToken: string,
   before: ProviderSnapshot,
+  sourceArchive?: ProtectedSourceArchiveIdentity,
 ): Promise<{ readonly snapshot: ProviderSnapshot | null; readonly runtime: RuntimeProof }> {
   const operation = OPERATIONS[args.operation];
   const maximumRounds = operation.requiresRuntimeProof
@@ -1475,6 +1489,7 @@ async function reconcileAfterWrite(
       dependencies,
       metadataToken,
       TARGETS[args.target].environmentId,
+      sourceArchive,
     );
     const targetExact = latest !== null &&
       targetRowsAfterExact(before, latest) &&
@@ -1482,7 +1497,7 @@ async function reconcileAfterWrite(
     const deploymentExact = latest !== null && (
       operation.postflightMode === "unchanged"
         ? deploymentCanonical(before) === deploymentCanonical(latest)
-        : soleHealthyCandidate(latest, args.candidateSha)
+        : soleHealthyCandidate(latest, args.candidateSha, sourceArchive)
     );
     if (targetExact && deploymentExact) {
       if (!operation.requiresRuntimeProof) {
@@ -1499,6 +1514,7 @@ async function reconcileAfterWrite(
             operation.runtimeCandidateBound,
             TARGETS[args.target].environmentId,
             latest!.deployment.id,
+            sourceArchive,
           )),
       );
       runtime = {
@@ -1643,6 +1659,7 @@ async function runMutationMode(
   args: Arguments,
   checks: Checks,
 ): Promise<0 | 1> {
+  let sourceArchive: ProtectedSourceArchiveIdentity | undefined;
   let failureCode: FailureCode | null = null;
   let attempts: 0 | 1 = 0;
   let authoritySha: string | null = null;
@@ -1704,6 +1721,7 @@ async function runMutationMode(
       } catch {
         throw new OperationFailure("ACTIVATION_PREREQUISITE_INVALID");
       }
+      sourceArchive = verification.rolePrerequisites.productionDeployment.sourceArchive;
       productionActivationPrerequisite = {
         verificationSha256: sha256(verificationSource),
         roleLimitRunId,
@@ -1789,6 +1807,7 @@ async function runMutationMode(
       dependencies,
       metadataToken,
       target.environmentId,
+      sourceArchive,
     );
     checks.targetPreflightExact = before !== null &&
       targetRowsBeforeExact(before) &&
@@ -1801,7 +1820,7 @@ async function runMutationMode(
       (operation.preflightMode === "healthy-legacy" &&
         soleHealthyLegacyBaseline(before, args.target, args.candidateSha)) ||
       (operation.preflightMode === "healthy-candidate" &&
-        soleHealthyCandidate(before, args.candidateSha))
+        soleHealthyCandidate(before, args.candidateSha, sourceArchive))
     );
     if (
       checks.operationPreflightExact &&
@@ -1827,6 +1846,7 @@ async function runMutationMode(
             true,
             TARGETS.production.environmentId,
             before!.deployment.id,
+            sourceArchive,
           )),
       );
       productionActivationPrerequisite = {
@@ -1911,6 +1931,7 @@ async function runMutationMode(
             true,
             target.environmentId,
             before!.deployment.id,
+            sourceArchive,
           )),
       );
       checks.operationPreflightExact = checks.operationPreflightExact &&
@@ -1924,6 +1945,7 @@ async function runMutationMode(
       dependencies,
       metadataToken,
       target.environmentId,
+      sourceArchive,
     );
     checks.targetPreflightExact = checks.targetPreflightExact &&
       immediatelyBeforeWrite !== null &&
@@ -1978,6 +2000,7 @@ async function runMutationMode(
           args,
           metadataToken,
           before,
+          sourceArchive,
         );
         after = reconciled.snapshot;
         runtime = reconciled.runtime;
@@ -1993,7 +2016,7 @@ async function runMutationMode(
       checks.postflightDeploymentExact = after !== null && (
         operation.postflightMode === "unchanged"
           ? deploymentCanonical(before) === deploymentCanonical(after)
-          : soleHealthyCandidate(after, args.candidateSha)
+          : soleHealthyCandidate(after, args.candidateSha, sourceArchive)
       );
       checks.configuredTopologyEvidenceExact = workerFenceTopologyEvidenceExact(
         workerFenceTopologyEvidence(
@@ -2082,7 +2105,8 @@ async function runMutationMode(
         sourceBeforeSha: before.deployment.commitHash,
         sourceAfterSha: after === null ? null : after.deployment.commitHash,
         sourcePreservedExact: after !== null &&
-          after.deployment.commitHash === before.deployment.commitHash,
+          after.deployment.commitHash === before.deployment.commitHash
+          && (!sourceArchive || (after.deployment.imageDigest === before.deployment.imageDigest && runtime.observed)),
         deploymentIdChanged: after !== null &&
           after.deployment.id !== before.deployment.id,
         topologyBeforeSha256: sha256(topologyCanonical(before)),
@@ -2104,6 +2128,7 @@ async function runMutationMode(
           ? null
           : sha256(canonical(otherRows(after))),
       },
+      ...(sourceArchive ? { sourceArchive } : {}),
       runtimeEvidence: runtime,
       mutationBoundaryEvidence: {
         preflightReceiptSha256: boundaryBefore.receiptSha256,
@@ -2213,6 +2238,7 @@ export async function runProtectedAutomaticMaintenanceWorkerFence(
 export const automaticMaintenanceWorkerFenceInternals = {
   authorityReceiptExact,
   confirmation,
+  runtimeResponse,
   deploymentPart,
   metadataPart,
   otherRows,

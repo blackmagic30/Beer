@@ -997,7 +997,7 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).not.toMatch(/pull_request:|push:|schedule:/);
   });
 
-  it("maps every runtime variable bijectively to the same-named protected secret", () => {
+  it("maps each permitted runtime variable to its exact protected secret or bounded fixed-value operation", () => {
     const dispatcher = read(".github/workflows/configure-runtime-variable.yml");
     const worker = read(".github/workflows/runtime-variable-worker.yml");
     const variableOptions = dispatcher.match(
@@ -1005,25 +1005,47 @@ describe("protected provider mutation workflows", () => {
     )?.groups?.body ?? "";
     const variableNames = [...variableOptions.matchAll(/^          - ([A-Z0-9_]+)$/gm)]
       .map((match) => match[1]!);
-    expect(variableNames).toHaveLength(20);
+    expect(variableNames).toHaveLength(40);
+    expect(new Set(variableNames).size).toBe(40);
+    const policy = JSON.parse(read("ops/railway/protected-runtime-variable-policy.json"));
+    expect(policy.productionPilotVariables).toEqual([
+      "BAR_PILOT_ENABLED", "BAR_PILOT_VENUE_IDS", "ALCOHOL_PROMOTION_APPROVAL_REFERENCE",
+    ]);
+    const productionOnlyNames = new Set<string>([...policy.productionOnlyVariables, ...policy.productionPilotVariables]);
     const secretBackedVariableNames = variableNames.filter((variableName) =>
-      variableName !== "PINTPATH_RUNTIME_DATABASE_URL"
+      variableName !== "PINTPATH_RUNTIME_DATABASE_URL" && variableName !== "DATABASE_PATH"
     );
-    expect(secretBackedVariableNames).toHaveLength(19);
+    expect(secretBackedVariableNames).toHaveLength(38);
+    expect(secretBackedVariableNames.filter(name => !productionOnlyNames.has(name))).toHaveLength(19);
+    for (const name of ["BAR_PILOT_DEMO_ENABLED", "BAR_PILOT_DEMO_CUSTOMER_IDS", "PINT_POINTS_REWARDS_ENABLED",
+      "ALCOHOL_GAMIFICATION_ENABLED", "COMMERCIAL_LAUNCH_ENABLED", "CONSUMER_PAID_ENROLLMENT_ENABLED"]) {
+      expect(variableNames).not.toContain(name);
+    }
+    const productionOnlyGuard = `contains(fromJSON('${JSON.stringify([...productionOnlyNames])}'), inputs.variable_name)`;
+    expect(dispatcher).toContain(`if: inputs.target != 'production' && ${productionOnlyGuard}`);
+    expect(dispatcher).toContain(`&& !${productionOnlyGuard}`);
     for (const variableName of secretBackedVariableNames) {
       expect(worker).toContain(
         `PINTPATH_PRODUCTION_${variableName}:\n        required: false`,
       );
-      expect(worker).toContain(
-        `PINTPATH_STAGING_${variableName}:\n        required: false`,
-      );
+      if (productionOnlyNames.has(variableName)) {
+        expect(worker).not.toContain(`PINTPATH_STAGING_${variableName}:\n        required: false`);
+      } else {
+        expect(worker).toContain(`PINTPATH_STAGING_${variableName}:\n        required: false`);
+      }
     }
     expect(dispatcher).toContain(
       "value_secret_name: ${{ inputs.target == 'permanent-staging-postgres' && 'PINTPATH_REVIEWED_FIXED_POSTGRES_RUNTIME_URL' || format('PINTPATH_STAGING_{0}', inputs.variable_name) }}",
     );
     expect(dispatcher).toContain(
-      "value_secret_name: ${{ format('PINTPATH_PRODUCTION_{0}', inputs.variable_name) }}",
+      "value_secret_name: ${{ inputs.variable_name == 'DATABASE_PATH' && 'PINTPATH_REVIEWED_EMPTY_DATABASE_PATH' || format('PINTPATH_PRODUCTION_{0}', inputs.variable_name) }}",
     );
+    expect(worker).toContain('test "$CONFIRMATION" = CLEAR_DATABASE_PATH_IN_PRODUCTION');
+    expect(worker).toContain('test "$VALUE_SECRET_NAME" = PINTPATH_REVIEWED_EMPTY_DATABASE_PATH');
+    expect(worker).toContain('"REVIEWED_EMPTY_DATABASE_PATH"');
+    for (const prefix of ["PINTPATH_PRODUCTION_", "PINTPATH_STAGING_"]) {
+      expect(worker).not.toContain(`${prefix}DATABASE_PATH:\n`);
+    }
     expect(dispatcher).toContain("- permanent-staging-postgres");
     expect(dispatcher).toContain("- PINTPATH_RUNTIME_DATABASE_URL");
     expect(dispatcher).toContain(

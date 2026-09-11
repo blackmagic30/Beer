@@ -53,12 +53,24 @@ describe("protected production promotion-recovery activation workflow", () => {
     const recover = job("disposable-recover");
     const cleanup = job("cleanup");
     const finalize = job("finalize");
-    expect(capture).toContain(
-      "runs-on: [self-hosted, linux, x64, pintpath-production-backup]",
-    );
-    expect(recover).toContain(
-      "runs-on: [self-hosted, linux, x64, pintpath-disposable-recovery]",
-    );
+    expect(capture).toContain("      - pintpath-production-backup");
+    expect(recover).toContain("      - pintpath-disposable-recovery");
+    for (const [source, role] of [
+      [capture, "production-capture"],
+      [recover, "disposable-recover"],
+    ]) {
+      expect(source).toContain(
+        `format('pintpath-recovery-{0}-{1}-${role}', github.run_id, github.run_attempt)`,
+      );
+      expect(source).toContain(
+        "control-production-recovery-jit-runner.ts verify-job",
+      );
+      const verification = source.indexOf(
+        "Verify exact controller registration",
+      );
+      expect(verification).toBeGreaterThan(0);
+      expect(verification).toBeLessThan(source.indexOf("secrets."));
+    }
     expect(recover).toContain("needs: production-capture");
     expect(cleanup).toContain(
       "needs: [production-capture, disposable-recover]",
@@ -306,7 +318,8 @@ describe("protected production promotion-recovery activation workflow", () => {
       "selected.runId <= 0",
       'selected?.artifact?.stage !== "scale"',
       "selected.artifact.runId !== selected.runId",
-    ]) expect(pitr).toContain(guard);
+    ])
+      expect(pitr).toContain(guard);
     expect(pitr).toContain(
       '--production-scale-run-id "$production_scale_run_id"',
     );

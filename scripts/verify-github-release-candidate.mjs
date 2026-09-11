@@ -574,13 +574,13 @@ export function parseGithubReleaseChecksPolicy(source) {
 }
 
 function parseArguments(argv) {
-  if (!Array.isArray(argv) || argv.length !== 6) throw new Error("argument_invalid");
+  if (!Array.isArray(argv) || ![6, 8].includes(argv.length)) throw new Error("argument_invalid");
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
     const value = argv[index + 1];
     if (
-      !["--candidate-sha", "--phase", "--output"].includes(name) ||
+      !["--candidate-sha", "--phase", "--output", "--scope"].includes(name) ||
       values.has(name) ||
       typeof value !== "string" ||
       value.length === 0
@@ -590,12 +590,15 @@ function parseArguments(argv) {
   const candidateSha = values.get("--candidate-sha");
   const phase = values.get("--phase");
   const output = values.get("--output");
+  const scope = values.get("--scope") ?? "full-launch";
+  if ((values.has("--scope") && scope !== "bar-pilot")
+    || (scope === "bar-pilot" && phase === "staging")) throw new Error("argument_invalid");
   if (
     !SHA_PATTERN.test(candidateSha) ||
     !PHASES.includes(phase) ||
     !path.isAbsolute(output)
   ) throw new Error("argument_invalid");
-  return { candidateSha, phase, output };
+  return { candidateSha, phase, output, scope };
 }
 
 function requirements(policy, phase, candidateSha) {
@@ -2304,7 +2307,7 @@ export async function runGithubReleaseCandidateVerification(argv, dependencies =
   try {
     const args = parseArguments(argv);
     const policySource = fs.readFileSync(
-      args.phase === "bar-pilot-staging" ? BAR_PILOT_POLICY_PATH : POLICY_PATH,
+      args.phase === "bar-pilot-staging" || args.scope === "bar-pilot" ? BAR_PILOT_POLICY_PATH : POLICY_PATH,
       "utf8",
     );
     const policy = parseGithubReleaseChecksPolicy(policySource);
@@ -2440,6 +2443,18 @@ export async function runGithubReleaseCandidateVerification(argv, dependencies =
       consumerStartedAtMs === null ||
       checks.some((check) => timestamp(check.completedAt) >= consumerStartedAtMs)
     ) throw new Error("chronology_invalid");
+    if (args.scope === "bar-pilot" && args.phase !== "bar-pilot-staging") {
+      const [configurationRequirement, deploymentRequirement] = policy.requiredChecks.staging;
+      const configuration = checks.find((check) => check.name === configurationRequirement.name);
+      const deployment = checks.find((check) => check.name === deploymentRequirement.name);
+      if (policy.requiredChecks.staging.length !== 2 || !configuration || !deployment
+        || configuration.workflowPath !== ".github/workflows/deploy-bar-pilot-staging.yml"
+        || deployment.workflowPath !== configuration.workflowPath
+        || configuration.runId !== deployment.runId
+        || timestamp(configuration.completedAt) >= timestamp(deployment.startedAt)) {
+        throw new Error("pilot_staging_chain_invalid");
+      }
+    }
     const checkByName = new Map(checks.map((check) => [check.name, check]));
     const artifactPayloadByRun = new Map();
     const artifacts = [];
