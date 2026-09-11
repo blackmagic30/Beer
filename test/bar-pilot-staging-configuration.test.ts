@@ -163,11 +163,22 @@ describe("bar pilot staging configuration", () => {
     expect(runtime).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
   });
-  it("does not grant production access or enable unrelated workers", () => {
+  it("preserves staging isolation while permitting only the three reviewed real-pilot production settings", () => {
+    const realPilotProductionVariables = new Set([
+      "BAR_PILOT_ENABLED", "BAR_PILOT_VENUE_IDS", "ALCOHOL_PROMOTION_APPROVAL_REFERENCE",
+    ]);
     for (const variable of BAR_PILOT_STAGING_VARIABLES) {
       expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging", variable)).toBe(true);
-      expect(protectedRuntimeVariableInternals.targetVariableExact("production", variable)).toBe(false);
+      expect(protectedRuntimeVariableInternals.targetVariableExact("production", variable))
+        .toBe(realPilotProductionVariables.has(variable));
       expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging-postgres", variable)).toBe(false);
+    }
+    expect(protectedRuntimeVariableInternals.targetVariableExact("production", "ALCOHOL_PROMOTION_APPROVAL_REFERENCE")).toBe(true);
+    expect(protectedRuntimeVariableInternals.targetVariableExact("permanent-staging", "ALCOHOL_PROMOTION_APPROVAL_REFERENCE")).toBe(false);
+    for (const variable of ["BAR_PILOT_DEMO_ENABLED", "BAR_PILOT_DEMO_CUSTOMER_IDS",
+      "PINT_POINTS_REWARDS_ENABLED", "ALCOHOL_GAMIFICATION_ENABLED", "COMMERCIAL_LAUNCH_ENABLED",
+      "CONSUMER_PAID_ENROLLMENT_ENABLED"]) {
+      expect(protectedRuntimeVariableInternals.targetVariableExact("production", variable)).toBe(false);
     }
     expect(barPilotVariableValueExact("PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED", "true", candidate)).toBe(false);
     expect(barPilotVariableValueExact("PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA", "b".repeat(40), candidate)).toBe(false);
