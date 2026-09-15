@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const templateFiles = [
   "confirmation.html",
   "recovery.html",
+  "magic_link.html",
   "password_changed_notification.html",
 ] as const;
 
@@ -35,14 +36,17 @@ describe("Supabase Auth email templates", () => {
   it("keeps Supabase's supported Auth template variables intact", () => {
     const confirmation = readTemplate("confirmation.html");
     const recovery = readTemplate("recovery.html");
+    const magicLink = readTemplate("magic_link.html");
     const passwordChanged = readTemplate("password_changed_notification.html");
 
     expect(confirmation).toContain("{{ .ConfirmationURL }}");
     expect(recovery).toContain("{{ .ConfirmationURL }}");
+    expect(magicLink).toContain("{{ .ConfirmationURL }}");
+    expect(magicLink).toContain("{{ .Email }}");
     expect(confirmation).toContain("{{ .Email }}");
     expect(recovery).toContain("{{ .Email }}");
     expect(passwordChanged).toContain("{{ .Email }}");
-    for (const html of [confirmation, recovery, passwordChanged]) {
+    for (const html of [confirmation, recovery, magicLink, passwordChanged]) {
       expect(html).toContain("{{ .SiteURL }}");
     }
   });

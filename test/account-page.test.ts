@@ -4,6 +4,8 @@ import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
+const CALLBACK_FAILURE_MESSAGE = "Sign-in did not complete. The link may have expired, been used or opened in another tab. Return to the original Pint Path tab and start again. For an email security check, request a new link and paste it into that tab's address bar within 10 minutes.";
+
 const LEGACY_SUPABASE_ANON_KEY_FIXTURE = [
   Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url"),
   Buffer.from(JSON.stringify({ role: "anon" }), "utf8").toString("base64url"),
@@ -1441,6 +1443,50 @@ describe("account page shell", () => {
     );
   });
 
+  it.each([true, false])("shows sent MFA email as pending without hiding real failures (sent=%s)", async (sent) => {
+    const html = accountHtml();
+    const statusFunction = htmlBetween(html, "function setMfaStatus", "function hideMfaVerification");
+    const clickHandler = htmlBetween(
+      html,
+      '$("startMfaButton").addEventListener',
+      '$("replaceMfaButton").addEventListener',
+    );
+    const nodes = new Map<string, {
+      textContent: string;
+      dataset: Record<string, string>;
+      classList: { toggle: (name: string, enabled: boolean) => void };
+      addEventListener: (_type: string, callback: () => Promise<void>) => void;
+    }>();
+    const toggles: Record<string, boolean> = {};
+    let onClick: (() => Promise<void>) | undefined;
+    const message = sent ? "Email sent. Keep the original tab open." : "The email could not be sent.";
+    const context = {
+      $: (id: string) => {
+        if (!nodes.has(id)) nodes.set(id, {
+          textContent: "",
+          dataset: {},
+          classList: { toggle: (name, enabled) => { toggles[name] = enabled; } },
+          addEventListener: (_type, callback) => { onClick = callback; },
+        });
+        return nodes.get(id);
+      },
+      setLoading: () => undefined,
+      MelbBeerBusiness: {
+        ensureSupabaseSessionForPurpose: async () => {
+          throw Object.assign(new Error(message), { reauthenticationPending: sent });
+        },
+      },
+    };
+    vm.createContext(context);
+    vm.runInContext(`${statusFunction}\n${clickHandler}`, context);
+    expect(onClick).toBeTypeOf("function");
+    await onClick?.();
+    expect(nodes.get("mfaStatus")?.textContent).toBe(message);
+    expect(nodes.get("mfaStatusBadge")?.textContent).toBe(sent ? "Check email" : "Unavailable");
+    expect(nodes.get("mfaStatusBadge")?.dataset.tone).toBe(sent ? "pending" : "error");
+    expect(toggles["noticeText--error"]).toBe(!sent);
+  });
+
   it("provides a privacy-safe, paginated community verification workflow", () => {
     const html = accountHtml();
     const submissionsPanel = htmlBetween(html, 'id="settingsSubmissionsPanel"', 'id="settingsStatsPanel"');
@@ -1758,6 +1804,7 @@ describe("account page shell", () => {
     })).rejects.toMatchObject({
       code: "EMAIL_REAUTHENTICATION_SENT",
       reauthenticationPending: true,
+      message: expect.stringMatching(/Within 10 minutes, copy the latest security link.*original tab.*address bar.*Safari Private Browsing/),
     });
 
     expect(harness.requests.find((request) => (
@@ -2550,7 +2597,7 @@ describe("account page shell", () => {
     );
 
     expect(errorHandling).toContain("const callbackErrorIsBound = callbackFlowState !== null;");
-    expect(errorHandling).toContain('"Sign-in did not complete. Start again from Pint Path."');
+    expect(errorHandling).toContain('accountUrl.searchParams.set("authError", CALLBACK_FAILURE_MESSAGE)');
     expect(errorHandling).toContain("if (callbackErrorIsBound)");
     expect(errorHandling).toContain("clearCallbackEphemeralFlowState()");
     expect(errorHandling).not.toContain("clearCallbackSession");
@@ -2668,6 +2715,14 @@ describe("account page shell", () => {
     ["plain callback", "https://pintpath.au/auth/callback"],
     ["malformed code", "https://pintpath.au/auth/callback?code=attacker-controlled"],
     [
+      "email security link without its original tab flow",
+      "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=magiclink",
+    ],
+    [
+      "expired email link with provider details",
+      "https://pintpath.au/auth/callback#error=access_denied&error_code=otp_expired&error_description=private-provider-detail",
+    ],
+    [
       "unsupported hash",
       "https://pintpath.au/auth/callback#access_token=attacker&refresh_token=attacker&type=unsupported",
     ],
@@ -2688,8 +2743,10 @@ describe("account page shell", () => {
     const redirect = new URL(effects.replacements[0]);
     expect(redirect.pathname).toBe("/account.html");
     expect(redirect.searchParams.get("authError")).toBe(
-      "Sign-in did not complete. Start again from Pint Path.",
+      CALLBACK_FAILURE_MESSAGE,
     );
+    expect(effects.replacements[0]).not.toContain("private-provider-detail");
+    expect(redirect.hash).toBe("");
   });
 
   it("preserves an existing session when malformed code collides with a bound reauthentication flow", async () => {
@@ -2776,7 +2833,7 @@ describe("account page shell", () => {
     expect(effects.accountContextClears).toBe(0);
     expect(effects.broadcasts).toEqual([]);
     expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
-      "Sign-in did not complete. Start again from Pint Path.",
+      CALLBACK_FAILURE_MESSAGE,
     );
   });
 
@@ -2797,7 +2854,7 @@ describe("account page shell", () => {
     expect(effects.broadcasts).toEqual([]);
     expect(effects.replacements).toHaveLength(1);
     expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
-      "Sign-in did not complete. Start again from Pint Path.",
+      CALLBACK_FAILURE_MESSAGE,
     );
   });
 
@@ -2816,7 +2873,7 @@ describe("account page shell", () => {
     expect(effects.accountContextClears).toBe(0);
     expect(effects.broadcasts).toEqual([]);
     expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
-      "Sign-in did not complete. Start again from Pint Path.",
+      CALLBACK_FAILURE_MESSAGE,
     );
   });
 
@@ -2921,7 +2978,7 @@ describe("account page shell", () => {
     expect(effects.accountContextClears).toBe(0);
     expect(effects.broadcasts).toEqual([]);
     expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
-      "Sign-in did not complete. Start again from Pint Path.",
+      CALLBACK_FAILURE_MESSAGE,
     );
   });
 
@@ -3018,6 +3075,8 @@ describe("account page shell", () => {
     expect(sessionContinuation).toContain("client.auth.mfa.enroll({");
     expect(sessionContinuation).toContain('factorType: "totp"');
     expect(sessionContinuation).toContain("callbackMfaEnrollmentFactorId = enrollment.id");
+    expect(sessionContinuation).toContain("Keep this tab open until you finish authenticator setup.");
+    expect(sessionContinuation).not.toContain("memory-only provider session");
     expect(sessionContinuation).toContain("no authenticator change was made");
     expect(sessionContinuation).not.toContain("replaceWithSafeReturnPath");
     expect(enrollmentVerification).toContain("client.auth.mfa.challengeAndVerify({ factorId, code })");

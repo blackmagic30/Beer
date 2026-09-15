@@ -91,7 +91,7 @@
     let callbackContinuationRetry = null;
     let callbackMfaEnrollmentFactorId = null;
     let callbackContinuationBusy = false;
-    const CALLBACK_FAILURE_MESSAGE = "Sign-in did not complete. Start again from Pint Path.";
+    const CALLBACK_FAILURE_MESSAGE = "Sign-in did not complete. The link may have expired, been used or opened in another tab. Return to the original Pint Path tab and start again. For an email security check, request a new link and paste it into that tab's address bar within 10 minutes.";
 
     function callbackHashParams() {
       return new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
@@ -551,7 +551,7 @@
           throw enrollmentError || new Error("Authenticator setup did not return a factor.");
         }
         callbackMfaEnrollmentFactorId = enrollment.id;
-        status.textContent = "Finish authenticator setup in this tab so the memory-only provider session is not lost.";
+        status.textContent = "Keep this tab open until you finish authenticator setup. Scan the QR code with your authenticator app, then enter its six-digit code below.";
         showCallbackMfaEnrollment({
           qrCode: enrollment.totp.qr_code,
           secret: enrollment.totp.secret,
@@ -934,7 +934,7 @@
           clearCallbackEphemeralFlowState();
         }
         const accountUrl = new URL("/account.html", window.location.origin);
-        accountUrl.searchParams.set("authError", "Sign-in did not complete. Start again from Pint Path.");
+        accountUrl.searchParams.set("authError", CALLBACK_FAILURE_MESSAGE);
         window.location.replace(accountUrl.toString());
         return;
       }
