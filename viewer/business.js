@@ -2480,7 +2480,7 @@ async function beginBrowserEmailReauthentication(purpose, options = {}) {
 
 function emailReauthenticationPendingError() {
   const error = new Error(
-    "Check your verified account email and open the latest Pint Path security link in this browser. The link will continue this action securely.",
+    "Email sent. Keep this Pint Path tab open. Within 10 minutes, copy the latest security link from your email, return to this original tab, and paste it into the address bar. In Safari Private Browsing, opening the link in another tab may not continue this security check.",
   );
   error.code = "EMAIL_REAUTHENTICATION_SENT";
   error.reauthenticationPending = true;

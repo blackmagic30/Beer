@@ -1506,7 +1506,7 @@
       const badge = $("mfaStatusBadge");
       status.textContent = message;
       status.classList.toggle("noticeText--error", tone === "error");
-      badge.textContent = tone === "secure" ? "Protected" : tone === "password" ? "Password checks" : tone === "action" ? "Action needed" : tone === "error" ? "Unavailable" : "Not set up";
+      badge.textContent = tone === "secure" ? "Protected" : tone === "password" ? "Password checks" : tone === "pending" ? "Check email" : tone === "action" ? "Action needed" : tone === "error" ? "Unavailable" : "Not set up";
       badge.dataset.tone = tone;
     }
 
@@ -4746,7 +4746,10 @@
             await beginMfaEnrollment();
           }
         } catch (error) {
-          setMfaStatus(error.message || "Could not reauthenticate for authenticator management.", "error");
+          setMfaStatus(
+            error.message || "Could not reauthenticate for authenticator management.",
+            error.reauthenticationPending ? "pending" : "error",
+          );
         } finally {
           setLoading($("startMfaButton"), false);
         }
