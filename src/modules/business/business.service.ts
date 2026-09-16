@@ -2256,8 +2256,19 @@ function normalizeVenueOpeningHours(
     };
   };
   const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(existing)) result[key] = normalizeDay(value);
-  for (const [key, value] of Object.entries(incoming)) result[key] = normalizeDay(value);
+  for (const source of [existing, incoming]) {
+    for (const [key, value] of Object.entries(source)) {
+      if (key === "days" && value && typeof value === "object" && !Array.isArray(value)) {
+        // The portal sends a weekly container; its entries, not the container, are days.
+        result.days = {
+          ...objectFromUnknown(result.days),
+          ...Object.fromEntries(Object.entries(value).map(([day, hours]) => [day, normalizeDay(hours)])),
+        };
+      } else {
+        result[key] = normalizeDay(value);
+      }
+    }
+  }
   return result;
 }
 

@@ -6868,9 +6868,22 @@ describe("production hardening", () => {
     expect(first.venues[0]).not.toHaveProperty("lastCheckedAt");
 
     const current = await getVenueInventoryRepository(repository).getBarProfile(PILOT_DEMO_VENUE_ID);
+    // This is the actual portal payload, including the weekly wrapper and every day.
+    const weeklyHours = {
+      format: "weekly", timezone: "Australia/Melbourne", note: "Kitchen closes earlier",
+      days: Object.fromEntries(["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map(day => [day, {
+        open: true, openTime: day === "mon" ? "13:00" : "12:00", closeTime: "23:00", closed: false,
+      }])),
+    };
     await service.upsertBarProfile(manager, PILOT_DEMO_VENUE_ID, { ...profileInput,
-      name: "Updated Pilot Hotel", description: "Updated by the venue manager", expectedUpdatedAt: current!.updatedAt,
-      openingHours: { fri: { open: true, openTime: "14:00", closeTime: "23:00" } } });
+      name: "Updated Pilot Hotel", description: "Updated by the venue manager", phone: "03 9000 0123",
+      expectedUpdatedAt: current!.updatedAt, openingHours: weeklyHours });
+    const expectedHours = { ...weeklyHours, days: Object.fromEntries(Object.entries(weeklyHours.days)
+      .map(([day, { closed: _closed, ...hours }]) => [day, hours])) };
+    expect((await getVenueInventoryRepository(repository).getBarProfile(PILOT_DEMO_VENUE_ID))?.openingHours)
+      .toEqual(expectedHours);
+    expect((await service.getVenuePortal(manager, { venueId: PILOT_DEMO_VENUE_ID })).profile?.openingHours)
+      .toEqual(expectedHours);
     const beerInput = { beerName: "Carlton Draught", brewery: null, style: null, abv: null,
       serveSize: "schooner", price: 11, onTap: true, inStock: true, notes: null,
       priceConfirmed: true, stockConfirmed: true };
@@ -6888,7 +6901,7 @@ describe("production hardening", () => {
       expect(directory.headers.get("cache-control")).toBe("private, no-store");
       expect((await directory.json()).data.venues[0]).toMatchObject({ id: PILOT_DEMO_VENUE_ID,
         name: "Updated Pilot Hotel — DEMO", description: "Updated by the venue manager",
-        openingHours: { fri: { openTime: "14:00" } } });
+        phone: "03 9000 0123", openingHours: expectedHours });
       const prices = await fetch(`${baseUrl}/api/business/price-records?venueId=${encodeURIComponent(PILOT_DEMO_VENUE_ID)}`, { headers: { Authorization: auth } });
       expect(prices.status).toBe(200);
       expect((await prices.json()).data.records).toEqual([expect.objectContaining({ price: 12, servingSize: "schooner", isOnTap: "yes", venueName: "Updated Pilot Hotel — DEMO" })]);
@@ -15847,6 +15860,56 @@ describe("business demo contribution model", () => {
     expect(venues).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "demo:sandringham-hotel" }),
     ]));
+  });
+
+  it.each([
+    {
+      name: "weekly hours during a phone-only save",
+      existing: { format: "weekly", timezone: "Australia/Melbourne", note: "Kitchen closes earlier", days: {
+        fri: { open: true, openTime: "16:00", closeTime: "01:00" },
+        sun: { open: false, openTime: "12:00", closeTime: "23:00", closed: true },
+      } },
+      incoming: {},
+      expected: { format: "weekly", timezone: "Australia/Melbourne", note: "Kitchen closes earlier", days: {
+        fri: { open: true, openTime: "16:00", closeTime: "01:00" },
+        sun: { open: false, openTime: "12:00", closeTime: "23:00" },
+      } },
+    },
+    {
+      name: "untouched weekly days during a partial hours update",
+      existing: { format: "weekly", timezone: "Australia/Melbourne", days: {
+        fri: { open: true, openTime: "16:00", closeTime: "01:00" },
+        sun: { open: true, openTime: "12:00", closeTime: "23:00" },
+      } },
+      incoming: { days: { sun: { open: false, openTime: "12:00", closeTime: "23:00", closed: true } } },
+      expected: { format: "weekly", timezone: "Australia/Melbourne", days: {
+        fri: { open: true, openTime: "16:00", closeTime: "01:00" },
+        sun: { open: false, openTime: "12:00", closeTime: "23:00" },
+      } },
+    },
+    {
+      name: "legacy flat hours and overnight closing times",
+      existing: { note: "Late trading", friday: { open: "16:00", close: "01:00" },
+        sunday: { open: false, openTime: "12:00", closeTime: "23:00" } },
+      incoming: { friday: { opens: "17:00", closes: "02:00" } },
+      expected: { note: "Late trading", friday: { open: true, openTime: "17:00", closeTime: "02:00" },
+        sunday: { open: false, openTime: "12:00", closeTime: "23:00" } },
+    },
+  ])("preserves $name through profile persistence and public readback", async ({ existing, incoming, expected }) => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "hours-roundtrip-admin", "admin");
+    const profileInput = { name: "Hours Roundtrip Hotel", address: null, suburb: "Fitzroy", area: "Fitzroy",
+      phone: null, website: null, instagram: null, description: null, openingHours: existing,
+      venueTags: [], membershipTier: "basic" as const, active: true };
+    const created = await service.upsertBarProfile(admin, "hours-roundtrip-venue", profileInput);
+    const saved = await service.upsertBarProfile(admin, "hours-roundtrip-venue", { ...profileInput,
+      phone: "03 9000 0123", openingHours: incoming, expectedUpdatedAt: created.profile.updatedAt });
+    expect(saved.profile.openingHours).toEqual(expected);
+    expect((await getVenueInventoryRepository(repository).getBarProfile("hours-roundtrip-venue"))?.openingHours)
+      .toEqual(expected);
+    expect(await service.getPublicVenueById("hours-roundtrip-venue"))
+      .toMatchObject({ phone: "03 9000 0123", openingHours: expected });
   });
 
   it("serves a public venue detail lookup without private billing metadata", async () => {
