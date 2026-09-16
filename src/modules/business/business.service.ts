@@ -196,6 +196,10 @@ import type { AccountDeletionNotificationCoordinator } from "../../lib/account-d
 import { logger } from "../../lib/logger.js";
 import { priceConfirmationVersion } from "../../lib/price-confirmation.js";
 import {
+  PILOT_DEMO_VENUE_ID, PILOT_DEMO_FIXTURE_KEY,
+  pilotDemoPublicationScopeAllowed, pilotDemoBindingAllowsPublication,
+} from "../../lib/pilot-demo-fixture.js";
+import {
   createMockReportEmailProvider,
   createResendReportEmailProvider,
   getVenueReportDeliverySettings as readVenueReportDeliverySettings,
@@ -3240,6 +3244,7 @@ export class BusinessService {
       | "BAR_PILOT_DEMO_ENABLED"
       | "BAR_PILOT_DEMO_CUSTOMER_IDS"
       | "DATABASE_PATH"
+      | "DATABASE_URL"
       | "RESTORE_REHEARSAL_MODE"
       | "POSTGRES_RECOVERY_REHEARSAL_MODE"
       | "REPORT_DELIVERY_SCHEDULE_ENABLED"
@@ -11804,6 +11809,22 @@ export class BusinessService {
     return (await this.listVenuesPage(query, limit, 0, account)).venues;
   }
 
+  private async canPublishPilotDemoVenue(): Promise<boolean> {
+    if (!pilotDemoPublicationScopeAllowed(this.config, process.env)) return false;
+    const binding = await this.systemStateRepository.get(PILOT_DEMO_FIXTURE_KEY);
+    if (!pilotDemoBindingAllowsPublication(binding?.value, this.config.BAR_PILOT_DEMO_CUSTOMER_IDS)) return false;
+    const profile = await this.venueInventoryRepository.getBarProfile(PILOT_DEMO_VENUE_ID);
+    return profile?.active === true && profile.venueTags.some(tag => tag === "pilot-demo" || tag === "pilot demo");
+  }
+
+  private labelPublicPilotDemoVenue(venue: VenueRow): VenueRow {
+    return { ...venue, name: this.publicPilotDemoVenueName(venue.name) };
+  }
+
+  private publicPilotDemoVenueName(name: string): string {
+    return name.endsWith(" — DEMO") ? name : `${name} — DEMO`;
+  }
+
   private async attachVenueBeerKeys(venues: VenueRow[], hasFullAccess: boolean): Promise<VenueRow[]> {
     if (venues.length === 0) {
       return venues;
@@ -11897,9 +11918,12 @@ export class BusinessService {
     const hasFullAccess = isFullAccess(account, account ? this.isAdmin(account) : false);
     const normalizedLimit = Math.min(1000, Math.max(1, limit));
     const normalizedOffset = Math.max(0, offset);
+    const publishPilotDemo = await this.canPublishPilotDemoVenue();
     const attachPublicVenueTierMetadata = this.createPublicVenueTierMetadataAttacher();
     const deduplicateLocalVenues = async (venues: VenueRow[]) => this.mergeVenueRows(
-      await attachPublicVenueTierMetadata(venues),
+      await attachPublicVenueTierMetadata(venues
+        .filter(venue => venue.id !== PILOT_DEMO_VENUE_ID || publishPilotDemo)
+        .map(venue => venue.id === PILOT_DEMO_VENUE_ID ? this.labelPublicPilotDemoVenue(venue) : venue)),
       [],
       venues.length,
       false,
@@ -12061,6 +12085,7 @@ export class BusinessService {
       const originalOperationalLocalIdentities = new Set<string>();
       localDirectory = localDirectory
         .map((venue) => {
+          if (venue.id === PILOT_DEMO_VENUE_ID && publishPilotDemo) return venue;
           const originalIdentity = venueIdentityKey(venue);
           const matchingRemote = remoteCandidateById.get(venue.id) ??
             (originalIdentity ? remoteCandidateByIdentity.get(originalIdentity) : undefined);
@@ -12129,6 +12154,10 @@ export class BusinessService {
 
     const cachedLocation = await this.venueIdentityRepository.getVenueLocationCache(normalizedVenueId);
     const localVenue = await this.getLocalPublicVenueById(normalizedVenueId, cachedLocation);
+    if (normalizedVenueId === PILOT_DEMO_VENUE_ID) {
+      return localVenue && await this.canPublishPilotDemoVenue()
+        ? this.labelPublicPilotDemoVenue(localVenue) : null;
+    }
     if (!this.supabase || this.config.RESTORE_REHEARSAL_MODE) return localVenue;
     if (!isPostgresUuid(normalizedVenueId)) {
       if (!localVenue) return null;
@@ -13238,6 +13267,7 @@ export class BusinessService {
     account: BusinessAccount | null,
     input: PriceRecordsQuery & { clientIp?: string | undefined },
   ) {
+    const publishPilotDemo = await this.canPublishPilotDemoVenue();
     const anonymousSessionId = input.anonymousSessionId
       || (account ? null : hashAnonymousFallback(input.clientIp || "unknown-client"));
     const requestedVenueId = input.venueId
@@ -13297,6 +13327,7 @@ export class BusinessService {
         return special && this.isBarSpecialActiveNow(special, new Date()) ? record.id : null;
       }))).filter((id): id is string => Boolean(id)));
       const visibleBatch = canonicalBatch
+        .filter(record => record.venueId !== PILOT_DEMO_VENUE_ID || publishPilotDemo)
         .filter(isPublicLaunchPriceRecord)
         .filter((record) => {
           if (record.displayKind !== "special" || !record.id.startsWith("venue_special:")) return true;
@@ -13332,6 +13363,7 @@ export class BusinessService {
     }
     const addVenueMetadata = (record: PublicVenuePriceRecord): PublicVenuePriceRecord => ({
       ...record,
+      ...(record.venueId === PILOT_DEMO_VENUE_ID ? { venueName: this.publicPilotDemoVenueName(record.venueName) } : {}),
       ...publicVenueMetadata.get(record.venueId),
       hasSourceLinkage: record.hasSourceLinkage || Boolean(record.sourceSubmissionId),
       hasSourceEvidence: record.sourceSubmissionId

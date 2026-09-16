@@ -60,7 +60,7 @@ retest. A passing area is not re-audited without a later regression.
 | PILOT-01 | Source/PR inspection, isolated candidate, no unrelated changes | PASS; source record above |
 | PILOT-02 | Claim, independent approval, manager assignment, staff invitation and revocation | PASS locally; existing venue contracts and real PostgreSQL pilot role/revocation tests |
 | PILOT-03 | Profile/hours/3+ beer rows/size/stock/price/create/edit/delete | Existing scoped venue tests passed |
-| PILOT-04 | Consumer publication, review boundary, stale-write conflict, cross-venue isolation | Existing scoped venue tests passed |
+| PILOT-04 | Consumer publication, review boundary, stale-write conflict, cross-venue isolation | Existing scoped venue tests passed locally. Hosted discovery was empty on 2026-09-16; a configured-Supabase fixture publication gap was identified. Hosted retest remains pending |
 | PILOT-05 | Canonical PostgreSQL drink ledger, contribution separation, audit associations | PASS; restricted-role PostgreSQL integration |
 | PILOT-06 | Eligible purchase +1, invalid purchase denied, retry/idempotency +0 | PASS; eight-way duplicate award records one point; signed receipt reuse adds zero |
 | PILOT-07 | Rotating identity expiry/session binding/server validation | PASS; invalid, expired, replaced, consumed and revoked-session identities denied |
@@ -69,15 +69,19 @@ retest. A passing area is not re-audited without a later regression.
 | PILOT-10 | Append-only reversal/history and correct balance | PASS; backend invariants and browser reversal, original transaction retained with linked correction |
 | PILOT-11 | Limited pilot entitlement, no Pro/payment requirement, role/venue isolation | PASS; pilot runs with old commercial/reward/gamification flags false; protected route and cross-venue tests |
 | PILOT-12 | Understandable manager setup/staff/history/reward/error/empty screens | PASS local browser; setup checklist, role-specific actions, clear redemption and correction states |
-| PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | Local connected 390×844 checks passed. Hosted active-map list controls exposed a separate defect; its three-line fix passed eight focused tests and nine rendered phone checks. Final hosted smoke must cover the active-map path; actual iPhone/Google ceremony remains owner verification |
-| PILOT-14 | Connected browser publication/award/reward/redemption/history updates | PASS; 21 checks against real PostgreSQL, zero page exceptions |
-| PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | PASS tooling and local fixture; hosted setup awaits legitimate Google identities |
+| PILOT-13 | iPhone homepage/search/list/map fallback/details/sign-in/account/wallet/QR/reward | Local connected 390×844 checks passed. On 2026-09-16 the hosted Google base map rendered, but venue discovery returned zero public venues. Hosted venue/detail and connected phone acceptance remain open; no protected wallet/staff pass is claimed from this public check |
+| PILOT-14 | Connected browser publication/award/reward/redemption/history updates | PASS locally; 21 checks against real PostgreSQL, zero page exceptions |
+| PILOT-15 | Repeatable isolated accounts/venue/3 rows/restricted demo threshold/reset | PASS tooling and local fixture; hosted setup remains pending four distinct genuine role accounts. Three accounts exist; the separate staff account is still unavailable |
 | PILOT-16 | Relevant unit/HTTP/PG migration/reconciliation/security/concurrency checks | PASS on the product candidate; 5,129 local aggregate tests plus explicitly enabled PostgreSQL and Supabase runs below; required PR #106 and merged-main checks passed |
-| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | Run 34444953562 proves one successful source upload and all three exact-candidate runtime routes. Its public smoke found the price-feed and active-map defects recorded below; the follow-up needs its own deployment and smoke evidence. Authenticated acceptance remains OWNER_ACTION_REQUIRED: Google provider disabled and zero accounts |
+| PILOT-17 | Hosted staging exact candidate and legitimate provider-backed identities | Current public staging reports archive candidate `e603221a436a8c864de1b2e95b02607cc7f58639`; its source tree matches the reviewed QR-sizing candidate. Provider sign-in is now operational, but four distinct role identities, assigned venue publication and the complete hosted points/redemption loop remain pending |
 | PILOT-18 | Real iPhone, real bar/eligible purchase, owner legal and staff approval | OWNER_ACTION_REQUIRED; only after software acceptance |
 | PILOT-19 | Candidate commits, PR, clean worktree, exact test evidence and handoff | Recorded in [PR #106](https://github.com/blackmagic30/Beer/pull/106), this isolated branch and the final handoff; merge/deployment require the protected candidate checks |
 
 ## Evidence recorded during implementation
+
+The observations below retain their historical scope. Earlier disabled-provider
+and zero-account findings do not describe the current 2026-09-16 state; see the
+acceptance register and scoped publication finding below.
 
 - Node `22.23.2`, npm `10.9.8`; `npm ci` succeeded, lockfile unchanged,
   dependency audit reported zero vulnerabilities.
@@ -161,6 +165,35 @@ flags remain disabled. Real venue enrolment is separate from demo access.
 `BAR_PILOT_DEMO_ENABLED` and `BAR_PILOT_DEMO_CUSTOMER_IDS` limit test credits to
 the isolated labelled staging fixture. The public customer API cannot set a
 balance, and ordinary staff cannot choose arbitrary point values.
+
+### Configured-Supabase demo publication: 2026-09-16
+
+Hosted discovery returned HTTP 200 with zero venues: staging Supabase had no
+directory records, so reconciliation excluded all 45 active local profiles.
+The 135 historical price rows cannot independently create viewer results.
+The isolated fixture was not prepared; its configured-Supabase publication gap
+was identified from the source path, not demonstrated by a hosted fixture test.
+
+The correction permits only the reserved, active, `pilot-demo`-tagged fixture,
+with both pilot flags enabled, matching venue/customer allowlists and its saved
+four-role binding, on exact permanent staging or the isolated local test runtime.
+Public names retain a `— DEMO` label even after manager edits.
+Ordinary venues retain remote directory eligibility, operational status and
+seven-day verification. Manager editing or pilot enrolment alone grants no
+exception. No remote verification is fabricated or historical synthetic
+catalogue published.
+
+Earlier local browser evidence had Supabase configuration absent and did not
+exercise this branch. The focused regression uses the existing service client
+override with an empty remote directory; this local stub coverage cannot
+establish hosted Supabase or Google acceptance.
+
+Hosted setup still requires four distinct genuine administrator, manager, staff
+and customer identities; three exist and the separate staff identity is pending.
+After reviewed deployment and legitimate fixture setup, retest public venue,
+hours, beers/sizes/stock/prices and the complete phone/staff reward loop.
+Hosted publication and live readiness remain unproven. Read-only evidence:
+`/Users/zac/.codex/artifacts/pintpath-partial-hosted-20260916/`.
 
 The customer identity lasts five minutes, belongs to the authenticated session,
 and is consumed by a new purchase. An identical signed purchase retry returns
