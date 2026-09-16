@@ -2260,9 +2260,14 @@ function normalizeVenueOpeningHours(
     for (const [key, value] of Object.entries(source)) {
       if (key === "days" && value && typeof value === "object" && !Array.isArray(value)) {
         // The portal sends a weekly container; its entries, not the container, are days.
+        const days = value as Record<string, unknown>;
+        // Old saves wrote this single-day shape into the container; it is not a weekday.
+        const hasCollapsedContainer = days.open === false && days.openTime === null && days.closeTime === null;
+        const dayEntries = Object.entries(days).filter(([day]) =>
+          !hasCollapsedContainer || !["open", "openTime", "closeTime"].includes(day));
         result.days = {
           ...objectFromUnknown(result.days),
-          ...Object.fromEntries(Object.entries(value).map(([day, hours]) => [day, normalizeDay(hours)])),
+          ...Object.fromEntries(dayEntries.map(([day, hours]) => [day, normalizeDay(hours)])),
         };
       } else {
         result[key] = normalizeDay(value);

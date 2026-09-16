@@ -15912,6 +15912,37 @@ describe("business demo contribution model", () => {
       .toMatchObject({ phone: "03 9000 0123", openingHours: expected });
   });
 
+  it("repairs collapsed weekly hours without retaining the old single-day container keys", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "hours-repair-admin", "admin");
+    const input = { name: "Hours Repair Hotel", address: null, suburb: "Fitzroy", area: "Fitzroy",
+      phone: null, website: null, instagram: null, description: null, openingHours: {},
+      venueTags: [], membershipTier: "basic" as const, active: true };
+    const created = await service.upsertBarProfile(admin, "hours-repair-venue", input);
+    const inventory = getVenueInventoryRepository(repository);
+    const collapsed = { format: "weekly", timezone: "Australia/Melbourne", note: "Existing venue note",
+      days: { open: false, openTime: null, closeTime: null } };
+    // Seed exactly the persisted output from the old normalizer, without normalizing it first.
+    const damaged = await inventory.upsertBarProfile({ ...created.profile, openingHours: collapsed,
+      expectedUpdatedAt: created.profile.updatedAt, now: "2026-05-04T08:00:01.000Z" });
+    const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    const repairedDays = Object.fromEntries(dayKeys.map(day => [day, {
+      open: true, openTime: day === "mon" ? "13:00" : "12:00", closeTime: "23:00",
+    }]));
+    // collectOpeningHours retains loaded keys before writing the seven edited days.
+    await service.upsertBarProfile(admin, "hours-repair-venue", { ...input,
+      expectedUpdatedAt: damaged.updatedAt,
+      openingHours: { ...collapsed, days: { ...collapsed.days, ...repairedDays } } });
+    const expected = { ...collapsed, days: repairedDays };
+    expect((await inventory.getBarProfile("hours-repair-venue"))?.openingHours).toEqual(expected);
+    const portal = await service.getVenuePortal(admin, { venueId: "hours-repair-venue" });
+    expect(portal.profile?.openingHours).toEqual(expected);
+    expect(Object.keys(portal.profile!.openingHours.days as Record<string, unknown>).sort())
+      .toEqual([...dayKeys].sort());
+    expect(await service.getPublicVenueById("hours-repair-venue")).toMatchObject({ openingHours: expected });
+  });
+
   it("serves a public venue detail lookup without private billing metadata", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
