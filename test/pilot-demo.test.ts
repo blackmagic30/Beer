@@ -9,7 +9,7 @@ import { VenueInventoryRepository } from "../src/db/venue-inventory.repository.j
 import { VenueAccessRepository } from "../src/db/venue-access.repository.js";
 import { PintPointRepository } from "../src/db/pint-point.repository.js";
 import { PublicPriceRepository } from "../src/db/public-price.repository.js";
-import { PilotLoopbackDatabase } from "./helpers/pilot-postgres-runtime.js";
+import { PilotLoopbackDatabase, createPilotTestService, createEmptyPilotVenueDirectory } from "./helpers/pilot-postgres-runtime.js";
 import { assertPostgresFixtureDisconnected } from "./helpers/postgres-pool-shutdown.js";
 
 const baseEnvironment = {
@@ -118,5 +118,41 @@ describe.skipIf(!configuredAdminUrl)("pilot fixture on restricted canonical Post
     await expect(preparePilotDemo({ database, environment, emails: { ...emails, customer: emails.staff, staff: emails.customer }, mode: "reset", now })).rejects.toThrow();
     await expect(preparePilotDemo({ database, environment: { ...environment, BAR_PILOT_DEMO_CUSTOMER_IDS: "other" }, emails, mode: "reset", now })).rejects.toThrow("allowlist");
     expect(await new PintPointRepository(database).getPintPointBalance("demo-customer")).toMatchObject({ balance: 49 });
+  });
+  it("publishes the canonical bound fixture through the service with an empty remote directory", async () => {
+    await preparePilotDemo({ database, environment, emails, mode: "setup", now });
+    const { env } = await import("../src/config/env.js");
+    const config = { ...env, NODE_ENV: "test" as const, PUBLIC_BASE_URL: environment.PUBLIC_BASE_URL,
+      DATABASE_URL: environment.DATABASE_URL, BAR_PILOT_ENABLED: true, BAR_PILOT_DEMO_ENABLED: true,
+      BAR_PILOT_VENUE_IDS: PILOT_DEMO_VENUE_ID, BAR_PILOT_DEMO_CUSTOMER_IDS: "demo-customer",
+      COMMERCIAL_LAUNCH_ENABLED: false, PINT_POINTS_REWARDS_ENABLED: false,
+      SUPABASE_URL: undefined, SUPABASE_ANON_KEY: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined };
+    const remote = createEmptyPilotVenueDirectory();
+    const service = createPilotTestService(database, config, remote);
+    expect((await service.listVenuesPage("Pilot", 1)).venues.map(venue => venue.id)).toEqual([PILOT_DEMO_VENUE_ID]);
+    expect(await service.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toMatchObject({ latitude: -37.804, name: "PintPath Pilot Hotel — DEMO" });
+    const inventory = new VenueInventoryRepository(database);
+    const customer = (await new AccountSessionRepository(database).getAccountById("demo-customer"))!;
+    const before = await service.listPriceRecords(customer, { venueId: PILOT_DEMO_VENUE_ID, limit: 10 });
+    expect(before.records).toHaveLength(3);
+    const beer = (await inventory.listBarBeers(PILOT_DEMO_VENUE_ID))[0]!;
+    await inventory.upsertBarBeer({ ...beer, price: 11.5, onTap: true, inStock: true,
+      expectedUpdatedAt: beer.updatedAt, now: new Date().toISOString() });
+    const edited = await service.listPriceRecords(customer, { venueId: PILOT_DEMO_VENUE_ID, limit: 10 });
+    expect(edited.records.find(record => record.id === `bar_beer:${beer.id}` || record.beerName === beer.beerName))
+      .toMatchObject({ price: 11.5, isOnTap: "yes" });
+    for (const override of [{ BAR_PILOT_ENABLED: false }, { BAR_PILOT_DEMO_ENABLED: false },
+      { BAR_PILOT_VENUE_IDS: "other" }, { BAR_PILOT_DEMO_CUSTOMER_IDS: "other" },
+      { NODE_ENV: "production" as const, PUBLIC_BASE_URL: "https://pintpath.au" }]) {
+      const blocked = createPilotTestService(database, { ...config, ...override }, remote);
+      expect((await blocked.listVenuesPage(undefined, 10)).venues).toEqual([]);
+      expect(await blocked.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toBeNull();
+      expect((await blocked.listPriceRecords(customer, { venueId: PILOT_DEMO_VENUE_ID, limit: 10 })).records).toEqual([]);
+    }
+    await database.prepare("UPDATE venue_profiles SET active = FALSE WHERE venue_id = ?").run(PILOT_DEMO_VENUE_ID);
+    expect(await service.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toBeNull();
+    expect((await service.listVenuesPage(undefined, 10)).venues).toEqual([]);
+    await database.prepare("DELETE FROM venue_profiles WHERE venue_id = ?").run(PILOT_DEMO_VENUE_ID);
+    expect(await service.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toBeNull();
   });
 });

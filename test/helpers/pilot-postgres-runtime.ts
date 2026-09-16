@@ -112,7 +112,18 @@ export class PilotLoopbackDatabase implements SqlDatabase {
     completedQueries: this.completedQueries, failedQueries: 0, transactionFailures: 0, lastQueryDurationMs: null }; }
 }
 
-export function createPilotTestService(database: SqlDatabase, config: ConstructorParameters<typeof BusinessService>[1]) {
+export function createEmptyPilotVenueDirectory() {
+  const builder = {
+    select: () => builder, eq: () => builder, gte: () => builder, in: () => builder,
+    or: () => builder, range: () => builder, limit: () => builder,
+    maybeSingle: async () => ({ data: null, error: null }),
+    order: (column: string) => column === "name" ? builder : Promise.resolve({ data: [], error: null, count: 0 }),
+  };
+  return { from: () => builder } as unknown as NonNullable<ConstructorParameters<typeof BusinessService>[32]>;
+}
+
+export function createPilotTestService(database: SqlDatabase, config: ConstructorParameters<typeof BusinessService>[1],
+  supabaseOverride?: ConstructorParameters<typeof BusinessService>[32]) {
   return new BusinessService(createUnavailableLegacyBusinessRepository(), config,
     new PublicVenueDirectoryRepository(database),
     new PublicPriceRepository(database),
@@ -143,7 +154,7 @@ export function createPilotTestService(database: SqlDatabase, config: Constructo
     new VenuePendingChangeRepository(database),
     new VenueDataReadRepository(database),
     async () => { throw new Error("Account deletion is outside this disposable pilot browser fixture."); },
-    new BeerCatalogRepository(database), undefined, undefined, undefined, undefined,
+    new BeerCatalogRepository(database), undefined, supabaseOverride, undefined, undefined,
     async () => ({ ok: true, foreignKeyViolations: 0 }),
     new SavedUpdatesReadRepository(database), new PintPointRepository(database),
   );

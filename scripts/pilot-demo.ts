@@ -12,12 +12,14 @@ import { VenueInventoryRepository } from "../src/db/venue-inventory.repository.j
 import { createRuntimePersistence } from "../src/db/runtime-persistence.js";
 import type { SqlDatabase } from "../src/db/sql-database.js";
 import { isRestoreRehearsalEnvironment } from "./lib/operator-mutation-guard.js";
+import {
+  PILOT_DEMO_VENUE_ID, PILOT_DEMO_NAME, PILOT_DEMO_FIXTURE_KEY as FIXTURE_KEY,
+  PILOT_DEMO_STAGING_ORIGIN as STAGING_ORIGIN,
+  PILOT_DEMO_STAGING_ENVIRONMENT_ID as STAGING_ENVIRONMENT_ID,
+  type PilotDemoBinding as Binding,
+} from "../src/lib/pilot-demo-fixture.js";
 
-export const PILOT_DEMO_VENUE_ID = "pintpath-pilot-demo:venue:v1";
-export const PILOT_DEMO_NAME = "PintPath Pilot Hotel — DEMO";
-const FIXTURE_KEY = "pilot-demo:fixture:v1";
-const STAGING_ORIGIN = "https://beer-staging.up.railway.app";
-const STAGING_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
+export { PILOT_DEMO_VENUE_ID, PILOT_DEMO_NAME };
 export const PILOT_DEMO_BEERS = Object.freeze([
   { name: "Carlton Draught", key: "carlton_draft", price: 13, brewery: "Carlton & United", style: "Lager", abv: 4.6 },
   { name: "Guinness", key: "guinness", price: 14.5, brewery: "Guinness", style: "Stout", abv: 4.2 },
@@ -25,7 +27,6 @@ export const PILOT_DEMO_BEERS = Object.freeze([
 ]);
 type Mode = "preflight" | "setup" | "reset";
 type Emails = { operator: string; manager: string; staff: string; customer: string };
-type Binding = { version: 1; venueId: string; operator: string; manager: string; staff: string; customer: string };
 type Environment = Readonly<Record<string, string | undefined>>;
 
 function fail(message: string): never { throw new Error(message); }

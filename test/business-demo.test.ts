@@ -55,6 +55,7 @@ import { AccountDeletionNotificationCoordinator } from "../src/lib/account-delet
 import { createSqliteAccountDeletionSecretPhysicalCheckpoint } from "../src/lib/account-deletion-secret-checkpoint.js";
 import { createPublicVenuePageHandler } from "../src/app.js";
 import { SESSION_COOKIE_NAME } from "../src/lib/session-cookie.js";
+import { PILOT_DEMO_VENUE_ID, PILOT_DEMO_NAME, PILOT_DEMO_FIXTURE_KEY } from "../src/lib/pilot-demo-fixture.js";
 import { getZonedMonthKey, getZonedMonthRangeIso } from "../src/lib/time.js";
 import { createAdminRouter } from "../src/modules/admin/admin.routes.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
@@ -6818,6 +6819,92 @@ describe("production hardening", () => {
     const supabaseCallsBeforeLocalLookup = from.mock.calls.length;
     expect(await service.getPublicVenueById(textVenueId)).toBeNull();
     expect(from.mock.calls.length).toBeGreaterThan(supabaseCallsBeforeLocalLookup);
+  });
+
+  it("publishes only the bound isolated pilot demo with empty Supabase and reflects manager edits", async () => {
+    const { repository } = createRepository();
+    const operator = createAccount(repository, "publication-operator", "admin");
+    const manager = createAccount(repository, "publication-manager");
+    const staff = createAccount(repository, "publication-staff");
+    const customer = createAccount(repository, "publication-customer");
+    const config = { COMMERCIAL_LAUNCH_ENABLED: false, PINT_POINTS_REWARDS_ENABLED: false,
+      DATABASE_URL: "postgresql://localhost/pintpath_pilot_publication?sslmode=disable",
+      BAR_PILOT_ENABLED: true, BAR_PILOT_DEMO_ENABLED: true,
+      BAR_PILOT_VENUE_IDS: `${PILOT_DEMO_VENUE_ID},ordinary-pilot`, BAR_PILOT_DEMO_CUSTOMER_IDS: customer.id };
+    const builder = {
+      select: vi.fn(() => builder), eq: vi.fn(() => builder), gte: vi.fn(() => builder),
+      in: vi.fn(() => builder), or: vi.fn(() => builder), range: vi.fn(() => builder),
+      limit: vi.fn(() => builder), maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      order: vi.fn((column: string) => column === "name" ? builder : Promise.resolve({ data: [], error: null, count: 0 })),
+    };
+    const supabase = { from: vi.fn(() => builder) } as never;
+    const service = createBusinessService(repository, config, undefined, supabase);
+    const profileInput = { name: PILOT_DEMO_NAME, address: "120 Brunswick Street", suburb: "Fitzroy", area: "Inner North",
+      phone: null, website: null, instagram: null, description: "Isolated demonstration", openingHours: {},
+      venueTags: ["pilot-demo"], membershipTier: "basic" as const, acceptsPintPathCodes: true, active: true };
+    await service.upsertBarProfile(operator, PILOT_DEMO_VENUE_ID, profileInput);
+    await service.upsertBarProfile(operator, "ordinary-pilot", { ...profileInput, name: "Ordinary Hotel", venueTags: [] });
+    await getVenueIdentityRepository(repository).upsertVenueLocationCache({ venueId: PILOT_DEMO_VENUE_ID,
+      venueName: PILOT_DEMO_NAME, suburb: "Fitzroy", latitude: -37.804, longitude: 144.978, expectedUpdatedAt: null, now: NOW });
+    await venueAccessRepositories.get(repository)!.assignVenueManager({ assignmentId: "publication-manager-assignment",
+      adminAccountId: operator.id, userId: manager.id, venueId: PILOT_DEMO_VENUE_ID,
+      venueName: PILOT_DEMO_NAME, suburb: "Fitzroy", now: NOW });
+    const binding = { version: 1, venueId: PILOT_DEMO_VENUE_ID, operator: operator.id,
+      manager: manager.id, staff: staff.id, customer: customer.id };
+    // An allowlist, profile marker and cached coordinates alone do not publish a fixture.
+    expect((await service.listVenuesPage(undefined, 10)).venues).toEqual([]);
+    expect(await service.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toBeNull();
+    await systemStateRepositories.get(repository)!.set(PILOT_DEMO_FIXTURE_KEY, binding, NOW);
+
+    const first = await service.listVenuesPage("Pilot", 1, 0);
+    expect(first.venues.map(venue => venue.id)).toEqual([PILOT_DEMO_VENUE_ID]);
+    expect(first.pagination).toEqual({ total: 1, limit: 1, offset: 0, hasMore: false });
+    expect((await service.listVenuesPage("Pilot", 1, 1)).venues).toEqual([]);
+    expect((await service.listVenuesPage("not-a-match", 10)).pagination.total).toBe(0);
+    expect((await service.listVenuesPage(undefined, 10)).venues.map(venue => venue.id)).toEqual([PILOT_DEMO_VENUE_ID]);
+    expect(await service.getPublicVenueById("ordinary-pilot")).toBeNull();
+    expect(await service.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toMatchObject({ name: PILOT_DEMO_NAME, latitude: -37.804 });
+    expect(first.venues[0]).not.toHaveProperty("businessStatus");
+    expect(first.venues[0]).not.toHaveProperty("lastCheckedAt");
+
+    const current = await getVenueInventoryRepository(repository).getBarProfile(PILOT_DEMO_VENUE_ID);
+    await service.upsertBarProfile(manager, PILOT_DEMO_VENUE_ID, { ...profileInput,
+      name: "Updated Pilot Hotel", description: "Updated by the venue manager", expectedUpdatedAt: current!.updatedAt,
+      openingHours: { fri: { open: true, openTime: "14:00", closeTime: "23:00" } } });
+    const beerInput = { beerName: "Carlton Draught", brewery: null, style: null, abv: null,
+      serveSize: "schooner", price: 11, onTap: true, inStock: true, notes: null,
+      priceConfirmed: true, stockConfirmed: true };
+    const created = await service.upsertBarBeer(manager, PILOT_DEMO_VENUE_ID, beerInput);
+    await service.upsertBarBeer(manager, PILOT_DEMO_VENUE_ID, { ...beerInput,
+      id: created.beer.id, expectedUpdatedAt: created.beer.updatedAt, price: 12 });
+    const auth = createSession(repository, customer.id, "publication-customer-session");
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+    await withHttpServer(app, async baseUrl => {
+      const directory = await fetch(`${baseUrl}/api/business/venues?q=Pilot&limit=1`, { headers: { Authorization: auth } });
+      expect(directory.status).toBe(200);
+      expect(directory.headers.get("cache-control")).toBe("private, no-store");
+      expect((await directory.json()).data.venues[0]).toMatchObject({ id: PILOT_DEMO_VENUE_ID,
+        name: "Updated Pilot Hotel — DEMO", description: "Updated by the venue manager",
+        openingHours: { fri: { openTime: "14:00" } } });
+      const prices = await fetch(`${baseUrl}/api/business/price-records?venueId=${encodeURIComponent(PILOT_DEMO_VENUE_ID)}`, { headers: { Authorization: auth } });
+      expect(prices.status).toBe(200);
+      expect((await prices.json()).data.records).toEqual([expect.objectContaining({ price: 12, servingSize: "schooner", isOnTap: "yes", venueName: "Updated Pilot Hotel — DEMO" })]);
+    });
+    const editedBeer = await getVenueInventoryRepository(repository).getBarBeerById(created.beer.id);
+    const offTap = await service.upsertBarBeer(manager, PILOT_DEMO_VENUE_ID, { ...beerInput,
+      id: created.beer.id, expectedUpdatedAt: editedBeer!.updatedAt, onTap: false });
+    expect((await service.listPriceRecords(customer, { venueId: PILOT_DEMO_VENUE_ID, limit: 10 })).records).toEqual([]);
+    await service.upsertBarBeer(manager, PILOT_DEMO_VENUE_ID, { ...beerInput,
+      id: created.beer.id, expectedUpdatedAt: offTap.beer.updatedAt, inStock: false });
+    expect((await service.listPriceRecords(customer, { venueId: PILOT_DEMO_VENUE_ID, limit: 10 })).records).toEqual([]);
+    expect(await service.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toMatchObject({ description: "Updated by the venue manager" });
+    // Ownership is read again, so a stale cached page/detail cannot authorise later reads.
+    await systemStateRepositories.get(repository)!.set(PILOT_DEMO_FIXTURE_KEY, { ...binding, staff: manager.id }, NOW);
+    expect((await service.listVenuesPage(undefined, 10)).venues).toEqual([]);
+    expect(await service.getPublicVenueById(PILOT_DEMO_VENUE_ID)).toBeNull();
   });
 
   it("deduplicates local and remote identities before applying page offsets", async () => {

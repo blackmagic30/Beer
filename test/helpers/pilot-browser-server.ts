@@ -27,7 +27,7 @@ Object.assign(process.env, {
   REPORT_EMAIL_MODE: "disabled", ACCOUNT_DELETION_NOTICE_MODE: "disabled",
 });
 const [expressModule, { env }, { createBusinessRouter }, { errorHandler }, { createPublicVenuePageHandler },
-  { PilotLoopbackDatabase, createPilotTestService }, { AccountSessionRepository }, { VenueInventoryRepository },
+  { PilotLoopbackDatabase, createPilotTestService, createEmptyPilotVenueDirectory }, { AccountSessionRepository }, { VenueInventoryRepository },
   { VenueAccessRepository }, { VenueIdentityRepository }, { CURRENT_LEGAL_POLICY_VERSION }] = await Promise.all([
   import("express"), import("../../src/config/env.js"), import("../../src/modules/business/business.routes.js"),
   import("../../src/middleware/error-handler.js"), import("../../src/app.js"), import("./pilot-postgres-runtime.js"),
@@ -95,8 +95,15 @@ await access.inviteCounterStaff({ invitationToken, inviterAccountId: fixtureAcco
 await access.respondToCounterStaffInvitation({ invitationToken, userId: fixtureAccounts.staff!.id, decision: "accept", now });
 const { PintPointRepository } = await import("../../src/db/pint-point.repository.js");
 await new PintPointRepository(database).prepareDemoBalance({ userId: customerId, venueId, actorUserId: fixtureAccounts.manager!.id, target: 49, now });
-const service = createPilotTestService(database, { ...env, SOURCE_EVIDENCE_STORAGE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), "pilot-evidence-")),
-  SOURCE_EVIDENCE_SIGNING_SECRET: crypto.randomBytes(32).toString("hex") });
+const { SystemStateRepository } = await import("../../src/db/system-state.repository.js");
+const { PILOT_DEMO_FIXTURE_KEY } = await import("../../src/lib/pilot-demo-fixture.js");
+await new SystemStateRepository(database).set(PILOT_DEMO_FIXTURE_KEY, { version: 1, venueId,
+  operator: fixtureAccounts.admin!.id, manager: fixtureAccounts.manager!.id,
+  staff: fixtureAccounts.staff!.id, customer: customerId }, now);
+const service = createPilotTestService(database, { ...env, DATABASE_URL: runtimeUrl.toString(),
+  SOURCE_EVIDENCE_STORAGE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), "pilot-evidence-")),
+  SOURCE_EVIDENCE_SIGNING_SECRET: crypto.randomBytes(32).toString("hex") },
+process.env.PINTPATH_PILOT_BROWSER_EMPTY_REMOTE_DIRECTORY === "true" ? createEmptyPilotVenueDirectory() : undefined);
 const app = expressModule.default();
 app.use(expressModule.default.json());
 app.get("/health", (_req, res) => res.json({ ok: true, runtime: "postgres", fixture: true }));
