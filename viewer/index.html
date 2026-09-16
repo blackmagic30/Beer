@@ -3691,7 +3691,8 @@
       }
 
       .beerPopup__featuredRow,
-      .beerPopup__beerRow {
+      .beerPopup__beerRow,
+      .venueDetailOverlay__body .beerPopup__beerRow {
         grid-template-columns: minmax(0, 1fr);
       }
 
@@ -3703,6 +3704,8 @@
         min-width: 0;
         align-items: flex-start;
         flex-direction: row;
+        flex-wrap: wrap;
+        gap: 10px;
         justify-content: space-between;
       }
 
