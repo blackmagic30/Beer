@@ -216,6 +216,11 @@
                   </div>
                 </div>
 
+                <label class="field">Receipt or order reference
+                  <input name="transactionReference" minlength="4" maxlength="120" autocomplete="off" placeholder="Optional" aria-describedby="memberReferenceHint" />
+                  <span id="memberReferenceHint" class="fieldHint">Optional; use at least 4 characters. After changing it, select Check member again.</span>
+                </label>
+
                 <div id="memberPreviewStatus" class="memberPreviewStatus" role="status" hidden></div>
 
                 <fieldset id="memberPurchaseFields" class="staffCounterPurchaseFields" disabled>
@@ -241,9 +246,6 @@
                         <option value="3">3</option>
                         <option value="4">4</option>
                       </select>
-                    </label>
-                    <label class="field">Receipt or order reference
-                      <input name="transactionReference" maxlength="120" autocomplete="off" placeholder="Optional" />
                     </label>
                   </div>
                   <button id="recordMemberPurchaseButton" class="button button--primary" type="submit">Record purchase</button>
@@ -761,6 +763,7 @@
     let activeMemberCheckoutToken = "";
     let activeMemberCheckoutExpiresAt = "";
     let activeMemberPreviewReference = "";
+    let memberPreviewRequestSequence = 0;
     let pendingVoidRecordId = "";
     let memberQrStream = null;
     let memberQrTimer = null;
@@ -2973,6 +2976,7 @@
     }
 
     function resetMemberPreview(options = {}) {
+      memberPreviewRequestSequence += 1;
       activeMemberPreviewCode = "";
       activeMemberPreviewAccountId = "";
       activeMemberCheckoutToken = "";
@@ -3245,22 +3249,31 @@
       const code = normalizeMemberCode(codeInput?.value);
       if (codeInput) codeInput.value = code;
       resetMemberPreview({ keepStatus: true });
+      const requestSequence = memberPreviewRequestSequence;
       if (code.length !== 6) {
         MelbBeerBusiness.setStatus(status, "Enter the current 6-character member code.", true);
         codeInput?.focus();
         return null;
       }
 
+      const referenceInput = field(form, "transactionReference");
+      const enteredReference = String(referenceInput?.value || "").trim();
+      if (enteredReference && enteredReference.length < 4) {
+        MelbBeerBusiness.setStatus(status, "Enter at least 4 characters for the receipt or order reference, or leave it blank.", true);
+        referenceInput?.focus();
+        return null;
+      }
+
       if (button instanceof HTMLButtonElement) button.disabled = true;
       MelbBeerBusiness.setStatus(status, "Checking member code...");
       try {
-        const referenceInput = field(form, "transactionReference");
-        const transactionReference = String(referenceInput?.value || "").trim() || generateCounterReference();
+        const transactionReference = enteredReference || generateCounterReference();
         if (referenceInput) referenceInput.value = transactionReference;
         const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/member-preview`, {
           method: "POST",
           body: JSON.stringify({ code, transactionReference }),
         });
+        if (requestSequence !== memberPreviewRequestSequence) return null;
         activeMemberPreviewCode = code;
         activeMemberPreviewAccountId = String(result.accountId || "");
         activeMemberCheckoutToken = String(result.checkoutToken || "");
@@ -3270,6 +3283,7 @@
         clearStatus(status);
         return result;
       } catch (error) {
+        if (requestSequence !== memberPreviewRequestSequence) return null;
         resetMemberPreview({ keepStatus: true });
         MelbBeerBusiness.setStatus(status, error.message || "Could not check this member code.", true);
         codeInput?.focus();
@@ -5243,8 +5257,8 @@
           if (memberCodeInput.value !== normalizedCode) memberCodeInput.value = normalizedCode;
           if (normalizedCode !== activeMemberPreviewCode) resetMemberPreview();
         });
-        field(memberPurchaseForm, "transactionReference").addEventListener("input", (event) => {
-          if (String(event.currentTarget.value || "").trim() !== activeMemberPreviewReference) resetMemberPreview();
+        field(memberPurchaseForm, "transactionReference").addEventListener("input", () => {
+          resetMemberPreview();
         });
         document.getElementById("checkMemberButton")?.addEventListener("click", () => {
           void checkMemberCode();

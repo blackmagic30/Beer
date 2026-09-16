@@ -4,6 +4,7 @@ import path from "node:path";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertPilotDemoTarget, PILOT_DEMO_VENUE_ID, preparePilotDemo } from "../scripts/pilot-demo.js";
+import { CURRENT_LEGAL_POLICY_VERSION } from "../src/config/legal.js";
 import { AccountSessionRepository } from "../src/db/account-session.repository.js";
 import { VenueInventoryRepository } from "../src/db/venue-inventory.repository.js";
 import { VenueAccessRepository } from "../src/db/venue-access.repository.js";
@@ -63,7 +64,8 @@ describe.skipIf(!configuredAdminUrl)("pilot fixture on restricted canonical Post
     for (const name of ["operator", "manager", "staff", "customer"] as const) {
       await accounts.createAccount({ id: `demo-${name}`, email: emails[name], passwordHash: "fixture-password-hash",
         role: name === "operator" ? "admin" : "user", subscriptionStatus: name === "operator" ? "admin" : "free",
-        emailVerifiedAt: now, now });
+        emailVerifiedAt: now, termsAcceptedAt: now, privacyAcceptedAt: now,
+        termsVersion: CURRENT_LEGAL_POLICY_VERSION, privacyVersion: CURRENT_LEGAL_POLICY_VERSION, now });
       await accounts.updateAgeConfirmed(`demo-${name}`, now);
     }
   }, 30000);
@@ -119,6 +121,36 @@ describe.skipIf(!configuredAdminUrl)("pilot fixture on restricted canonical Post
     await expect(preparePilotDemo({ database, environment: { ...environment, BAR_PILOT_DEMO_CUSTOMER_IDS: "other" }, emails, mode: "reset", now })).rejects.toThrow("allowlist");
     expect(await new PintPointRepository(database).getPintPointBalance("demo-customer")).toMatchObject({ balance: 49 });
   });
+  it("roundtrips the manager portal weekly hours through PostgreSQL and public readback", async () => {
+    await preparePilotDemo({ database, environment, emails, mode: "setup", now });
+    const { env } = await import("../src/config/env.js");
+    const config = { ...env, NODE_ENV: "test" as const, PUBLIC_BASE_URL: environment.PUBLIC_BASE_URL,
+      DATABASE_URL: environment.DATABASE_URL, BAR_PILOT_ENABLED: true, BAR_PILOT_DEMO_ENABLED: true,
+      BAR_PILOT_VENUE_IDS: PILOT_DEMO_VENUE_ID, BAR_PILOT_DEMO_CUSTOMER_IDS: "demo-customer",
+      COMMERCIAL_LAUNCH_ENABLED: false, PINT_POINTS_REWARDS_ENABLED: false,
+      SUPABASE_URL: undefined, SUPABASE_ANON_KEY: undefined, SUPABASE_SERVICE_ROLE_KEY: undefined };
+    const service = createPilotTestService(database, config, createEmptyPilotVenueDirectory());
+    const manager = (await new AccountSessionRepository(database).getAccountById("demo-manager"))!;
+    const profile = (await new VenueInventoryRepository(database).getBarProfile(PILOT_DEMO_VENUE_ID))!;
+    const days = Object.fromEntries(["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map(day => [day, {
+      open: true, openTime: day === "mon" ? "13:00" : "12:00", closeTime: "23:00", closed: false,
+    }]));
+    const weeklyHours = { format: "weekly", timezone: "Australia/Melbourne", days };
+    const expectedHours = { ...weeklyHours, days: Object.fromEntries(Object.entries(days)
+      .map(([day, { closed: _closed, ...hours }]) => [day, hours])) };
+    await service.upsertBarProfile(manager, PILOT_DEMO_VENUE_ID, { ...profile,
+      phone: "03 9000 0123", expectedUpdatedAt: profile.updatedAt, openingHours: weeklyHours });
+    expect((await new VenueInventoryRepository(database).getBarProfile(PILOT_DEMO_VENUE_ID))?.openingHours)
+      .toEqual(expectedHours);
+    // A fresh service must render what was saved, without relying on local state.
+    const reloaded = createPilotTestService(database, config, createEmptyPilotVenueDirectory());
+    expect((await reloaded.getVenuePortal(manager, { venueId: PILOT_DEMO_VENUE_ID })).profile?.openingHours)
+      .toEqual(expectedHours);
+    expect(await reloaded.getPublicVenueById(PILOT_DEMO_VENUE_ID))
+      .toMatchObject({ phone: "03 9000 0123", openingHours: expectedHours });
+    expect((await reloaded.listVenuesPage("Pilot", 1)).venues[0]?.openingHours).toEqual(expectedHours);
+  });
+
   it("publishes the canonical bound fixture through the service with an empty remote directory", async () => {
     await preparePilotDemo({ database, environment, emails, mode: "setup", now });
     const { env } = await import("../src/config/env.js");
