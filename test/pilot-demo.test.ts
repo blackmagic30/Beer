@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { assertPilotDemoTarget, PILOT_DEMO_VENUE_ID, preparePilotDemo } from "../scripts/pilot-demo.js";
 import { CURRENT_LEGAL_POLICY_VERSION } from "../src/config/legal.js";
 import { AccountSessionRepository } from "../src/db/account-session.repository.js";
@@ -149,6 +149,56 @@ describe.skipIf(!configuredAdminUrl)("pilot fixture on restricted canonical Post
     expect(await reloaded.getPublicVenueById(PILOT_DEMO_VENUE_ID))
       .toMatchObject({ phone: "03 9000 0123", openingHours: expectedHours });
     expect((await reloaded.listVenuesPage("Pilot", 1)).venues[0]?.openingHours).toEqual(expectedHours);
+  });
+
+  it("persists only the existing bound staff password session and rejects revoked access on PostgreSQL", async () => {
+    await preparePilotDemo({ database, environment, emails, mode: "setup", now });
+    const accounts = new AccountSessionRepository(database);
+    const timestamp = new Date().toISOString();
+    await accounts.linkSupabaseAccount({ userId: "demo-staff", supabaseUserId: "provider-demo-staff",
+      email: emails.staff, authProvider: "supabase", displayName: null, avatarUrl: null,
+      emailVerifiedAt: now, mfaLevel: "aal1", mfaVerifiedAt: null, now: timestamp });
+    const { env } = await import("../src/config/env.js");
+    const config = { ...env, NODE_ENV: "production" as const, PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+      DATABASE_URL: environment.DATABASE_URL, BAR_PILOT_ENABLED: true, BAR_PILOT_DEMO_ENABLED: true,
+      BAR_PILOT_VENUE_IDS: PILOT_DEMO_VENUE_ID, BAR_PILOT_DEMO_CUSTOMER_IDS: "demo-customer",
+      COMMERCIAL_LAUNCH_ENABLED: false, ADMIN_EMAILS: "owner@example.test" };
+    // These are isolated fixture claims, never evidence of hosted provider auth.
+    const remote = { auth: { getUser: async () => ({ data: { user: { id: "provider-demo-staff",
+      email: emails.staff, email_confirmed_at: now } }, error: null }) } } as never;
+    const service = createPilotTestService(database, config, remote);
+    const seconds = Math.floor(Date.now() / 1000);
+    const accessToken = [Buffer.from('{"alg":"HS256"}').toString("base64url"), Buffer.from(JSON.stringify({
+      sub: "provider-demo-staff", iat: seconds, session_id: "pg-staff-password-session",
+      amr: [{ method: "password", timestamp: seconds }],
+    })).toString("base64url"), "local-test-signature"].join(".");
+    const input = { accessToken, credentialCeremony: "browser_memory_v1" as const, pilotStaffSignIn: true as const };
+    const scope = { RAILWAY_ENVIRONMENT_NAME: "staging", RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+      RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35", RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0" };
+    const access = new VenueAccessRepository(database);
+    try {
+      Object.entries(scope).forEach(([key, value]) => vi.stubEnv(key, value));
+      expect(await service.getPublicConfig()).toMatchObject({ pilotStaffEmailSignInEnabled: true });
+      const before = await database.prepare("SELECT id, role FROM accounts ORDER BY id").all();
+      const signedIn = await service.loginWithSupabaseAccessToken(input);
+      expect(signedIn.account.id).toBe("demo-staff");
+      expect(await database.prepare("SELECT user_id FROM auth_sessions WHERE revoked_at IS NULL").all()).toEqual([{ user_id: "demo-staff" }]);
+      expect(await database.prepare("SELECT id, role FROM accounts ORDER BY id").all()).toEqual(before);
+      await access.revokeVenueAssignment({ actorAccountId: "demo-operator", userId: "demo-staff", venueId: PILOT_DEMO_VENUE_ID,
+        expectedAccessLevel: "counter_staff", now: timestamp });
+      const sessions = await database.prepare("SELECT token_hash, user_id FROM auth_sessions ORDER BY token_hash").all();
+      expect(await service.getPublicConfig()).toMatchObject({ pilotStaffEmailSignInEnabled: false });
+      await expect(service.loginWithSupabaseAccessToken(input)).rejects.toThrow("assigned staging test staff");
+      expect(await database.prepare("SELECT token_hash, user_id FROM auth_sessions ORDER BY token_hash").all()).toEqual(sessions);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    // Restore only this disposable fixture's assignment for the remaining tests.
+    const invitationToken = crypto.randomUUID();
+    await access.inviteCounterStaff({ invitationToken, inviterAccountId: "demo-operator", userId: "demo-staff",
+      venueId: PILOT_DEMO_VENUE_ID, venueName: "PintPath Pilot Hotel — DEMO", suburb: "Fitzroy", now: timestamp,
+      expiresAt: new Date(Date.parse(timestamp) + 86_400_000).toISOString() });
+    await access.respondToCounterStaffInvitation({ invitationToken, userId: "demo-staff", decision: "accept", now: timestamp });
   });
 
   it("publishes the canonical bound fixture through the service with an empty remote directory", async () => {

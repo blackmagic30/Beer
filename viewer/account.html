@@ -690,6 +690,8 @@
     const CONSUMER_PAID_ENROLLMENT_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.consumerPaidEnrollmentEnabled === true;
     const WEB_EMAIL_AUTH_ENABLED = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);
+    const PILOT_STAFF_EMAIL_SIGN_IN_ENABLED = window.location.origin === "https://beer-staging.up.railway.app"
+      && window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.pilotStaffEmailSignInEnabled === true;
 
     const state = {
       accountData: null,
@@ -719,6 +721,7 @@
       accountSessionTotal: 0,
       accountUiEpoch: 0,
       authFlowEpoch: 0,
+      pilotStaffSignIn: false,
       dashboardViewRecordedAccountId: null,
       dashboardViewRecording: null,
       savedUpdatesViewedRevisions: new Set(),
@@ -1296,6 +1299,8 @@
 
     function showLoggedOut(message = "Enter your details to continue.", isError = false) {
       state.authFlowEpoch += 1;
+      state.pilotStaffSignIn = false;
+      $("returningLegalAcceptanceForm").hidden = true;
       invalidateAccountBoundUi();
       MelbBeerBusiness.setAccountContext(null);
       state.accountData = null;
@@ -1420,12 +1425,36 @@
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
     }
 
+    function configureEmailAuthUi() {
+      if (WEB_EMAIL_AUTH_ENABLED) {
+        document.querySelectorAll("[data-local-email-auth]").forEach((element) => { element.hidden = false; });
+        $("loginHeading").textContent = "Welcome back";
+        $("loginLead").textContent = "Sign in to upload venue data, view your submissions, and track contribution progress.";
+      } else {
+        $("authTabs").hidden = true;
+        $("loginForm").hidden = false;
+        $("signupForm").hidden = true;
+        $("webEmailLoginFields").hidden = !PILOT_STAFF_EMAIL_SIGN_IN_ENABLED;
+        $("webEmailLoginActions").hidden = !PILOT_STAFF_EMAIL_SIGN_IN_ENABLED;
+        $("webEmailAuthUtilities").hidden = !PILOT_STAFF_EMAIL_SIGN_IN_ENABLED;
+        $("passwordResetLink").hidden = !PILOT_STAFF_EMAIL_SIGN_IN_ENABLED;
+        $("resendConfirmationLink").hidden = true;
+        if (PILOT_STAFF_EMAIL_SIGN_IN_ENABLED) {
+          $("loginHeading").textContent = "Sign in to Pint Path";
+          $("loginLead").textContent = "Continue with Google, or use email and password for the assigned staging test staff account. No email account creation is available here.";
+        }
+      }
+    }
+
     function showAuthTab(tab, options = {}) {
+      $("returningLegalAcceptanceForm").hidden = true;
       if (!WEB_EMAIL_AUTH_ENABLED) {
         $("authTabs").hidden = true;
         $("loginForm").hidden = false;
         $("signupForm").hidden = true;
-        setAccountStatus($("authStatus"), "Continue with Google to access Pint Path on the web.");
+        setAccountStatus($("authStatus"), PILOT_STAFF_EMAIL_SIGN_IN_ENABLED
+          ? "Assigned staging test staff can sign in with their existing email and password. Other accounts can continue with Google."
+          : "Continue with Google to access Pint Path on the web.");
         return;
       }
       $("returningLegalAcceptanceForm").hidden = true;
@@ -3790,7 +3819,7 @@
 
     async function handleAuth(event, path) {
       event.preventDefault();
-      if (!WEB_EMAIL_AUTH_ENABLED) {
+      if (!WEB_EMAIL_AUTH_ENABLED && (!PILOT_STAFF_EMAIL_SIGN_IN_ENABLED || path.includes("signup"))) {
         MelbBeerBusiness.setStatus(
           $("authStatus"),
           "Email/password sign-in is available in the iOS app. Continue with Google on the website.",
@@ -3806,6 +3835,8 @@
       body.termsAccepted = body.termsAccepted === "on";
       body.privacyAccepted = body.privacyAccepted === "on";
       const isSignup = path.includes("signup");
+      state.pilotStaffSignIn = !WEB_EMAIL_AUTH_ENABLED && PILOT_STAFF_EMAIL_SIGN_IN_ENABLED;
+      if (state.pilotStaffSignIn) form.password.value = "";
       let supabaseConfigured = false;
 
       try {
@@ -3837,6 +3868,7 @@
         const isLocalHost = WEB_EMAIL_AUTH_ENABLED;
         const useLocalEmailAuth = isLocalHost && authParams.get("supabaseAuth") !== "1";
         supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient()) && !useLocalEmailAuth;
+        if (state.pilotStaffSignIn && !supabaseConfigured) throw new Error("Staff sign-in is temporarily unavailable. Refresh and try again.");
         if (isSignup) {
           MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" }).catch(() => null);
         }
@@ -3859,7 +3891,8 @@
               return;
             }
           } else {
-            await MelbBeerBusiness.signInWithEmail(body.email, body.password);
+            await MelbBeerBusiness.signInWithEmail(body.email, body.password,
+              state.pilotStaffSignIn ? { pilotStaffSignIn: true } : {});
             if (authFlowId !== state.authFlowEpoch) return;
           }
         } else {
@@ -3873,6 +3906,7 @@
         }
 
         form.reset();
+        state.pilotStaffSignIn = false;
         const dashboard = await refreshAccount();
         if (authFlowId !== state.authFlowEpoch) return;
         if (isSignup && useLocalEmailAuth) {
@@ -3940,8 +3974,10 @@
         await MelbBeerBusiness.syncSupabaseSession({
           applyPendingLegalAcceptance: true,
           authFlowNonce: binding.authFlowNonce,
+          ...(state.pilotStaffSignIn ? { pilotStaffSignIn: true } : {}),
         });
         if (authFlowId !== state.authFlowEpoch) return;
+        state.pilotStaffSignIn = false;
         form.reset();
         form.hidden = true;
         const dashboard = await refreshAccount();
@@ -3980,6 +4016,7 @@
         if (authFlowId !== state.authFlowEpoch) return;
         MelbBeerBusiness.broadcastAuthInvalidation("policy_acceptance_cancelled");
         MelbBeerBusiness.setAuthToken(null);
+        state.pilotStaffSignIn = false;
         $("returningLegalAcceptanceForm").reset();
         showAuthTab("login");
         setAccountStatus($("authStatus"), "Sign-in cancelled. No policy choices were saved.");
@@ -4040,6 +4077,10 @@
       oauthButtons.forEach((button) => {
         button.addEventListener("click", async () => {
           const provider = button.dataset.provider;
+          state.authFlowEpoch += 1;
+          $("returningLegalAcceptanceForm").hidden = true;
+          $("returningLegalAcceptanceForm").reset();
+          state.pilotStaffSignIn = false;
           try {
             setOauthButtonsLoading(true, button);
             const result = await MelbBeerBusiness.signInWithOAuthPopup(provider, {
@@ -4131,17 +4172,7 @@
         window.addEventListener("focus", () => void refreshPintPointWallet());
         document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshPintPointWallet(); });
       }
-      if (WEB_EMAIL_AUTH_ENABLED) {
-        document.querySelectorAll("[data-local-email-auth]").forEach((element) => {
-          element.hidden = false;
-        });
-        $("loginHeading").textContent = "Welcome back";
-        $("loginLead").textContent = "Sign in to upload venue data, view your submissions, and track contribution progress.";
-      } else {
-        $("authTabs").hidden = true;
-        $("loginForm").hidden = false;
-        $("signupForm").hidden = true;
-      }
+      configureEmailAuthUi();
       if (!PINT_POINTS_REWARDS_ENABLED) {
         document.querySelectorAll("[data-pint-points-feature]").forEach((element) => {
           element.hidden = true;
