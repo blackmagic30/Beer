@@ -60,6 +60,14 @@ export function pilotDemoPublicationScopeAllowed(
     && runtime.RAILWAY_SERVICE_ID === "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 }
 
+/** Returning email access is hosted staging only; local fixture publication is separate. */
+export function pilotStaffEmailSignInScopeAllowed(
+  config: PublicationConfig,
+  runtime: Readonly<Record<string, string | undefined>>,
+): boolean {
+  return config.NODE_ENV === "production" && pilotDemoPublicationScopeAllowed(config, runtime);
+}
+
 export function pilotDemoBindingAllowsPublication(value: unknown, customerIds: string | undefined): value is PilotDemoBinding {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const binding = value as Record<string, unknown>;

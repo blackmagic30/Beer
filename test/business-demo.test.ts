@@ -17019,3 +17019,144 @@ describe("business demo contribution model", () => {
       .toEqual([]);
   });
 });
+
+describe("restricted staging staff returning password sign-in", () => {
+  async function fixture(overrides: Partial<ConstructorParameters<typeof BusinessService>[1]> = {}) {
+    const { repository } = createRepository();
+    const accounts = Object.fromEntries(["operator", "manager", "staff", "customer"].map(role => {
+      const account = createAccount(repository, `return-${role}`, role === "operator" ? "admin" : "user");
+      return [role, repository.linkSupabaseAccount({ userId: account.id, supabaseUserId: `provider-${role}`,
+        email: account.email, authProvider: "supabase", displayName: null, avatarUrl: null,
+        emailVerifiedAt: NOW, mfaLevel: "aal1", mfaVerifiedAt: null, now: NOW })];
+    })) as Record<"operator" | "manager" | "staff" | "customer", BusinessAccount>;
+    repository.upsertBarProfile({ barId: PILOT_DEMO_VENUE_ID, name: PILOT_DEMO_NAME,
+      address: null, suburb: "Fitzroy", area: null, phone: null, website: null, instagram: null,
+      description: null, openingHours: {}, venueTags: ["pilot-demo"], membershipTier: "basic",
+      highlightedName: false, premiumBadge: null, promoted: false, featuredSpecialEligible: false,
+      acceptsPintPathCodes: true, active: true, now: NOW });
+    const access = getVenueAccessRepository(repository);
+    const invitationToken = crypto.randomUUID();
+    await access.inviteCounterStaff({ invitationToken, inviterAccountId: accounts.operator.id,
+      userId: accounts.staff.id, venueId: PILOT_DEMO_VENUE_ID, venueName: PILOT_DEMO_NAME,
+      suburb: "Fitzroy", now: NOW, expiresAt: "2026-05-07T08:00:00.000Z" });
+    await access.respondToCounterStaffInvitation({ invitationToken, userId: accounts.staff.id, decision: "accept", now: NOW });
+    const binding = { version: 1, venueId: PILOT_DEMO_VENUE_ID,
+      ...Object.fromEntries(Object.entries(accounts).map(([role, account]) => [role, account.id])) };
+    await systemStateRepositories.get(repository)!.set(PILOT_DEMO_FIXTURE_KEY, binding, NOW);
+    Object.entries({ RAILWAY_ENVIRONMENT_NAME: "staging", RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+      RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35", RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0" })
+      .forEach(([key, value]) => vi.stubEnv(key, value));
+    const provider = { id: accounts.staff.supabaseUserId!, email: accounts.staff.email, email_confirmed_at: NOW };
+    const getUser = vi.fn(async () => ({ data: { user: provider }, error: null }));
+    const service = createBusinessService(repository, {
+      NODE_ENV: "production", PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+      BAR_PILOT_ENABLED: true, BAR_PILOT_DEMO_ENABLED: true, BAR_PILOT_VENUE_IDS: PILOT_DEMO_VENUE_ID,
+      BAR_PILOT_DEMO_CUSTOMER_IDS: accounts.customer.id, ...overrides,
+    }, undefined, { auth: { getUser } } as never);
+    const seconds = Date.parse(NOW) / 1000;
+    const token = (changes: Record<string, unknown> = {}) => testSupabaseAccessToken({
+      sub: provider.id, iat: seconds, session_id: "returning-password-session",
+      amr: [{ method: "password", timestamp: seconds }], ...changes,
+    });
+    const input = () => ({ accessToken: token(), credentialCeremony: "browser_memory_v1" as const, pilotStaffSignIn: true as const });
+    const database = repositoryDatabases.get(repository)!;
+    const snapshot = () => Object.fromEntries(["accounts", "auth_sessions", "venue_manager_assignments", "user_activity_events", "security_audit_log"]
+      .map(table => [table, database.prepare(`SELECT * FROM ${table}`).all()]));
+    return { service, repository, accounts, provider, getUser, token, input, binding, snapshot, database };
+  }
+
+  it("uses the provider-verified existing staff and creates its normal application session", async () => {
+    const f = await fixture();
+    expect(await f.service.getPublicConfig()).toMatchObject({ pilotStaffEmailSignInEnabled: true });
+    expect(JSON.stringify(await f.service.getPublicConfig())).not.toContain(f.accounts.staff.email);
+    const before = f.snapshot();
+    const result = await f.service.loginWithSupabaseAccessToken(f.input());
+    expect(f.getUser).toHaveBeenCalledWith(f.input().accessToken);
+    expect(result.account.id).toBe(f.accounts.staff.id);
+    expect(result.account.role).toBe("user");
+    expect(f.snapshot().venue_manager_assignments).toEqual(before.venue_manager_assignments);
+    expect(f.database.prepare("SELECT count(*) AS n FROM accounts").get()).toEqual({ n: 4 });
+    expect(f.database.prepare("SELECT user_id FROM auth_sessions WHERE revoked_at IS NULL").all()).toEqual([{ user_id: f.accounts.staff.id }]);
+  });
+
+  it.each(["manager", "customer", "operator", "unknown"] as const)("rejects %s before creating any account, session or audit event", async role => {
+    const f = await fixture();
+    f.provider.id = role === "unknown" ? "unknown-provider" : f.accounts[role].supabaseUserId!;
+    f.provider.email = role === "unknown" ? "unknown@example.test" : f.accounts[role].email;
+    const before = f.snapshot();
+    await expect(f.service.loginWithSupabaseAccessToken({ ...f.input(), ageConfirmed: true, termsAccepted: true,
+      privacyAccepted: true, termsVersion: CURRENT_LEGAL_POLICY_VERSION, privacyVersion: CURRENT_LEGAL_POLICY_VERSION }))
+      .rejects.toThrow("assigned staging test staff");
+    expect(f.snapshot()).toEqual(before);
+  });
+
+  it.each([
+    { PUBLIC_BASE_URL: "https://pintpath.au" }, { NODE_ENV: "test" as const },
+    { BAR_PILOT_ENABLED: false }, { BAR_PILOT_DEMO_ENABLED: false },
+    { BAR_PILOT_VENUE_IDS: "different" }, { BAR_PILOT_DEMO_CUSTOMER_IDS: "different" },
+    { RESTORE_REHEARSAL_MODE: true }, { POSTGRES_RECOVERY_REHEARSAL_MODE: true },
+    { ADMIN_EMAILS: "return-staff@example.com" },
+  ])("fails closed for unavailable scope %j", async overrides => {
+    const f = await fixture(overrides);
+    expect(await f.service.getPublicConfig()).toMatchObject({ pilotStaffEmailSignInEnabled: false });
+    const before = f.snapshot();
+    await expect(f.service.loginWithSupabaseAccessToken(f.input())).rejects.toThrow();
+    expect(f.snapshot()).toEqual(before);
+  });
+
+  it.each(["RAILWAY_PROJECT_ID", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_SERVICE_ID", "RAILWAY_ENVIRONMENT_NAME"])("rejects the wrong hosted resource %s", async key => {
+    const f = await fixture();
+    vi.stubEnv(key, "wrong");
+    const before = f.snapshot();
+    expect(await f.service.getPublicConfig()).toMatchObject({ pilotStaffEmailSignInEnabled: false });
+    await expect(f.service.loginWithSupabaseAccessToken(f.input())).rejects.toThrow("assigned staging test staff");
+    expect(f.snapshot()).toEqual(before);
+  });
+
+  it.each(["subject", "provider-subject", "email", "unverified", "password-expired", "password-future", "oauth-only", "missing-password-time", "stale-password-fresh-oauth", "stale-password-fresh-recovery"])("rejects invalid provider/password proof %s", async scenario => {
+    const f = await fixture();
+    const seconds = Date.parse(NOW) / 1000;
+    let changes: Record<string, unknown> = {};
+    if (scenario === "subject") changes = { sub: "different-subject" };
+    if (scenario === "provider-subject") f.provider.id = "different-provider";
+    if (scenario === "email") f.provider.email = "different@example.test";
+    if (scenario === "unverified") f.provider.email_confirmed_at = "";
+    if (scenario === "password-expired") changes = { amr: [{ method: "password", timestamp: seconds - 901 }] };
+    if (scenario === "password-future") changes = { amr: [{ method: "password", timestamp: seconds + 61 }] };
+    if (scenario === "oauth-only") changes = { amr: [{ method: "oauth", timestamp: seconds }] };
+    if (scenario === "missing-password-time") changes = { amr: ["password"] };
+    if (scenario.startsWith("stale-password-fresh-")) changes = { amr: [{ method: "password", timestamp: seconds - 901 },
+      { method: scenario.endsWith("oauth") ? "oauth" : "recovery", timestamp: seconds }] };
+    const before = f.snapshot();
+    await expect(f.service.loginWithSupabaseAccessToken({ ...f.input(), accessToken: f.token(changes) })).rejects.toThrow();
+    expect(f.snapshot()).toEqual(before);
+  });
+
+  it("rechecks revocation and fixture binding instead of trusting the public capability", async () => {
+    const f = await fixture();
+    expect(await f.service.getPublicConfig()).toMatchObject({ pilotStaffEmailSignInEnabled: true });
+    f.database.prepare("UPDATE venue_manager_assignments SET status='revoked' WHERE user_id=?").run(f.accounts.staff.id);
+    let before = f.snapshot();
+    await expect(f.service.loginWithSupabaseAccessToken(f.input())).rejects.toThrow("assigned staging test staff");
+    expect(f.snapshot()).toEqual(before);
+    f.database.prepare("UPDATE venue_manager_assignments SET status='active' WHERE user_id=?").run(f.accounts.staff.id);
+    await systemStateRepositories.get(f.repository)!.set(PILOT_DEMO_FIXTURE_KEY, { ...f.binding, staff: f.accounts.manager.id }, NOW);
+    before = f.snapshot();
+    await expect(f.service.loginWithSupabaseAccessToken(f.input())).rejects.toThrow("assigned staging test staff");
+    expect(f.snapshot()).toEqual(before);
+  });
+
+  it("preserves explicit returning consent and existing-cookie identity checks", async () => {
+    const f = await fixture();
+    f.database.prepare("UPDATE accounts SET terms_version='old', privacy_version='old' WHERE id=?").run(f.accounts.staff.id);
+    const before = f.snapshot();
+    await expect(f.service.loginWithSupabaseAccessToken(f.input())).rejects.toThrow(/current Terms and Privacy Policy/i);
+    expect(f.snapshot()).toEqual(before);
+    createSession(f.repository, f.accounts.customer.id, "existing-customer-cookie");
+    await expect(f.service.loginWithSupabaseAccessToken(f.input(), undefined, "Bearer existing-customer-cookie"))
+      .rejects.toThrow("does not match the active Pint Path session");
+    const result = await f.service.loginWithSupabaseAccessToken({ ...f.input(), ageConfirmed: true, termsAccepted: true,
+      privacyAccepted: true, termsVersion: CURRENT_LEGAL_POLICY_VERSION, privacyVersion: CURRENT_LEGAL_POLICY_VERSION });
+    expect(result.account.id).toBe(f.accounts.staff.id);
+  });
+});

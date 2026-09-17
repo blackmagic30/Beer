@@ -2273,6 +2273,7 @@ async function syncSupabaseSession(options = {}) {
   const sessionExchangeBody = JSON.stringify({
     accessToken: data.session.access_token,
     credentialCeremony,
+    ...(options.pilotStaffSignIn === true ? { pilotStaffSignIn: true } : {}),
     ...(reauthPurpose ? { reauthPurpose } : {}),
     ...(hasCompletePendingAcceptance ? {
       ageConfirmed: true,

@@ -208,6 +208,7 @@ export const browserEmailReauthenticationStartSchema = z.object({
 }).strict();
 
 export const authSupabaseSessionSchema = z.object({
+  pilotStaffSignIn: z.literal(true).optional(),
   accessToken: z.string().trim().min(20),
   credentialCeremony: z.enum([
     "browser_memory_v1",
@@ -230,6 +231,13 @@ export const authSupabaseSessionSchema = z.object({
     source: authConsentSourceSchema.default("web"),
   }).optional(),
 }).superRefine((value, ctx) => {
+  if (value.pilotStaffSignIn && (value.credentialCeremony !== "browser_memory_v1" || value.reauthPurpose !== undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Pilot staff sign-in requires the ordinary browser password ceremony.",
+      path: ["pilotStaffSignIn"],
+    });
+  }
   if (value.reauthPurpose !== undefined && value.credentialCeremony === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

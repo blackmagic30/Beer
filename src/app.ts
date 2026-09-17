@@ -2175,6 +2175,7 @@ export function createApp() {
           restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
           pintPointsRewardsEnabled: publicConfig.pintPointsRewardsEnabled,
           barPilotEnabled: publicConfig.barPilotEnabled,
+          pilotStaffEmailSignInEnabled: publicConfig.pilotStaffEmailSignInEnabled,
           alcoholGamificationEnabled: publicConfig.alcoholGamificationEnabled,
           happyHourDiscoveryEnabled: publicConfig.happyHourDiscoveryEnabled,
           happyHourContributionsEnabled: publicConfig.happyHourContributionsEnabled,

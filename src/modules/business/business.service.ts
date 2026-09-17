@@ -197,7 +197,7 @@ import { logger } from "../../lib/logger.js";
 import { priceConfirmationVersion } from "../../lib/price-confirmation.js";
 import {
   PILOT_DEMO_VENUE_ID, PILOT_DEMO_FIXTURE_KEY,
-  pilotDemoPublicationScopeAllowed, pilotDemoBindingAllowsPublication,
+  pilotDemoPublicationScopeAllowed, pilotDemoBindingAllowsPublication, pilotStaffEmailSignInScopeAllowed,
 } from "../../lib/pilot-demo-fixture.js";
 import {
   createMockReportEmailProvider,
@@ -4358,6 +4358,24 @@ export class BusinessService {
     return rows.filter((row) => row.count >= this.config.ANALYTICS_MIN_BUCKET_SIZE);
   }
 
+  private async pilotStaffEmailSignInAccountId(): Promise<string | null> {
+    if (!this.supabase || !pilotStaffEmailSignInScopeAllowed(this.config, process.env)) return null;
+    const binding = await this.systemStateRepository.get(PILOT_DEMO_FIXTURE_KEY);
+    if (!pilotDemoBindingAllowsPublication(binding?.value, this.config.BAR_PILOT_DEMO_CUSTOMER_IDS)) return null;
+    const staffId = binding.value.staff;
+    const [account, assignment, profile] = await Promise.all([
+      this.accountSessionRepository.getAccountById(staffId),
+      this.venueAccessRepository.getVenueAssignment({ userId: staffId, venueId: PILOT_DEMO_VENUE_ID, activeOnly: true }),
+      this.venueInventoryRepository.getBarProfile(PILOT_DEMO_VENUE_ID),
+    ]);
+    return account?.status === "active" && account.role === "user" && !this.getAdminEmailAllowlist().has(normalizeEmail(account.email))
+      && account.authProvider === "supabase"
+      && account.supabaseUserId && account.emailVerifiedAt && account.ageConfirmedAt
+      && assignment?.accessLevel === "counter_staff" && profile?.active
+      && profile.venueTags.some(tag => tag === "pilot-demo" || tag === "pilot demo")
+      ? staffId : null;
+  }
+
   async getPublicConfig() {
     const externalAuthDisconnected = Boolean(this.config.RESTORE_REHEARSAL_MODE);
     const commercialLaunchEnabled = this.config.COMMERCIAL_LAUNCH_ENABLED;
@@ -4380,6 +4398,7 @@ export class BusinessService {
       consumerPaidEnrollmentEnabled,
       fieldTestMode: this.config.FIELD_TEST_MODE,
       barPilotEnabled: Boolean(this.config.BAR_PILOT_ENABLED),
+      pilotStaffEmailSignInEnabled: Boolean(await this.pilotStaffEmailSignInAccountId()),
       pintPointsRewardsEnabled: this.pintPointsEnabled(),
       alcoholGamificationEnabled: commercialLaunchEnabled && this.config.ALCOHOL_GAMIFICATION_ENABLED,
       venueProTrialDays: commercialLaunchEnabled ? this.config.VENUE_PRO_TRIAL_DAYS : 0,
@@ -5654,6 +5673,22 @@ export class BusinessService {
       throw new AppError("This email is already linked to a different sign-in identity. Contact support before relinking it.", 409);
     }
     let account = accountBySupabaseId ?? accountByEmail;
+    if (input.pilotStaffSignIn) {
+      // This opt-in only restricts the existing provider exchange. It never
+      // supplies identity, creates an account or replaces the normal guards.
+      const allowedStaffId = await this.pilotStaffEmailSignInAccountId();
+      const passwordTime = getSupabaseAuthenticationMethodTimeSeconds(input.accessToken, "password");
+      const passwordAgeMs = passwordTime === null ? Infinity : Date.now() - passwordTime * 1000;
+      if (!allowedStaffId || !account || account.id !== allowedStaffId
+        || account.supabaseUserId !== supabaseUser.id || account.authProvider !== "supabase"
+        || normalizeEmail(account.email) !== email || decodeJwtPayload(input.accessToken)?.sub !== supabaseUser.id
+        || !getSupabaseEmailVerifiedAt(supabaseUser)
+        || input.credentialCeremony !== BROWSER_MEMORY_CREDENTIAL_CEREMONY || input.reauthPurpose
+        || !Number.isFinite(passwordAgeMs) || passwordAgeMs < -BROWSER_CREDENTIAL_FUTURE_SKEW_MS
+        || passwordAgeMs > BROWSER_CREDENTIAL_CEREMONY_MAX_AGE_MS) {
+        throw new AppError("This sign-in is available only to the assigned staging test staff. Continue with Google for other accounts.", 403);
+      }
+    }
     if (account && await this.accountSessionRepository.hasProviderGlobalRevocationPending(account.id)) {
       throw new AppError(
         "Provider-wide sign-out is still incomplete. Finish that security cleanup before creating another Pint Path session.",

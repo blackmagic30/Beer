@@ -8,8 +8,11 @@ replace the required hosted customer/venue observations.
 
 ## Collect actual observations
 
-1. Finish the four legitimate Google sign-ins, current consent and administrator
-   MFA. Assign the authorised manager/staff and prepare the labelled staging
+1. Finish sign-in and current consent for four distinct legitimate provider-backed
+   accounts, plus administrator MFA. The controlled staging staff may use its
+   genuinely verified email/password identity; record that method as email, never
+   Google. Retain the actual Google sign-in observation from a Google account.
+   Assign the authorised manager/staff and prepare the labelled staging
    venue using the existing restricted pilot setup. Do not create substitute
    provider sessions or mark personal consent on someone else's behalf.
 2. Build the exact reviewed candidate and record the successful protected staging
