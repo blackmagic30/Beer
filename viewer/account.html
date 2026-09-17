@@ -2273,7 +2273,7 @@
           ? [{ label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" }]
           : []),
         ...(PINT_POINTS_REWARDS_ENABLED && pintPoints
-          ? [{ label: "Pint Points", value: `${pintPoints.available ?? 0}/${pintPoints.threshold ?? 50}`, helper: "Paid alcoholic drinks earn 1 point each. Free pints do not earn points.", tone: "premium" }]
+          ? [{ id: "pintPointBalanceStat", label: "Pint Points", value: `${Number(pintPoints.balance ?? pintPoints.available ?? 0)}/${Number(pintPoints.threshold || 50)}`, helper: "Paid alcoholic drinks earn 1 point each. Free pints do not earn points.", tone: "premium" }]
           : []),
         { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, and source uploads linked to your account.", tone: "neutral" },
         { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
@@ -2324,13 +2324,13 @@
           </div>
           <p class="helperCopy">${escapeHtml(unlockCopy)}</p>
         </article>`}
-        ${metrics.map(({ label, value, helper, tone }) => `
+        ${metrics.map(({ id, label, value, helper, tone }) => `
           <article class="metricCard accountStatCard accountStatCard--${escapeHtml(tone)}">
             <div class="accountStatsCardHeader">
               <div class="metricLabel">${escapeHtml(label)}</div>
               <span class="accountStatDot" aria-hidden="true"></span>
             </div>
-            <div class="metricValue metricValue--small">${escapeHtml(value)}</div>
+            <div${id ? ` id="${escapeHtml(id)}"` : ""} class="metricValue metricValue--small">${escapeHtml(value)}</div>
             <p class="helperCopy">${escapeHtml(helper)}</p>
           </article>
         `).join("")}
@@ -3532,6 +3532,8 @@
       const activeCode = (wallet.activeCodes || []).find((item) => item.status === "active" && Date.parse(item.expiresAt) > Date.now());
       const hasPresentation = activePilotReward && (wallet.activeCodes || []).some((item) => item.id === activePilotReward.id && item.status === "active");
       $("pintPointBalanceHero").textContent = `${balance} / ${threshold}`;
+      const statsBalance = $("pintPointBalanceStat");
+      if (statsBalance) statsBalance.textContent = `${balance}/${threshold}`;
       $("pintPointProgressBar").max = threshold;
       $("pintPointProgressBar").value = Math.min(threshold, balance);
       $("pintPointProgressHero").textContent = activeCode
